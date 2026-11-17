@@ -1,0 +1,70 @@
+{
+  "brandName": "دنتال‌مارکت",
+  "nav": {
+    "store": "فروشگاه",
+    "categories": "دسته‌بندی‌ها",
+    "brands": "برندها",
+    "packs": "پک‌های مطب",
+    "agents": "نمایندگی‌ها",
+    "blog": "مجله تخصصی",
+    "search": "جستجو",
+    "cart": "سبد خرید",
+    "account": "حساب کاربری",
+    "admin": "پنل مدیریت"
+  },
+  "price": {
+    "toman": "تومان",
+    "rial": "ریال",
+    "from": "از",
+    "callForPrice": "تماس برای قیمت",
+    "outOfStock": "ناموجود",
+    "comingSoon": "به‌زودی",
+    "nearExpiry": "انقضا نزدیک"
+  },
+  "actions": {
+    "addToCart": "افزودن به سبد خرید",
+    "chooseOptions": "انتخاب تنوع",
+    "requestProforma": "درخواست پیش‌فاکتور",
+    "requestConsultation": "مشاوره تخصصی تجهیز",
+    "notifyBackInStock": "اطلاع‌رسانی موجودی",
+    "compare": "مقایسه",
+    "wishlist": "علاقه‌مندی",
+    "save": "ذخیره تغییرات",
+    "cancel": "انصراف",
+    "exportCsv": "خروجی CSV",
+    "signInGoogle": "ورود با حساب گوگل",
+    "signOut": "خروج"
+  },
+  "orderStatus": {
+    "pending_payment": "در انتظار پرداخت",
+    "awaiting_review": "در انتظار بررسی اعتبار",
+    "payment_failed": "پرداخت ناموفق",
+    "paid": "پرداخت‌شده",
+    "processing": "در حال پردازش",
+    "packed": "بسته‌بندی‌شده",
+    "shipped": "ارسال‌شده",
+    "delivered": "تحویل‌شده",
+    "completed": "تکمیل‌شده",
+    "cancelled": "لغوشده",
+    "return_requested": "درخواست مرجوعی",
+    "returned": "مرجوع‌شده"
+  },
+  "proformaStatus": {
+    "draft": "پیش‌نویس",
+    "sent": "ارسال‌شده",
+    "viewed": "مشاهده‌شده",
+    "accepted": "تأییدشده",
+    "rejected": "ردشده",
+    "expired": "منقضی‌شده",
+    "converted": "تبدیل به سفارش"
+  },
+  "customerGroup": {
+    "retail": "خریدار عادی",
+    "dentist": "دندانپزشک",
+    "clinic": "کلینیک و مطب",
+    "lab": "لابراتوار دندانسازی",
+    "student": "دانشجو",
+    "agent": "نماینده فروش",
+    "wholesale": "همکار عمده"
+  }
+}

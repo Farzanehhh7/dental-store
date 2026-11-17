@@ -1,0 +1,15 @@
+{
+  "brandName": "DentalMarket",
+  "nav": {
+    "store": "Store",
+    "categories": "Categories",
+    "brands": "Brands",
+    "packs": "Starter Packs",
+    "agents": "Branches",
+    "blog": "Journal",
+    "search": "Search",
+    "cart": "Cart",
+    "account": "Account",
+    "admin": "Admin"
+  }
+}

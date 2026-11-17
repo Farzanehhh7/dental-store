@@ -1,0 +1,236 @@
+{
+  "entities": {
+    "Category": {
+      "title": "Category",
+      "description": "Hierarchical dental catalog category with SEO and attribute set.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "parentId": { "type": "string", "maxLength": 128 },
+        "path": { "type": "string", "maxLength": 256 },
+        "depth": { "type": "number" },
+        "vertical": { "type": "string", "enum": ["dental", "medical", "lab"] },
+        "nameFa": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "nameEn": { "type": "string", "maxLength": 120 },
+        "slug": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "descriptionFa": { "type": "string", "maxLength": 500 },
+        "seoTextFa": { "type": "string", "maxLength": 2000 },
+        "isActive": { "type": "boolean" },
+        "showInMenu": { "type": "boolean" },
+        "showOnHome": { "type": "boolean" },
+        "sortOrder": { "type": "number" },
+        "attributeIds": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "nameFa", "slug", "vertical", "isActive", "updatedAt"]
+    },
+    "Brand": {
+      "title": "Brand",
+      "description": "Dental equipment and materials manufacturer brand.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "nameFa": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "nameEn": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "slug": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "countryCode": { "type": "string", "maxLength": 4 },
+        "countryFa": { "type": "string", "maxLength": 60 },
+        "descriptionFa": { "type": "string", "maxLength": 1500 },
+        "isAuthorizedDealer": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "nameFa", "nameEn", "slug", "countryCode", "isActive", "updatedAt"]
+    },
+    "AttributeDef": {
+      "title": "AttributeDef",
+      "description": "Dynamic catalog attribute definition.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "code": { "type": "string", "maxLength": 64 },
+        "labelFa": { "type": "string", "maxLength": 100 },
+        "labelEn": { "type": "string", "maxLength": 100 },
+        "type": { "type": "string", "enum": ["text", "number", "select", "multiselect", "boolean", "range"] },
+        "unit": { "type": "string", "maxLength": 24 },
+        "isFilterable": { "type": "boolean" },
+        "isComparable": { "type": "boolean" },
+        "showInSpec": { "type": "boolean" },
+        "options": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "code", "labelFa", "type", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Dental product with variants, batches, specs, and SEO fields.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "sku": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "imedCode": { "type": "string", "maxLength": 64 },
+        "titleFa": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "titleEn": { "type": "string", "maxLength": 180 },
+        "slug": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "brandId": { "type": "string", "maxLength": 128 },
+        "primaryCategoryId": { "type": "string", "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["consumable", "capital_equipment"] },
+        "status": { "type": "string", "enum": ["draft", "active", "out_of_stock", "coming_soon", "archived"] },
+        "pricingMode": { "type": "string", "enum": ["fixed", "range", "call_for_price"] },
+        "vertical": { "type": "string", "enum": ["dental", "medical", "lab"] },
+        "shortDescriptionFa": { "type": "string", "maxLength": 500 },
+        "descriptionFa": { "type": "string", "maxLength": 5000 },
+        "variants": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "sku", "titleFa", "slug", "brandId", "primaryCategoryId", "kind", "status", "pricingMode", "vertical", "updatedAt"]
+    },
+    "Campaign": {
+      "title": "Campaign",
+      "description": "Time-bound promotional discount campaign.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "nameFa": { "type": "string", "maxLength": 140 },
+        "slug": { "type": "string", "maxLength": 120 },
+        "discountPercent": { "type": "number" },
+        "startsAt": { "type": "string", "maxLength": 40 },
+        "endsAt": { "type": "string", "maxLength": 40 },
+        "showTimer": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["draft", "scheduled", "active", "ended", "cancelled"] },
+        "productIds": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "nameFa", "slug", "discountPercent", "startsAt", "endsAt", "status", "updatedAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order with state machine and items snapshot.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "orderNo": { "type": "string", "maxLength": 40 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 120 },
+        "customerMobile": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["pending_payment", "awaiting_review", "payment_failed", "paid", "processing", "packed", "shipped", "delivered", "completed", "cancelled", "return_requested", "returned"] },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "partially_paid", "paid", "refunded", "pending_credit"] },
+        "paymentMethod": { "type": "string", "enum": ["online", "cash_on_delivery", "bank_transfer", "credit_request", "cheque_request", "installment_request"] },
+        "grandTotal": { "type": "number" },
+        "items": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orderNo", "userId", "status", "paymentStatus", "paymentMethod", "grandTotal", "items", "createdAt", "updatedAt"]
+    },
+    "Proforma": {
+      "title": "Proforma",
+      "description": "B2B proforma invoice request and quote.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "proformaNo": { "type": "string", "maxLength": 40 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["draft", "sent", "viewed", "accepted", "rejected", "expired", "converted"] },
+        "grandTotal": { "type": "number" },
+        "items": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "proformaNo", "userId", "status", "grandTotal", "items", "createdAt", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Customer account and professional dental clinic profile.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 160 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "mobile": { "type": "string", "maxLength": 20 },
+        "customerGroup": { "type": "string", "enum": ["retail", "dentist", "clinic", "lab", "student", "agent", "wholesale"] },
+        "accountType": { "type": "string", "enum": ["individual", "clinic", "lab", "student", "agent", "company"] },
+        "clinicName": { "type": "string", "maxLength": 160 },
+        "medicalCouncilNo": { "type": "string", "maxLength": 40 },
+        "b2bStatus": { "type": "string", "enum": ["none", "pending", "approved", "rejected", "needs_info"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "customerGroup", "accountType", "b2bStatus", "createdAt", "updatedAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Product review moderated by staff.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 80 },
+        "rating": { "type": "number" },
+        "body": { "type": "string", "maxLength": 1500 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "productId", "userId", "authorName", "rating", "body", "status", "createdAt"]
+    },
+    "Ticket": {
+      "title": "Ticket",
+      "description": "Customer support ticket.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "ticketNo": { "type": "string", "maxLength": 40 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "maxLength": 180 },
+        "department": { "type": "string", "enum": ["sales", "support", "accounting", "technical"] },
+        "status": { "type": "string", "enum": ["open", "pending_customer", "pending_staff", "resolved", "closed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ticketNo", "userId", "subject", "department", "status", "createdAt", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable admin activity audit entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 160 },
+        "action": { "type": "string", "maxLength": 80 },
+        "entityType": { "type": "string", "maxLength": 60 },
+        "entityId": { "type": "string", "maxLength": 128 },
+        "summaryFa": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "actorUid", "action", "entityType", "entityId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/categories/{categoryId}": { "schema": { "$ref": "#/entities/Category" }, "description": "Catalog categories" },
+    "/brands/{brandId}": { "schema": { "$ref": "#/entities/Brand" }, "description": "Catalog brands" },
+    "/attributes/{attributeId}": { "schema": { "$ref": "#/entities/AttributeDef" }, "description": "Dynamic attribute dictionary" },
+    "/products/{productId}": { "schema": { "$ref": "#/entities/Product" }, "description": "Dental products and variants" },
+    "/campaigns/{campaignId}": { "schema": { "$ref": "#/entities/Campaign" }, "description": "Time-bound discount campaigns" },
+    "/bundles/{bundleId}": { "schema": "Bundle", "description": "Clinic starter packs and economy bundles" },
+    "/agents/{agentId}": { "schema": "Agent", "description": "Provincial agents and branches" },
+    "/blogPosts/{postId}": { "schema": "BlogPost", "description": "Dental editorial blog posts" },
+    "/coupons/{couponId}": { "schema": "Coupon", "description": "Discount coupons" },
+    "/reviews/{reviewId}": { "schema": { "$ref": "#/entities/Review" }, "description": "Product reviews" },
+    "/questions/{questionId}": { "schema": "Question", "description": "Product Q&A" },
+    "/orders/{orderId}": { "schema": { "$ref": "#/entities/Order" }, "description": "Customer orders" },
+    "/proformas/{proformaId}": { "schema": { "$ref": "#/entities/Proforma" }, "description": "Proforma invoices" },
+    "/paymentPlans/{planId}": { "schema": "PaymentPlan", "description": "Credit/installment/cheque requests" },
+    "/stockRequests/{requestId}": { "schema": "StockRequest", "description": "Unavailable item requests" },
+    "/consultationRequests/{requestId}": { "schema": "ConsultationRequest", "description": "Capital equipment consultations" },
+    "/tickets/{ticketId}": { "schema": { "$ref": "#/entities/Ticket" }, "description": "Support tickets" },
+    "/users/{userId}": { "schema": { "$ref": "#/entities/UserProfile" }, "description": "User profiles and B2B verification status" },
+    "/b2bVerifications/{verificationId}": { "schema": "B2BVerification", "description": "B2B upgrade verification queue" },
+    "/redirects/{redirectId}": { "schema": "Redirect", "description": "301/302/410 URL redirects" },
+    "/auditLogs/{logId}": { "schema": { "$ref": "#/entities/AuditLog" }, "description": "Append-only admin audit logs" },
+    "/settings/{settingId}": { "schema": "Setting", "description": "Public and system store configuration" },
+    "/admins/{uid}": { "schema": "AdminUser", "description": "Admin RBAC registry" },
+    "/test/connection": { "schema": "HealthCheck", "description": "Firestore connectivity probe document" }
+  }
+}

@@ -1,0 +1,327 @@
+import { stripKashida } from './persian-search';
+import { getProductPriceSummary } from './pricing';
+import { AgentBranch, BlogPost, Brand, Campaign, Category, Product, SiteSettings } from '../types/domain';
+
+export interface SeoHeadInput {
+  title: string;
+  description: string;
+  canonicalPath: string;
+  robots: string;
+  ogType?: 'website' | 'product' | 'article';
+  ogImage?: string;
+  jsonLd?: Record<string, unknown>[];
+}
+
+export function applySeoHead(input: SeoHeadInput): void {
+  const cleanTitle = stripKashida(input.title).slice(0, 120);
+  const cleanDesc = stripKashida(input.description).slice(0, 180);
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  const canonicalUrl = `${origin}${input.canonicalPath.startsWith('/') ? input.canonicalPath : `/${input.canonicalPath}`}`;
+
+  document.title = cleanTitle;
+
+  const setMeta = (attr: 'name' | 'property', key: string, content: string) => {
+    let el = document.querySelector(`meta[${attr}="${key}"]`);
+    if (!el) {
+      el = document.createElement('meta');
+      el.setAttribute(attr, key);
+      document.head.appendChild(el);
+    }
+    el.setAttribute('content', content);
+  };
+
+  setMeta('name', 'description', cleanDesc);
+  setMeta('name', 'robots', input.robots);
+  setMeta('property', 'og:title', cleanTitle);
+  setMeta('property', 'og:description', cleanDesc);
+  setMeta('property', 'og:url', canonicalUrl);
+  setMeta('property', 'og:locale', 'fa_IR');
+  setMeta('property', 'og:type', input.ogType ?? 'website');
+  if (input.ogImage) {
+    const absImg = input.ogImage.startsWith('http') ? input.ogImage : `${origin}${input.ogImage}`;
+    setMeta('property', 'og:image', absImg);
+  }
+
+  let canonicalEl = document.querySelector('link[rel="canonical"]');
+  if (!canonicalEl) {
+    canonicalEl = document.createElement('link');
+    canonicalEl.setAttribute('rel', 'canonical');
+    document.head.appendChild(canonicalEl);
+  }
+  canonicalEl.setAttribute('href', canonicalUrl);
+
+  // Replace dynamic JSON-LD scripts
+  document.querySelectorAll('script[data-dental-jsonld="true"]').forEach((n) => n.remove());
+  if (input.jsonLd && input.jsonLd.length > 0) {
+    for (const schemaObj of input.jsonLd) {
+      const script = document.createElement('script');
+      script.type = 'application/ld+json';
+      script.setAttribute('data-dental-jsonld', 'true');
+      script.textContent = JSON.stringify(schemaObj);
+      document.head.appendChild(script);
+    }
+  }
+}
+
+export function buildHomeJsonLd(settings: SiteSettings) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  return [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'Organization',
+      name: settings.storeNameFa,
+      url: origin,
+      contactPoint: {
+        '@type': 'ContactPoint',
+        telephone: settings.phone,
+        contactType: 'customer service',
+        areaServed: 'IR',
+        availableLanguage: ['fa'],
+      },
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: settings.storeNameFa,
+      url: origin,
+    },
+  ];
+}
+
+export function buildBreadcrumbJsonLd(items: { name: string; path: string }[]) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: items.map((item, idx) => ({
+      '@type': 'ListItem',
+      position: idx + 1,
+      name: item.name,
+      item: `${origin}${item.path}`,
+    })),
+  };
+}
+
+/**
+ * Generates Product JSON-LD strictly matching spec §17.4:
+ * - priceCurrency is ALWAYS "IRR" (Toman * 10)
+ * - omits offers when pricingMode === 'call_for_price'
+ * - aggregateRating only included when real approved reviews exist
+ */
+export function buildProductJsonLd(
+  product: Product,
+  brand: Brand | undefined,
+  campaigns: Campaign[],
+  settings: SiteSettings
+) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  const summary = getProductPriceSummary(product, { campaigns, settings });
+  const absImg = product.imageUrl.startsWith('http') ? product.imageUrl : `${origin}${product.imageUrl}`;
+
+  const schema: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: product.titleFa,
+    alternateName: product.titleEn,
+    image: [absImg],
+    description: product.shortDescriptionFa,
+    sku: product.sku,
+    url: `${origin}/product/${product.slug}`,
+    brand: brand ? { '@type': 'Brand', name: brand.nameFa } : undefined,
+  };
+
+  if (product.gtin) schema.gtin = product.gtin;
+
+  if (summary.state !== 'call_for_price') {
+    const availability =
+      summary.state === 'coming_soon'
+        ? 'https://schema.org/PreOrder'
+        : summary.inStock
+        ? 'https://schema.org/InStock'
+        : 'https://schema.org/OutOfStock';
+
+    if (summary.state === 'range' && summary.minPrice && summary.maxPrice) {
+      schema.offers = {
+        '@type': 'AggregateOffer',
+        priceCurrency: 'IRR',
+        lowPrice: summary.minPrice * 10,
+        highPrice: summary.maxPrice * 10,
+        offerCount: product.variants.filter((v) => v.isActive).length,
+        availability,
+      };
+    } else if (summary.minPrice) {
+      schema.offers = {
+        '@type': 'Offer',
+        priceCurrency: 'IRR',
+        price: summary.minPrice * 10,
+        availability,
+        itemCondition: 'https://schema.org/NewCondition',
+        ...(summary.campaignEndsAt ? { priceValidUntil: summary.campaignEndsAt.slice(0, 10) } : {}),
+      };
+    }
+  }
+
+  if (product.ratingCount > 0 && product.ratingAvg > 0) {
+    schema.aggregateRating = {
+      '@type': 'AggregateRating',
+      ratingValue: product.ratingAvg,
+      reviewCount: product.ratingCount,
+    };
+  }
+
+  return schema;
+}
+
+export function buildBlogPostJsonLd(post: BlogPost, settings: SiteSettings) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.titleFa,
+    image: post.imageUrl.startsWith('http') ? post.imageUrl : `${origin}${post.imageUrl}`,
+    datePublished: post.publishedAt,
+    dateModified: post.updatedAt,
+    author: { '@type': 'Person', name: post.authorName },
+    publisher: { '@type': 'Organization', name: settings.storeNameFa },
+  };
+}
+
+export function buildAgentJsonLd(agent: AgentBranch) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'LocalBusiness',
+    name: agent.nameFa,
+    telephone: agent.phone,
+    address: {
+      '@type': 'PostalAddress',
+      streetAddress: agent.address,
+      addressLocality: agent.city,
+      addressRegion: agent.province,
+      addressCountry: 'IR',
+    },
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: agent.lat,
+      longitude: agent.lng,
+    },
+  };
+}
+
+export interface SeoHealthFinding {
+  id: string;
+  rule: string;
+  severity: 'error' | 'warning' | 'pass';
+  affectedCount: number;
+  samplePaths: string[];
+  descriptionFa: string;
+}
+
+export function auditSeoHealth(
+  products: Product[],
+  categories: Category[],
+  posts: BlogPost[]
+): SeoHealthFinding[] {
+  const kashidaRegex = /\u0640/;
+  const junkRegex = /(\[i\]|ps_|undefined|null|stacktrace)/i;
+
+  const kashidaItems = [
+    ...products.filter((p) => kashidaRegex.test(p.titleFa) || kashidaRegex.test(p.metaTitle ?? '')).map((p) => `/product/${p.slug}`),
+    ...categories.filter((c) => kashidaRegex.test(c.nameFa)).map((c) => `/category/${c.slug}`),
+  ];
+
+  const missingDesc = products
+    .filter((p) => !p.shortDescriptionFa || p.shortDescriptionFa.length < 25)
+    .map((p) => `/product/${p.slug}`);
+
+  const junkMeta = products
+    .filter((p) => junkRegex.test(p.metaTitle ?? '') || junkRegex.test(p.metaDescription ?? ''))
+    .map((p) => `/product/${p.slug}`);
+
+  const missingImed = products
+    .filter((p) => p.status === 'active' && !p.imedCode)
+    .map((p) => `/product/${p.slug}`);
+
+  const missingImage = products
+    .filter((p) => !p.imageUrl)
+    .map((p) => `/product/${p.slug}`);
+
+  const duplicateTitles = (() => {
+    const seen = new Map<string, string[]>();
+    products.forEach((p) => {
+      const key = p.titleFa.trim();
+      seen.set(key, [...(seen.get(key) ?? []), `/product/${p.slug}`]);
+    });
+    return Array.from(seen.values()).filter((arr) => arr.length > 1).flat();
+  })();
+
+  const missingCategoryIntro = categories
+    .filter((c) => c.isActive && (!c.seoTextFa || c.seoTextFa.length < 40))
+    .map((c) => `/category/${c.slug}`);
+
+  return [
+    {
+      id: 'kashida',
+      rule: 'عدم وجود کشیده (ـ) در عناوین و متا',
+      severity: kashidaItems.length > 0 ? 'error' : 'pass',
+      affectedCount: kashidaItems.length,
+      samplePaths: kashidaItems.slice(0, 5),
+      descriptionFa: 'استفاده از کشیده در H1 یا متا تایتل باعث افت خوانایی و نقض قواعد سئو می‌شود.',
+    },
+    {
+      id: 'meta_junk',
+      rule: 'سلامت متا و نبود متن فنی در توضیحات',
+      severity: junkMeta.length > 0 ? 'error' : 'pass',
+      affectedCount: junkMeta.length,
+      samplePaths: junkMeta.slice(0, 5),
+      descriptionFa: 'متا تایتل و توضیحات متا نباید شامل رشته‌های فنی یا کد خطا باشند.',
+    },
+    {
+      id: 'short_desc',
+      rule: 'حداقل طول توضیحات یکتای محصول',
+      severity: missingDesc.length > 0 ? 'warning' : 'pass',
+      affectedCount: missingDesc.length,
+      samplePaths: missingDesc.slice(0, 5),
+      descriptionFa: 'محصولات فعال باید دارای توضیح کوتاه و یکتا (حداقل ۲۵ کاراکتر) باشند.',
+    },
+    {
+      id: 'imed_code',
+      rule: 'ثبت کد IMED برای تجهیزات و ملزومات',
+      severity: missingImed.length > 0 ? 'warning' : 'pass',
+      affectedCount: missingImed.length,
+      samplePaths: missingImed.slice(0, 5),
+      descriptionFa: 'کد IMED اعتبار تخصصی E-E-A-T و جستجوی کاتالوگ دندانپزشکی را تقویت می‌کند.',
+    },
+    {
+      id: 'missing_img',
+      rule: 'تصویر اصلی و ابعاد استاندارد محصولات',
+      severity: missingImage.length > 0 ? 'error' : 'pass',
+      affectedCount: missingImage.length,
+      samplePaths: missingImage.slice(0, 5),
+      descriptionFa: 'هر محصول منتشرشده باید حداقل یک تصویر با alt توصیفی داشته باشد.',
+    },
+    {
+      id: 'dup_titles',
+      rule: 'یکتا بودن عنوان صفحات محصول',
+      severity: duplicateTitles.length > 0 ? 'error' : 'pass',
+      affectedCount: duplicateTitles.length,
+      samplePaths: duplicateTitles.slice(0, 5),
+      descriptionFa: 'عناوین تکراری باعث رقابت داخلی صفحات (Keyword Cannibalization) می‌شود.',
+    },
+    {
+      id: 'cat_intro',
+      rule: 'مقدمه کاربردی دسته‌بندی‌ها',
+      severity: missingCategoryIntro.length > 0 ? 'warning' : 'pass',
+      affectedCount: missingCategoryIntro.length,
+      samplePaths: missingCategoryIntro.slice(0, 5),
+      descriptionFa: 'هر دسته‌بندی فعال باید دارای یک پاراگراف مقدمه تخصصی سئو باشد.',
+    },
+    {
+      id: 'blog_eeat',
+      rule: 'بررسی E-E-A-T مقالات تخصصی',
+      severity: posts.some((b) => !b.authorName) ? 'warning' : 'pass',
+      affectedCount: posts.filter((b) => !b.authorName).length,
+      samplePaths: posts.filter((b) => !b.authorName).map((b) => `/blog/${b.slug}`),
+      descriptionFa: 'مقالات سلامت و دندانپزشکی باید دارای نویسنده متخصص و تاریخ بروزرسانی باشند.',
+    },
+  ];
+}

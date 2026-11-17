@@ -1,0 +1,425 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isSuperAdmin() {
+      return isVerified() && request.auth.token.email == 'farina.connect@gmail.com';
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || (
+        isVerified() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'customerGroup', 'accountType', 'b2bStatus', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'mobile', 'customerGroup', 'accountType', 'clinicName', 'medicalCouncilNo', 'specialty', 'b2bStatus', 'addresses', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.customerGroup in ['retail', 'dentist', 'clinic', 'lab', 'student', 'agent', 'wholesale']
+        && data.accountType in ['individual', 'clinic', 'lab', 'student', 'agent', 'company']
+        && data.b2bStatus in ['none', 'pending', 'approved', 'rejected', 'needs_info']
+        && (!('email' in data) || (data.email is string && data.email.size() <= 160))
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 120))
+        && (!('mobile' in data) || (data.mobile is string && data.mobile.size() <= 20))
+        && (!('clinicName' in data) || (data.clinicName is string && data.clinicName.size() <= 160))
+        && (!('medicalCouncilNo' in data) || (data.medicalCouncilNo is string && data.medicalCouncilNo.size() <= 40))
+        && (!('specialty' in data) || (data.specialty is string && data.specialty.size() <= 80))
+        && (!('addresses' in data) || (data.addresses is list && data.addresses.size() <= 10));
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['id', 'orderNo', 'userId', 'customerName', 'customerMobile', 'status', 'paymentStatus', 'paymentMethod', 'subtotal', 'discountTotal', 'shippingTotal', 'taxTotal', 'grandTotal', 'items', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'orderNo', 'userId', 'customerName', 'customerMobile', 'customerGroup', 'status', 'paymentStatus', 'paymentMethod', 'subtotal', 'discountTotal', 'shippingTotal', 'taxTotal', 'grandTotal', 'couponCode', 'shippingAddress', 'shippingMethod', 'customerNote', 'items', 'trackingCode', 'proformaId', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.orderNo is string && data.orderNo.size() >= 1 && data.orderNo.size() <= 40
+        && data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128
+        && data.customerName is string && data.customerName.size() <= 120
+        && data.customerMobile is string && data.customerMobile.size() <= 20
+        && data.status in ['pending_payment', 'awaiting_review', 'payment_failed', 'paid', 'processing', 'packed', 'shipped', 'delivered', 'completed', 'cancelled', 'return_requested', 'returned']
+        && data.paymentStatus in ['unpaid', 'partially_paid', 'paid', 'refunded', 'pending_credit']
+        && data.paymentMethod in ['online', 'cash_on_delivery', 'bank_transfer', 'credit_request', 'cheque_request', 'installment_request']
+        && data.subtotal is number && data.discountTotal is number && data.shippingTotal is number && data.taxTotal is number && data.grandTotal is number
+        && data.grandTotal >= 0
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 100
+        && (!('couponCode' in data) || (data.couponCode is string && data.couponCode.size() <= 40))
+        && (!('customerNote' in data) || (data.customerNote is string && data.customerNote.size() <= 500))
+        && (!('trackingCode' in data) || (data.trackingCode is string && data.trackingCode.size() <= 64));
+    }
+
+    function isValidProforma(data) {
+      return data.keys().hasAll(['id', 'proformaNo', 'userId', 'contactName', 'contactMobile', 'status', 'subtotal', 'discountTotal', 'taxTotal', 'grandTotal', 'items', 'validUntil', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'proformaNo', 'userId', 'contactName', 'contactMobile', 'clinicName', 'status', 'subtotal', 'discountTotal', 'taxTotal', 'grandTotal', 'items', 'termsFa', 'validUntil', 'orderId', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.proformaNo is string && data.proformaNo.size() <= 40
+        && data.userId is string && data.userId.size() <= 128
+        && data.contactName is string && data.contactName.size() <= 120
+        && data.contactMobile is string && data.contactMobile.size() <= 20
+        && data.status in ['draft', 'sent', 'viewed', 'accepted', 'rejected', 'expired', 'converted']
+        && data.grandTotal is number && data.grandTotal >= 0
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 100
+        && data.validUntil is string && data.validUntil.size() <= 40;
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['id', 'productId', 'userId', 'authorName', 'rating', 'body', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'productId', 'userId', 'authorName', 'rating', 'title', 'body', 'status', 'isVerifiedPurchase', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.productId)
+        && data.userId is string && data.userId.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+        && data.rating is number && data.rating >= 1 && data.rating <= 5
+        && data.body is string && data.body.size() >= 3 && data.body.size() <= 1500
+        && data.status in ['pending', 'approved', 'rejected'];
+    }
+
+    function isValidQuestion(data) {
+      return data.keys().hasAll(['id', 'productId', 'userId', 'authorName', 'body', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'productId', 'userId', 'authorName', 'body', 'answerBody', 'answeredBy', 'status', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.productId)
+        && data.userId is string && data.userId.size() <= 128
+        && data.authorName is string && data.authorName.size() <= 80
+        && data.body is string && data.body.size() >= 3 && data.body.size() <= 1000
+        && data.status in ['pending', 'approved', 'rejected'];
+    }
+
+    function isValidTicket(data) {
+      return data.keys().hasAll(['id', 'ticketNo', 'userId', 'subject', 'department', 'priority', 'status', 'messages', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ticketNo', 'userId', 'orderNo', 'subject', 'department', 'priority', 'status', 'messages', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.ticketNo is string && data.ticketNo.size() <= 40
+        && data.userId is string && data.userId.size() <= 128
+        && data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 180
+        && data.department in ['sales', 'support', 'accounting', 'technical']
+        && data.priority in ['low', 'normal', 'high', 'urgent']
+        && data.status in ['open', 'pending_customer', 'pending_staff', 'resolved', 'closed']
+        && data.messages is list && data.messages.size() >= 1 && data.messages.size() <= 50;
+    }
+
+    function isValidB2BVerification(data) {
+      return data.keys().hasAll(['id', 'userId', 'applicantName', 'mobile', 'requestedGroup', 'clinicName', 'medicalCouncilNo', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'applicantName', 'mobile', 'requestedGroup', 'clinicName', 'medicalCouncilNo', 'documentSummary', 'status', 'rejectReason', 'reviewedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.userId is string && data.userId.size() <= 128
+        && data.applicantName is string && data.applicantName.size() <= 120
+        && data.mobile is string && data.mobile.size() <= 20
+        && data.requestedGroup in ['dentist', 'clinic', 'lab', 'student', 'agent', 'wholesale']
+        && data.clinicName is string && data.clinicName.size() <= 160
+        && data.medicalCouncilNo is string && data.medicalCouncilNo.size() <= 40
+        && data.status in ['pending', 'approved', 'rejected', 'needs_info'];
+    }
+
+    function isValidPaymentPlan(data) {
+      return data.keys().hasAll(['id', 'userId', 'customerName', 'type', 'requestedAmount', 'installmentsCount', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'orderId', 'proformaId', 'userId', 'customerName', 'type', 'requestedAmount', 'installmentsCount', 'proposedTermsFa', 'decisionNote', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.userId is string && data.userId.size() <= 128
+        && data.customerName is string && data.customerName.size() <= 120
+        && data.type in ['credit', 'installment', 'cheque']
+        && data.requestedAmount is number && data.requestedAmount > 0
+        && data.installmentsCount is number && data.installmentsCount >= 1 && data.installmentsCount <= 36
+        && data.status in ['submitted', 'under_review', 'needs_info', 'approved', 'rejected', 'active', 'settled', 'defaulted', 'cancelled'];
+    }
+
+    function isValidStockRequest(data) {
+      return data.keys().hasAll(['id', 'userId', 'contactName', 'mobile', 'titleText', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'contactName', 'mobile', 'titleText', 'brandText', 'description', 'status', 'adminNote', 'createdAt'])
+        && isValidId(data.id)
+        && data.userId is string && data.userId.size() <= 128
+        && data.contactName is string && data.contactName.size() <= 120
+        && data.mobile is string && data.mobile.size() <= 20
+        && data.titleText is string && data.titleText.size() >= 2 && data.titleText.size() <= 180
+        && data.status in ['new', 'in_review', 'sourcing', 'available', 'rejected', 'closed'];
+    }
+
+    function isValidConsultation(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'mobile', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'mobile', 'clinicName', 'productId', 'productName', 'budgetRange', 'message', 'status', 'createdAt'])
+        && isValidId(data.id)
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() <= 120
+        && data.mobile is string && data.mobile.size() <= 20
+        && data.status in ['new', 'contacted', 'quoted', 'won', 'lost'];
+    }
+
+    // --- Public Catalog & Content Collections (Storefront Read, Admin Write) ---
+    match /test/connection {
+      allow get: if true;
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(categoryId) && incoming().nameFa is string && incoming().nameFa.size() <= 120;
+      allow delete: if isAdmin() && isValidId(categoryId);
+    }
+
+    match /brands/{brandId} {
+      allow get: if isValidId(brandId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(brandId) && incoming().nameFa is string && incoming().nameFa.size() <= 120;
+      allow delete: if isAdmin() && isValidId(brandId);
+    }
+
+    match /attributes/{attributeId} {
+      allow get: if isValidId(attributeId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(attributeId) && incoming().code is string && incoming().code.size() <= 64;
+      allow delete: if isAdmin() && isValidId(attributeId);
+    }
+
+    match /products/{productId} {
+      allow get: if isValidId(productId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(productId) && incoming().titleFa is string && incoming().titleFa.size() <= 200;
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    match /campaigns/{campaignId} {
+      allow get: if isValidId(campaignId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(campaignId) && incoming().nameFa is string && incoming().nameFa.size() <= 160;
+      allow delete: if isAdmin() && isValidId(campaignId);
+    }
+
+    match /bundles/{bundleId} {
+      allow get: if isValidId(bundleId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(bundleId) && incoming().nameFa is string && incoming().nameFa.size() <= 160;
+      allow delete: if isAdmin() && isValidId(bundleId);
+    }
+
+    match /agents/{agentId} {
+      allow get: if isValidId(agentId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(agentId) && incoming().nameFa is string && incoming().nameFa.size() <= 160;
+      allow delete: if isAdmin() && isValidId(agentId);
+    }
+
+    match /blogPosts/{postId} {
+      allow get: if isValidId(postId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(postId) && incoming().titleFa is string && incoming().titleFa.size() <= 200;
+      allow delete: if isAdmin() && isValidId(postId);
+    }
+
+    match /coupons/{couponId} {
+      allow get: if isValidId(couponId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(couponId) && incoming().code is string && incoming().code.size() <= 40;
+      allow delete: if isAdmin() && isValidId(couponId);
+    }
+
+    match /redirects/{redirectId} {
+      allow get: if isValidId(redirectId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(redirectId);
+      allow delete: if isAdmin() && isValidId(redirectId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if true;
+      allow create, update: if isAdmin() && isValidId(settingId);
+      allow delete: if isAdmin() && isValidId(settingId);
+    }
+
+    // --- Public Engagement (Moderated) ---
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId) && (existing().status == 'approved' || isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if resource.data.status == 'approved' || isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(reviewId) && isValidReview(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time;
+      allow update, delete: if isAdmin() && isValidId(reviewId);
+    }
+
+    match /questions/{questionId} {
+      allow get: if isValidId(questionId) && (existing().status == 'approved' || isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if resource.data.status == 'approved' || isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(questionId) && isValidQuestion(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time;
+      allow update, delete: if isAdmin() && isValidId(questionId);
+    }
+
+    // --- PII & Customer-Owned Collections ---
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isVerified() && isValidId(userId) && isOwner(userId) && isValidUserProfile(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().customerGroup == 'retail'
+        && incoming().b2bStatus == 'none'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isValidUserProfile(incoming()) && (
+        isAdmin() || (
+          isVerified() && isOwner(userId)
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().customerGroup == existing().customerGroup
+          && incoming().b2bStatus == existing().b2bStatus
+          && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'mobile', 'accountType', 'clinicName', 'medicalCouncilNo', 'specialty', 'addresses', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(orderId) && isValidOrder(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status in ['pending_payment', 'awaiting_review']
+        && incoming().paymentStatus in ['unpaid', 'pending_credit']
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(orderId) && isValidOrder(incoming()) && (
+        isAdmin() || (
+          isVerified() && existing().userId == request.auth.uid
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status == 'pending_payment'
+          && incoming().status in ['paid', 'cancelled']
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'updatedAt'])
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /proformas/{proformaId} {
+      allow get: if isValidId(proformaId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(proformaId) && isValidProforma(incoming())
+        && (isAdmin() || (incoming().userId == request.auth.uid && incoming().status == 'draft'))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(proformaId) && isValidProforma(incoming()) && (
+        isAdmin() || (
+          isVerified() && existing().userId == request.auth.uid
+          && existing().status in ['sent', 'viewed']
+          && incoming().status in ['accepted', 'rejected']
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(proformaId);
+    }
+
+    match /paymentPlans/{planId} {
+      allow get: if isValidId(planId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(planId) && isValidPaymentPlan(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'submitted'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin() && isValidId(planId) && isValidPaymentPlan(incoming());
+      allow delete: if false;
+    }
+
+    match /b2bVerifications/{verificationId} {
+      allow get: if isValidId(verificationId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(verificationId) && isValidB2BVerification(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin() && isValidId(verificationId) && isValidB2BVerification(incoming());
+      allow delete: if isAdmin() && isValidId(verificationId);
+    }
+
+    match /tickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(ticketId) && isValidTicket(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(ticketId) && isValidTicket(incoming()) && (
+        isAdmin() || (
+          isVerified() && existing().userId == request.auth.uid
+          && existing().status != 'closed'
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['messages', 'status', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin() && isValidId(ticketId);
+    }
+
+    match /stockRequests/{requestId} {
+      allow get: if isValidId(requestId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(requestId) && isValidStockRequest(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'new'
+        && incoming().createdAt == request.time;
+      allow update, delete: if isAdmin() && isValidId(requestId);
+    }
+
+    match /consultationRequests/{requestId} {
+      allow get: if isValidId(requestId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(requestId) && isValidConsultation(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'new'
+        && incoming().createdAt == request.time;
+      allow update, delete: if isAdmin() && isValidId(requestId);
+    }
+
+    // --- System & Admin Collections ---
+    match /auditLogs/{logId} {
+      allow get: if isAdmin() && isValidId(logId);
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidId(logId)
+        && incoming().actorUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
+      allow create, update, delete: if isSuperAdmin() && isValidId(uid);
+    }
+  }
+}

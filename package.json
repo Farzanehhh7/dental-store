@@ -4,14 +4,21 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "tsc --noEmit && eslint firestore.rules"
   },
   "dependencies": {
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
+    "@tanstack/react-table": "^9.3.1",
+    "eslint": "^10.15.0",
+    "firebase": "^13.4.0",
+    "lucide-react": "^1.74.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2"
+    "react-router-dom": "^6.26.2",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.5",
