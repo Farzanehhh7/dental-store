@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, Filter, RotateCcw } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
 import { useStore } from '../context/StoreContext';
-import { formatMoney, toPersianDigits } from '../lib/jalali';
+import { toPersianDigits } from '../lib/jalali';
 import { getProductPriceSummary } from '../lib/pricing';
 import { applySeoHead, buildBreadcrumbJsonLd } from '../lib/seo';
 
@@ -12,7 +12,7 @@ type SortOption = 'newest' | 'best_selling' | 'price_asc' | 'price_desc' | 'disc
 export default function CategoryPage() {
   const { slug, brandSlug } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { categories, brands, attributes, products, campaigns, currency, customerGroup, settings } = useStore();
+  const { categories, brands, attributes, products, campaigns, contractPrices, authUser, currency, customerGroup, settings } = useStore();
 
   const category = categories.find((c) => c.slug === slug);
   const routeBrand = brandSlug ? brands.find((b) => b.slug === brandSlug) : undefined;
@@ -22,9 +22,14 @@ export default function CategoryPage() {
     const bParam = searchParams.get('brand');
     return bParam ? bParam.split(',').filter(Boolean) : [];
   });
-  const [selectedOrigins, setSelectedOrigins] = useState<string[]>([]);
+  const [selectedOrigins, setSelectedOrigins] = useState<string[]>(() => {
+    const oParam = searchParams.get('origin');
+    return oParam ? oParam.split(',').filter(Boolean) : [];
+  });
   const [onlyInStock, setOnlyInStock] = useState(searchParams.get('inStock') === '1');
   const [onlyDiscount, setOnlyDiscount] = useState(searchParams.get('discount') === '1');
+  const [minPrice, setMinPrice] = useState(searchParams.get('minPrice') || '');
+  const [maxPrice, setMaxPrice] = useState(searchParams.get('maxPrice') || '');
   const [attrFilters, setAttrFilters] = useState<Record<string, string[]>>({});
   const [sortBy, setSortBy] = useState<SortOption>((searchParams.get('sort') as SortOption) || 'best_selling');
   const [page, setPage] = useState(Number(searchParams.get('page') || 1));
@@ -35,12 +40,27 @@ export default function CategoryPage() {
       const bParam = searchParams.get('brand');
       setSelectedBrands(bParam ? bParam.split(',').filter(Boolean) : []);
     }
+    setPage(Number(searchParams.get('page') || 1));
   }, [slug, brandSlug]);
 
-  // All products belonging to this category or its child categories
+  // Bidirectional URL Query Parameter Synchronization
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (!routeBrand && selectedBrands.length > 0) next.set('brand', selectedBrands.join(','));
+    if (selectedOrigins.length > 0) next.set('origin', selectedOrigins.join(','));
+    if (onlyInStock) next.set('inStock', '1');
+    if (onlyDiscount) next.set('discount', '1');
+    if (minPrice) next.set('minPrice', minPrice);
+    if (maxPrice) next.set('maxPrice', maxPrice);
+    if (sortBy !== 'best_selling') next.set('sort', sortBy);
+    if (page > 1) next.set('page', String(page));
+    setSearchParams(next, { replace: true });
+  }, [routeBrand, selectedBrands, selectedOrigins, onlyInStock, onlyDiscount, minPrice, maxPrice, sortBy, page, setSearchParams]);
+
+  // All products belonging to this category or its descendant categories
   const categoryProducts = useMemo(() => {
     if (!category) return [];
-    const childIds = categories.filter((c) => c.parentId === category.id).map((c) => c.id);
+    const childIds = categories.filter((c) => c.parentId === category.id || c.path.includes(category.slug)).map((c) => c.id);
     const validCatIds = new Set([category.id, ...childIds]);
     return products.filter(
       (p) =>
@@ -70,12 +90,17 @@ export default function CategoryPage() {
   }, [categoryProducts]);
 
   const filteredProducts = useMemo(() => {
+    const minP = minPrice ? Number(minPrice) : null;
+    const maxP = maxPrice ? Number(maxPrice) : null;
+
     const list = categoryProducts.filter((p) => {
       if (selectedBrands.length > 0 && !selectedBrands.includes(p.brandId)) return false;
       if (selectedOrigins.length > 0 && !selectedOrigins.includes(p.originCountryFa)) return false;
-      const summary = getProductPriceSummary(p, { customerGroup, campaigns, currency, settings });
+      const summary = getProductPriceSummary(p, { customerGroup, campaigns, currency, settings, contractPrices, userId: authUser?.uid });
       if (onlyInStock && !summary.inStock) return false;
       if (onlyDiscount && summary.discountPercent <= 0) return false;
+      if (minP !== null && (summary.minPrice === null || summary.minPrice < minP)) return false;
+      if (maxP !== null && (summary.minPrice === null || summary.minPrice > maxP)) return false;
 
       for (const [attrCode, wantedKeys] of Object.entries(attrFilters)) {
         if (wantedKeys.length === 0) continue;
@@ -93,15 +118,15 @@ export default function CategoryPage() {
     });
 
     return [...list].sort((a, b) => {
-      const sa = getProductPriceSummary(a, { customerGroup, campaigns, currency, settings });
-      const sb = getProductPriceSummary(b, { customerGroup, campaigns, currency, settings });
+      const sa = getProductPriceSummary(a, { customerGroup, campaigns, currency, settings, contractPrices, userId: authUser?.uid });
+      const sb = getProductPriceSummary(b, { customerGroup, campaigns, currency, settings, contractPrices, userId: authUser?.uid });
       if (sortBy === 'newest') return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
       if (sortBy === 'price_asc') return (sa.minPrice ?? Number.MAX_SAFE_INTEGER) - (sb.minPrice ?? Number.MAX_SAFE_INTEGER);
       if (sortBy === 'price_desc') return (sb.minPrice ?? 0) - (sa.minPrice ?? 0);
       if (sortBy === 'discount') return sb.discountPercent - sa.discountPercent;
       return b.soldCount - a.soldCount;
     });
-  }, [categoryProducts, selectedBrands, selectedOrigins, onlyInStock, onlyDiscount, attrFilters, sortBy, customerGroup, campaigns, currency, settings]);
+  }, [categoryProducts, selectedBrands, selectedOrigins, onlyInStock, onlyDiscount, minPrice, maxPrice, attrFilters, sortBy, customerGroup, campaigns, currency, settings, contractPrices, authUser?.uid]);
 
   // SEO Indexation Matrix §17.2
   useEffect(() => {
@@ -111,6 +136,8 @@ export default function CategoryPage() {
       selectedOrigins.length > 0 ||
       onlyInStock ||
       onlyDiscount ||
+      Boolean(minPrice) ||
+      Boolean(maxPrice) ||
       Object.values(attrFilters).some((v) => v.length > 0) ||
       sortBy !== 'best_selling';
 
@@ -125,7 +152,7 @@ export default function CategoryPage() {
 
     const title = routeBrand
       ? `${category.nameFa} ${routeBrand.nameFa} | ${settings.storeNameFa}`
-      : `${category.nameFa}: مشخصات و قیمت | ${settings.storeNameFa}`;
+      : category.metaTitle || `${category.nameFa}: مشخصات و قیمت | ${settings.storeNameFa}`;
 
     const breadcrumbs = [
       { name: 'خانه', path: '/' },
@@ -135,7 +162,7 @@ export default function CategoryPage() {
 
     applySeoHead({
       title,
-      description: category.seoTextFa || category.descriptionFa,
+      description: category.metaDescription || category.seoTextFa || category.descriptionFa,
       canonicalPath,
       robots,
       jsonLd: [
@@ -156,7 +183,7 @@ export default function CategoryPage() {
         },
       ],
     });
-  }, [category, routeBrand, selectedBrands, selectedOrigins, onlyInStock, onlyDiscount, attrFilters, sortBy, page, filteredProducts, settings]);
+  }, [category, routeBrand, selectedBrands, selectedOrigins, onlyInStock, onlyDiscount, minPrice, maxPrice, attrFilters, sortBy, page, filteredProducts, categoryProducts.length, settings]);
 
   const toggleBrand = (id: string) => {
     setSelectedBrands((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -177,8 +204,11 @@ export default function CategoryPage() {
     setSelectedOrigins([]);
     setOnlyInStock(false);
     setOnlyDiscount(false);
+    setMinPrice('');
+    setMaxPrice('');
     setAttrFilters({});
     setSortBy('best_selling');
+    setPage(1);
     setSearchParams({});
   };
 
@@ -268,7 +298,7 @@ export default function CategoryPage() {
               <input
                 type="checkbox"
                 checked={onlyInStock}
-                onChange={(e) => setOnlyInStock(e.target.checked)}
+                onChange={(e) => { setOnlyInStock(e.target.checked); setPage(1); }}
                 className="rounded border-line text-brand"
               />
             </label>
@@ -277,15 +307,36 @@ export default function CategoryPage() {
               <input
                 type="checkbox"
                 checked={onlyDiscount}
-                onChange={(e) => setOnlyDiscount(e.target.checked)}
+                onChange={(e) => { setOnlyDiscount(e.target.checked); setPage(1); }}
                 className="rounded border-line text-brand"
               />
             </label>
           </div>
 
+          {/* Price Range Filter */}
+          <div className="pt-4 border-t border-line dark:border-slate-800 space-y-2 text-xs">
+            <h2 className="font-bold text-ink/70 dark:text-slate-400">محدوده قیمت (تومان)</h2>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                placeholder="از (تومان)"
+                value={minPrice}
+                onChange={(e) => { setMinPrice(e.target.value); setPage(1); }}
+                className="w-full px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 tabular-nums"
+              />
+              <input
+                type="number"
+                placeholder="تا (تومان)"
+                value={maxPrice}
+                onChange={(e) => { setMaxPrice(e.target.value); setPage(1); }}
+                className="w-full px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 tabular-nums"
+              />
+            </div>
+          </div>
+
           {/* Brands Filter */}
           {availableBrands.length > 0 && (
-            <div className="pt-4 border-t border-line dark:border-slate-800 space-y-2">
+            <div className="pt-4 border-t border-line dark:border-slate-800 space-y-2 max-h-56 overflow-y-auto">
               <h2 className="font-bold text-xs text-ink/70 dark:text-slate-400">برند سازنده</h2>
               {availableBrands.map(({ brand, count }) => (
                 <label key={brand.id} className="flex items-center justify-between text-xs cursor-pointer py-0.5">
@@ -313,11 +364,12 @@ export default function CategoryPage() {
                     <input
                       type="checkbox"
                       checked={selectedOrigins.includes(country)}
-                      onChange={() =>
+                      onChange={() => {
                         setSelectedOrigins((prev) =>
                           prev.includes(country) ? prev.filter((x) => x !== country) : [...prev, country]
-                        )
-                      }
+                        );
+                        setPage(1);
+                      }}
                     />
                     <span>{country}</span>
                   </span>
@@ -368,15 +420,16 @@ export default function CategoryPage() {
             );
           })}
 
-          {/* Whitelisted Indexable Category+Brand Links */}
+          {/* Whitelisted Indexable Category+Brand Links (nofollow if under threshold) */}
           {availableBrands.length > 0 && !routeBrand && (
             <div className="pt-4 border-t border-line dark:border-slate-800 space-y-2">
               <h2 className="font-bold text-xs text-ink/70 dark:text-slate-400">دسترسی سریع برند در این دسته</h2>
               <div className="flex flex-wrap gap-1.5">
-                {availableBrands.map(({ brand }) => (
+                {availableBrands.slice(0, 12).map(({ brand, count }) => (
                   <Link
                     key={brand.id}
                     to={`/category/${category.slug}/brand/${brand.slug}`}
+                    rel={count < settings.indexableFacetThreshold ? 'nofollow' : undefined}
                     className="text-[11px] px-2 py-1 rounded bg-surface dark:bg-slate-800 hover:text-brand"
                   >
                     {brand.nameFa}
@@ -404,7 +457,7 @@ export default function CategoryPage() {
                 <button
                   key={key}
                   type="button"
-                  onClick={() => setSortBy(key)}
+                  onClick={() => { setSortBy(key); setPage(1); }}
                   className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
                     sortBy === key
                       ? 'bg-brand text-white font-bold'
@@ -438,8 +491,8 @@ export default function CategoryPage() {
 
           {/* Crawlable Pagination Links */}
           {totalPages > 1 && (
-            <nav aria-label="صفحه‌بندی" className="flex items-center justify-center gap-2 pt-4">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+            <nav aria-label="صفحه‌بندی" className="flex flex-wrap items-center justify-center gap-2 pt-4">
+              {Array.from({ length: Math.min(totalPages, 12) }, (_, i) => i + 1).map((n) => (
                 <Link
                   key={n}
                   to={n === 1 ? `/category/${category.slug}` : `/category/${category.slug}?page=${n}`}

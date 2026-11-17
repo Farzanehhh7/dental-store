@@ -10,15 +10,19 @@ import {
   Package,
   Printer,
   RefreshCw,
+  RotateCcw,
+  Search,
   ShieldCheck,
+  Smartphone,
+  Upload,
   UserCheck,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { formatJalaliDate, formatJalaliDateTime, formatMoney, toPersianDigits } from '../lib/jalali';
 import { applySeoHead } from '../lib/seo';
-import { CustomerGroupCode, OrderStatus, ProformaInvoice } from '../types/domain';
+import { CustomerGroupCode, InvoiceRecord, Order, OrderStatus, ProformaInvoice } from '../types/domain';
 
-type AccountTab = 'orders' | 'proformas' | 'b2b' | 'tickets';
+type AccountTab = 'orders' | 'proformas' | 'invoices' | 'returns' | 'b2b' | 'tickets';
 
 const ORDER_STATUS_FA: Record<OrderStatus, string> = {
   pending_payment: 'در انتظار پرداخت',
@@ -55,6 +59,9 @@ export default function AccountPage() {
     userProfile,
     customerGroup,
     orders,
+    guestOrders,
+    invoices,
+    returns,
     proformas,
     paymentPlans,
     b2bVerifications,
@@ -63,9 +70,11 @@ export default function AccountPage() {
     currency,
     settings,
     verifyOnlinePayment,
+    lookupGuestOrder,
     cancelOwnOrder,
     respondProforma,
     submitB2BVerification,
+    submitReturnRequest,
     submitTicket,
     replyTicket,
     updateOwnProfile,
@@ -75,6 +84,30 @@ export default function AccountPage() {
 
   const [tab, setTab] = useState<AccountTab>('orders');
   const [printProforma, setPrintProforma] = useState<ProformaInvoice | null>(null);
+  const [printInvoice, setPrintInvoice] = useState<InvoiceRecord | null>(null);
+
+  // Guest order tracking state
+  const [trackOrderNo, setTrackOrderNo] = useState('');
+  const [trackMobile, setTrackMobile] = useState('');
+  const [trackedGuestOrder, setTrackedGuestOrder] = useState<Order | null>(null);
+  const [otpMobile, setOtpMobile] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpVerifiedMsg, setOtpVerifiedMsg] = useState('');
+
+  // Profile & Legal Info Form
+  const [profileForm, setProfileForm] = useState({
+    displayName: userProfile?.displayName || '',
+    mobile: userProfile?.mobile || '',
+    accountType: userProfile?.accountType || ('clinic' as 'individual' | 'clinic' | 'lab' | 'student' | 'agent' | 'company'),
+    clinicName: userProfile?.clinicName || '',
+    medicalCouncilNo: userProfile?.medicalCouncilNo || '',
+    specialty: userProfile?.specialty || '',
+    legalCompanyName: userProfile?.legalCompanyName || '',
+    economicCode: userProfile?.economicCode || '',
+    nationalId: userProfile?.nationalId || '',
+    registrationNo: userProfile?.registrationNo || '',
+  });
 
   // B2B Form
   const [b2bForm, setB2bForm] = useState({
@@ -84,7 +117,14 @@ export default function AccountPage() {
     clinicName: userProfile?.clinicName || '',
     medicalCouncilNo: userProfile?.medicalCouncilNo || '',
     documentSummary: '',
+    attachmentName: '',
+    attachmentPreview: '',
   });
+
+  // Return modal state
+  const [returnTargetOrder, setReturnTargetOrder] = useState<Order | null>(null);
+  const [returnReason, setReturnReason] = useState('عدم تطابق با سایز/مشخصات یا آسیب بسته‌بندی');
+  const [returnResolution, setReturnResolution] = useState<'refund' | 'replacement' | 'credit'>('refund');
 
   // Address Form
   const [addrForm, setAddrForm] = useState({
@@ -123,17 +163,71 @@ export default function AccountPage() {
         clinicName: prev.clinicName || userProfile.clinicName || '',
         medicalCouncilNo: prev.medicalCouncilNo || userProfile.medicalCouncilNo || '',
       }));
+      setProfileForm({
+        displayName: userProfile.displayName || '',
+        mobile: userProfile.mobile || '',
+        accountType: userProfile.accountType || 'clinic',
+        clinicName: userProfile.clinicName || '',
+        medicalCouncilNo: userProfile.medicalCouncilNo || '',
+        specialty: userProfile.specialty || '',
+        legalCompanyName: userProfile.legalCompanyName || '',
+        economicCode: userProfile.economicCode || '',
+        nationalId: userProfile.nationalId || '',
+        registrationNo: userProfile.registrationNo || '',
+      });
     }
   }, [userProfile]);
 
+  const handleGuestLookup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const found = await lookupGuestOrder(trackOrderNo, trackMobile);
+    if (!found) {
+      pushToast('سفارشی با این شماره و موبایل یافت نشد.', 'error');
+    } else {
+      setTrackedGuestOrder(found);
+      pushToast('وضعیت سفارش مهمان بازیابی شد.', 'success');
+    }
+  };
+
+  const handleGuestOtpSend = async () => {
+    if (!otpMobile.trim()) return;
+    const res = await fetch('/api/auth/otp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile: otpMobile.trim() }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      setOtpSent(true);
+      pushToast(data.message || 'کد تایید پیامکی ارسال شد (کد آزمایشی: ۱۲۳۴۵۶).', 'info');
+    } else {
+      pushToast(data.message || data.error || 'خطا در ارسال پیامک', 'error');
+    }
+  };
+
+  const handleGuestOtpVerify = async () => {
+    const res = await fetch('/api/auth/otp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile: otpMobile.trim(), code: otpCode.trim() }),
+    });
+    const data = await res.json();
+    if (res.ok && (data.ok || data.verified)) {
+      setOtpVerifiedMsg(`شماره ${otpMobile} با موفقیت تایید شد. برای ثبت احراز B2B و مشاهده تاریخچه ابری با حساب گوگل نیز متصل شوید.`);
+      pushToast('تایید پیامکی انجام شد.', 'success');
+    } else {
+      pushToast(data.message || data.error || 'کد تایید نامعتبر است.', 'error');
+    }
+  };
+
   if (!authUser) {
     return (
-      <div className="max-w-lg mx-auto px-4 py-16">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 text-center space-y-5">
-          <ShieldCheck className="w-12 h-12 mx-auto text-brand" />
-          <h1 className="text-2xl font-extrabold">ورود به پنل مشتریان و کلینیک‌ها</h1>
-          <p className="text-sm text-ink/70 dark:text-slate-400 leading-relaxed">
-            برای پیگیری سفارش‌ها، مشاهده پیش‌فاکتورها، ثبت درخواست اعتبار و فعال‌سازی تعرفه همکار (B2B) وارد حساب خود شوید.
+      <div className="max-w-4xl mx-auto px-4 py-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
+          <ShieldCheck className="w-10 h-10 text-brand" />
+          <h1 className="text-xl font-extrabold">ورود به پنل مشتریان و کلینیک‌ها</h1>
+          <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed">
+            برای دسترسی به سابقه سفارش‌ها، فاکتورهای رسمی، پیش‌فاکتورها، مرجوعی و فعال‌سازی تعرفه همکار (B2B) وارد شوید.
           </p>
           <button
             type="button"
@@ -142,6 +236,100 @@ export default function AccountPage() {
           >
             ورود با حساب گوگل
           </button>
+
+          <div className="pt-4 border-t border-line dark:border-slate-800 space-y-2.5 text-xs">
+            <p className="font-bold flex items-center gap-1.5">
+              <Smartphone className="w-4 h-4 text-brand" />
+              <span>تایید شماره موبایل با کد پیامکی (OTP Sandbox)</span>
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="tel"
+                value={otpMobile}
+                onChange={(e) => setOtpMobile(e.target.value)}
+                placeholder="0912..."
+                className="flex-1 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
+              <button
+                type="button"
+                onClick={handleGuestOtpSend}
+                className="px-3.5 py-2 rounded-lg border border-brand text-brand font-bold"
+              >
+                ارسال کد
+              </button>
+            </div>
+            {otpSent && (
+              <div className="flex gap-2">
+                <input
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                  placeholder="کد آزمایشی: 123456"
+                  className="flex-1 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+                <button
+                  type="button"
+                  onClick={handleGuestOtpVerify}
+                  className="px-3.5 py-2 rounded-lg bg-emerald-600 text-white font-bold"
+                >
+                  تایید
+                </button>
+              </div>
+            )}
+            {otpVerifiedMsg && <p className="text-emerald-700 dark:text-emerald-400 font-medium">{otpVerifiedMsg}</p>}
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-4">
+          <div className="flex items-center gap-2">
+            <Search className="w-6 h-6 text-brand" />
+            <h2 className="text-xl font-extrabold">پیگیری سفارش مهمان</h2>
+          </div>
+          <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed">
+            اگر بدون ورود به حساب کاربری سفارش ثبت کرده‌اید، شماره سفارش و شماره موبایل خود را وارد کنید.
+          </p>
+          <form onSubmit={handleGuestLookup} className="space-y-3 text-xs">
+            <input
+              required
+              value={trackOrderNo}
+              onChange={(e) => setTrackOrderNo(e.target.value)}
+              placeholder="شماره سفارش (مثلاً DM-1404-...)"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            />
+            <input
+              required
+              type="tel"
+              value={trackMobile}
+              onChange={(e) => setTrackMobile(e.target.value)}
+              placeholder="شماره همراه ثبت‌شده در سفارش"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            />
+            <button type="submit" className="w-full py-2.5 rounded-xl bg-brand text-white font-bold hover:bg-brandDark">
+              استعلام وضعیت سفارش
+            </button>
+          </form>
+
+          {trackedGuestOrder && (
+            <div className="p-4 rounded-xl bg-surface/60 dark:bg-slate-800 text-xs space-y-1.5">
+              <p className="font-extrabold tabular-nums">
+                {trackedGuestOrder.orderNo} — {ORDER_STATUS_FA[trackedGuestOrder.status]}
+              </p>
+              <p>مبلغ: {formatMoney(trackedGuestOrder.grandTotal, currency)}</p>
+              <p>تاریخ: {formatJalaliDateTime(trackedGuestOrder.createdAt)}</p>
+              {trackedGuestOrder.trackingCode && <p>کد رهگیری: {trackedGuestOrder.trackingCode}</p>}
+            </div>
+          )}
+
+          {guestOrders.length > 0 && (
+            <div className="pt-3 border-t border-line dark:border-slate-800 space-y-2 text-xs">
+              <p className="font-bold">آخرین سفارش‌های ثبت‌شده در این مرورگر:</p>
+              {guestOrders.slice(0, 3).map((go) => (
+                <div key={go.id} className="flex justify-between p-2 rounded-lg bg-surface/50 dark:bg-slate-800/50">
+                  <span className="font-bold tabular-nums">{go.orderNo}</span>
+                  <span className="tabular-nums">{formatMoney(go.grandTotal, currency)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -149,10 +337,17 @@ export default function AccountPage() {
 
   const myOrders = orders.filter((o) => o.userId === authUser.uid);
   const myProformas = proformas.filter((p) => p.userId === authUser.uid);
+  const myInvoices = invoices.filter((inv) => myOrders.some((o) => o.id === inv.orderId));
+  const myReturns = returns.filter((r) => r.userId === authUser.uid || myOrders.some((o) => o.id === r.orderId));
   const myTickets = tickets.filter((t) => t.userId === authUser.uid);
   const myVerifications = b2bVerifications.filter((b) => b.userId === authUser.uid);
   const myPlans = paymentPlans.filter((p) => p.userId === authUser.uid);
   const myStockRequests = stockRequests.filter((s) => s.userId === authUser.uid);
+
+  const handleProfileSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await updateOwnProfile(profileForm);
+  };
 
   const handleSaveAddress = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,10 +366,59 @@ export default function AccountPage() {
     setAddrForm({ label: 'مطب / کلینیک', province: 'تهران', city: 'تهران', postalCode: '', addressLine: '' });
   };
 
+  const handleB2BFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxW = 480;
+          const scale = Math.min(1, maxW / img.width);
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.6).slice(0, 45000);
+          setB2bForm((prev) => ({ ...prev, attachmentName: file.name, attachmentPreview: dataUrl }));
+        };
+        img.src = String(reader.result || '');
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setB2bForm((prev) => ({
+        ...prev,
+        attachmentName: file.name,
+        attachmentPreview: `فایل انتخاب‌شده: ${file.name} (${Math.ceil(file.size / 1024)} KB)`,
+      }));
+    }
+  };
+
   const handleB2BSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await submitB2BVerification(b2bForm);
-    setB2bForm((prev) => ({ ...prev, documentSummary: '' }));
+    setB2bForm((prev) => ({ ...prev, documentSummary: '', attachmentName: '', attachmentPreview: '' }));
+  };
+
+  const handleReturnSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!returnTargetOrder) return;
+    await submitReturnRequest({
+      orderId: returnTargetOrder.id,
+      items: returnTargetOrder.items.slice(0, 2).map((it) => ({
+        productId: it.productId,
+        variantId: it.variantId,
+        titleFa: it.titleFa,
+        quantity: it.quantity,
+      })),
+      reasonFa: returnReason,
+      resolution: returnResolution,
+      refundAmount: returnTargetOrder.grandTotal,
+    });
+    setReturnTargetOrder(null);
+    setTab('returns');
   };
 
   const handleTicketSubmit = async (e: React.FormEvent) => {
@@ -223,7 +467,9 @@ export default function AccountPage() {
         {[
           { id: 'orders', label: `سفارش‌ها (${toPersianDigits(myOrders.length)})`, icon: Package },
           { id: 'proformas', label: `پیش‌فاکتورها (${toPersianDigits(myProformas.length)})`, icon: FileText },
-          { id: 'b2b', label: 'پروفایل، آدرس‌ها و احراز B2B', icon: Building2 },
+          { id: 'invoices', label: `فاکتورهای رسمی (${toPersianDigits(myInvoices.length)})`, icon: Printer },
+          { id: 'returns', label: `مرجوعی‌ها (${toPersianDigits(myReturns.length)})`, icon: RotateCcw },
+          { id: 'b2b', label: 'پروفایل حقوقی، آدرس و احراز B2B', icon: Building2 },
           { id: 'tickets', label: `تیکت‌ها و درخواست‌ها (${toPersianDigits(myTickets.length)})`, icon: MessageSquare },
         ].map((item) => {
           const Icon = item.icon;
@@ -258,6 +504,7 @@ export default function AccountPage() {
           ) : (
             myOrders.map((order) => {
               const stepIdx = STEPPER.indexOf(order.status);
+              const canReturn = ['paid', 'delivered', 'completed', 'shipped'].includes(order.status);
               return (
                 <article
                   key={order.id}
@@ -337,6 +584,16 @@ export default function AccountPage() {
                       <RefreshCw className="w-3.5 h-3.5" />
                       <span>سفارش مجدد</span>
                     </button>
+                    {canReturn && (
+                      <button
+                        type="button"
+                        onClick={() => setReturnTargetOrder(order)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-amber-300 text-amber-700 dark:text-amber-300 text-xs font-bold"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>درخواست مرجوعی کالا</span>
+                      </button>
+                    )}
                   </div>
                 </article>
               );
@@ -379,6 +636,14 @@ export default function AccountPage() {
                     <Printer className="w-3.5 h-3.5" />
                     <span>پیش‌نمایش چاپ RTL</span>
                   </button>
+                  {pf.shareToken && (
+                    <Link
+                      to={`/proforma/${pf.shareToken}`}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand"
+                    >
+                      لینک اشتراک‌گذاری کلینیک
+                    </Link>
+                  )}
                   {(pf.status === 'draft' || pf.status === 'sent' || pf.status === 'viewed') && (
                     <>
                       <button
@@ -404,168 +669,337 @@ export default function AccountPage() {
         </div>
       )}
 
-      {/* Tab 3: B2B Verification & Addresses */}
-      {tab === 'b2b' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <form
-            onSubmit={handleB2BSubmit}
-            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4"
-          >
-            <div className="flex items-center gap-2">
-              <UserCheck className="w-5 h-5 text-brand" />
-              <h2 className="text-lg font-extrabold">درخواست احراز هویت حرفه‌ای (B2B)</h2>
+      {/* Tab 3: Invoices */}
+      {tab === 'invoices' && (
+        <div className="space-y-4">
+          {myInvoices.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center text-sm text-ink/60">
+              هنوز فاکتور رسمی برای سفارش‌های شما صادر نشده است.
             </div>
-            <p className="text-xs text-ink/60 dark:text-slate-400 leading-relaxed">
-              پس از تایید شماره نظام پزشکی یا مجوز کلینیک، قیمت‌های ویژه همکار، خرید چکی/اعتباری و فاکتور رسمی برای شما فعال می‌شود.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          ) : (
+            myInvoices.map((inv) => (
+              <div
+                key={inv.id}
+                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4 text-xs"
+              >
+                <div className="space-y-1">
+                  <h2 className="text-base font-extrabold tabular-nums">
+                    {inv.invoiceNo} ({inv.isOfficial ? 'فاکتور رسمی مالیاتی' : 'فاکتور فروش'})
+                  </h2>
+                  <p className="text-ink/60 dark:text-slate-400">
+                    سفارش: {inv.orderNo} · تاریخ صدور: {formatJalaliDate(inv.issuedAt)} · وضعیت: {inv.status}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-base font-extrabold text-brand tabular-nums">
+                    {formatMoney(inv.grandTotal, currency)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPrintInvoice(inv)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 font-bold"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>مشاهده و چاپ</span>
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Tab 4: Returns */}
+      {tab === 'returns' && (
+        <div className="space-y-4">
+          {myReturns.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center text-sm text-ink/60">
+              درخواست مرجوعی ثبت‌شده‌ای ندارید.
+            </div>
+          ) : (
+            myReturns.map((ret) => (
+              <div
+                key={ret.id}
+                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-2 text-xs"
+              >
+                <div className="flex justify-between items-center">
+                  <strong className="text-sm tabular-nums">{ret.returnNo} — سفارش {ret.orderNo}</strong>
+                  <span className="font-bold text-brand">{ret.status}</span>
+                </div>
+                <p>علت: {ret.reasonFa}</p>
+                <p className="text-ink/60">
+                  درخواست: {ret.resolution === 'refund' ? 'استرداد وجه' : ret.resolution === 'replacement' ? 'تعویض کالا' : 'اعتبار حساب'} · مبلغ: {formatMoney(ret.refundAmount, currency)}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Tab 5: B2B Verification, Legal Profile & Addresses */}
+      {tab === 'b2b' && (
+        <div className="space-y-6">
+          <form
+            onSubmit={handleProfileSave}
+            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 text-xs"
+          >
+            <h2 className="text-lg font-extrabold">مشخصات پروفایل و اطلاعات فاکتور رسمی حقوقی</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <label className="space-y-1">
-                <span className="font-bold">نام متقاضی *</span>
+                <span className="font-bold">نام و نام خانوادگی</span>
                 <input
-                  required
-                  value={b2bForm.applicantName}
-                  onChange={(e) => setB2bForm({ ...b2bForm, applicantName: e.target.value })}
+                  value={profileForm.displayName}
+                  onChange={(e) => setProfileForm({ ...profileForm, displayName: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">موبایل *</span>
+                <span className="font-bold">موبایل</span>
                 <input
-                  required
-                  value={b2bForm.mobile}
-                  onChange={(e) => setB2bForm({ ...b2bForm, mobile: e.target.value })}
+                  value={profileForm.mobile}
+                  onChange={(e) => setProfileForm({ ...profileForm, mobile: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">گروه درخواستی *</span>
+                <span className="font-bold">نوع حساب</span>
                 <select
-                  value={b2bForm.requestedGroup}
-                  onChange={(e) => setB2bForm({ ...b2bForm, requestedGroup: e.target.value as Exclude<CustomerGroupCode, 'retail'> })}
+                  value={profileForm.accountType}
+                  onChange={(e) => setProfileForm({ ...profileForm, accountType: e.target.value as 'individual' | 'clinic' | 'lab' | 'student' | 'agent' | 'company' })}
                   className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 >
-                  <option value="dentist">دندانپزشک</option>
+                  <option value="individual">حقیقی (پزشک / فردی)</option>
                   <option value="clinic">کلینیک / درمانگاه</option>
+                  <option value="company">حقوقی (شرکت)</option>
                   <option value="lab">لابراتوار دندانسازی</option>
-                  <option value="student">دانشجوی دندانپزشکی</option>
-                  <option value="agent">نماینده استانی</option>
-                  <option value="wholesale">همکار عمده‌فروش</option>
                 </select>
               </label>
               <label className="space-y-1">
-                <span className="font-bold">شماره نظام پزشکی / دانشجویی *</span>
+                <span className="font-bold">نام کلینیک / شرکت حقوقی</span>
                 <input
-                  required
-                  value={b2bForm.medicalCouncilNo}
-                  onChange={(e) => setB2bForm({ ...b2bForm, medicalCouncilNo: e.target.value })}
+                  value={profileForm.legalCompanyName}
+                  onChange={(e) => setProfileForm({ ...profileForm, legalCompanyName: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
-              <label className="space-y-1 sm:col-span-2">
-                <span className="font-bold">نام مطب / کلینیک / مرکز *</span>
+              <label className="space-y-1">
+                <span className="font-bold">کد اقتصادی</span>
                 <input
-                  required
-                  value={b2bForm.clinicName}
-                  onChange={(e) => setB2bForm({ ...b2bForm, clinicName: e.target.value })}
+                  value={profileForm.economicCode}
+                  onChange={(e) => setProfileForm({ ...profileForm, economicCode: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
-              <label className="space-y-1 sm:col-span-2">
-                <span className="font-bold">خلاصه مدارک / شماره پروانه</span>
-                <textarea
-                  rows={2}
-                  value={b2bForm.documentSummary}
-                  onChange={(e) => setB2bForm({ ...b2bForm, documentSummary: e.target.value })}
+              <label className="space-y-1">
+                <span className="font-bold">شناسه ملی</span>
+                <input
+                  value={profileForm.nationalId}
+                  onChange={(e) => setProfileForm({ ...profileForm, nationalId: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="font-bold">شماره ثبت</span>
+                <input
+                  value={profileForm.registrationNo}
+                  onChange={(e) => setProfileForm({ ...profileForm, registrationNo: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="font-bold">شماره نظام پزشکی</span>
+                <input
+                  value={profileForm.medicalCouncilNo}
+                  onChange={(e) => setProfileForm({ ...profileForm, medicalCouncilNo: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="font-bold">تخصص</span>
+                <input
+                  value={profileForm.specialty}
+                  onChange={(e) => setProfileForm({ ...profileForm, specialty: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
             </div>
-            <button type="submit" className="px-5 py-2.5 rounded-xl bg-brand text-white text-xs font-bold hover:bg-brandDark">
-              ارسال درخواست احراز هویت
+            <button type="submit" className="px-5 py-2 rounded-xl bg-brand text-white font-bold">
+              ذخیره اطلاعات پروفایل و حقوقی
             </button>
-
-            {myVerifications.length > 0 && (
-              <div className="pt-3 border-t border-line dark:border-slate-800 space-y-2">
-                <h3 className="text-xs font-bold">وضعیت درخواست‌های ارسال‌شده:</h3>
-                {myVerifications.map((v) => (
-                  <div key={v.id} className="p-3 rounded-xl bg-surface/60 dark:bg-slate-800 text-xs flex justify-between items-center">
-                    <span>
-                      {v.clinicName} ({GROUP_FA[v.requestedGroup]})
-                    </span>
-                    <span className="font-bold flex items-center gap-1">
-                      <BadgeCheck className="w-3.5 h-3.5 text-brand" />
-                      {v.status === 'approved' ? 'تاییدشده' : v.status === 'rejected' ? 'ردشده' : 'در حال بررسی'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
           </form>
 
-          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-brand" />
-              <h2 className="text-lg font-extrabold">نشانی‌های ثبت‌شده</h2>
-            </div>
-
-            <div className="space-y-2">
-              {(userProfile?.addresses ?? []).length === 0 ? (
-                <p className="text-xs text-ink/50">هنوز نشانی ثابتی ذخیره نکرده‌اید.</p>
-              ) : (
-                userProfile?.addresses?.map((a) => (
-                  <div key={a.id} className="p-3 rounded-xl border border-line dark:border-slate-800 text-xs space-y-1">
-                    <p className="font-bold">{a.label} — {a.province}، {a.city}</p>
-                    <p className="text-ink/70 dark:text-slate-400">{a.addressLine}</p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <form onSubmit={handleSaveAddress} className="space-y-3 pt-3 border-t border-line dark:border-slate-800 text-xs">
-              <h3 className="font-bold">افزودن نشانی جدید</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  value={addrForm.label}
-                  onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
-                  placeholder="عنوان (مثلاً مطب ونک)"
-                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                />
-                <input
-                  value={addrForm.postalCode}
-                  onChange={(e) => setAddrForm({ ...addrForm, postalCode: e.target.value })}
-                  placeholder="کد پستی"
-                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                />
-                <input
-                  value={addrForm.province}
-                  onChange={(e) => setAddrForm({ ...addrForm, province: e.target.value })}
-                  placeholder="استان"
-                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                />
-                <input
-                  value={addrForm.city}
-                  onChange={(e) => setAddrForm({ ...addrForm, city: e.target.value })}
-                  placeholder="شهر"
-                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                />
-                <textarea
-                  rows={2}
-                  required
-                  value={addrForm.addressLine}
-                  onChange={(e) => setAddrForm({ ...addrForm, addressLine: e.target.value })}
-                  placeholder="نشانی کامل..."
-                  className="col-span-2 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <form
+              onSubmit={handleB2BSubmit}
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4"
+            >
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-brand" />
+                <h2 className="text-lg font-extrabold">درخواست احراز هویت حرفه‌ای (B2B)</h2>
               </div>
-              <button type="submit" className="px-4 py-2 rounded-xl bg-brand text-white font-bold">
-                ذخیره نشانی
+              <p className="text-xs text-ink/60 dark:text-slate-400 leading-relaxed">
+                پس از تایید شماره نظام پزشکی یا مجوز کلینیک، قیمت‌های ویژه همکار، خرید چکی/اعتباری و فاکتور رسمی برای شما فعال می‌شود.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <label className="space-y-1">
+                  <span className="font-bold">نام متقاضی *</span>
+                  <input
+                    required
+                    value={b2bForm.applicantName}
+                    onChange={(e) => setB2bForm({ ...b2bForm, applicantName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold">موبایل *</span>
+                  <input
+                    required
+                    value={b2bForm.mobile}
+                    onChange={(e) => setB2bForm({ ...b2bForm, mobile: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold">گروه درخواستی *</span>
+                  <select
+                    value={b2bForm.requestedGroup}
+                    onChange={(e) => setB2bForm({ ...b2bForm, requestedGroup: e.target.value as Exclude<CustomerGroupCode, 'retail'> })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  >
+                    <option value="dentist">دندانپزشک</option>
+                    <option value="clinic">کلینیک / درمانگاه</option>
+                    <option value="lab">لابراتوار دندانسازی</option>
+                    <option value="student">دانشجوی دندانپزشکی</option>
+                    <option value="agent">نماینده استانی</option>
+                    <option value="wholesale">همکار عمده‌فروش</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold">شماره نظام پزشکی / دانشجویی *</span>
+                  <input
+                    required
+                    value={b2bForm.medicalCouncilNo}
+                    onChange={(e) => setB2bForm({ ...b2bForm, medicalCouncilNo: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1 sm:col-span-2">
+                  <span className="font-bold">نام مطب / کلینیک / مرکز *</span>
+                  <input
+                    required
+                    value={b2bForm.clinicName}
+                    onChange={(e) => setB2bForm({ ...b2bForm, clinicName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1 sm:col-span-2">
+                  <span className="font-bold">آپلود تصویر کارت نظام پزشکی یا پروانه کسب</span>
+                  <label className="flex items-center justify-center gap-2 px-3 py-3 rounded-xl border border-dashed border-line dark:border-slate-700 cursor-pointer hover:border-brand">
+                    <Upload className="w-4 h-4 text-brand" />
+                    <span>{b2bForm.attachmentName || 'انتخاب فایل (تصویر یا PDF)'}</span>
+                    <input type="file" accept="image/*,.pdf" onChange={handleB2BFileUpload} className="hidden" />
+                  </label>
+                  {b2bForm.attachmentPreview.startsWith('data:image') && (
+                    <img src={b2bForm.attachmentPreview} alt="پیش‌نمایش مدرک" className="h-20 rounded-lg border border-line mt-2" />
+                  )}
+                </label>
+                <label className="space-y-1 sm:col-span-2">
+                  <span className="font-bold">خلاصه مدارک / شماره پروانه</span>
+                  <textarea
+                    rows={2}
+                    value={b2bForm.documentSummary}
+                    onChange={(e) => setB2bForm({ ...b2bForm, documentSummary: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+              </div>
+              <button type="submit" className="px-5 py-2.5 rounded-xl bg-brand text-white text-xs font-bold hover:bg-brandDark">
+                ارسال درخواست احراز هویت
               </button>
+
+              {myVerifications.length > 0 && (
+                <div className="pt-3 border-t border-line dark:border-slate-800 space-y-2">
+                  <h3 className="text-xs font-bold">وضعیت درخواست‌های ارسال‌شده:</h3>
+                  {myVerifications.map((v) => (
+                    <div key={v.id} className="p-3 rounded-xl bg-surface/60 dark:bg-slate-800 text-xs flex justify-between items-center">
+                      <span>
+                        {v.clinicName} ({GROUP_FA[v.requestedGroup]})
+                      </span>
+                      <span className="font-bold flex items-center gap-1">
+                        <BadgeCheck className="w-3.5 h-3.5 text-brand" />
+                        {v.status === 'approved' ? 'تاییدشده' : v.status === 'rejected' ? 'ردشده' : 'در حال بررسی'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </form>
+
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-brand" />
+                <h2 className="text-lg font-extrabold">نشانی‌های ثبت‌شده</h2>
+              </div>
+
+              <div className="space-y-2">
+                {(userProfile?.addresses ?? []).length === 0 ? (
+                  <p className="text-xs text-ink/50">هنوز نشانی ثابتی ذخیره نکرده‌اید.</p>
+                ) : (
+                  userProfile?.addresses?.map((a) => (
+                    <div key={a.id} className="p-3 rounded-xl border border-line dark:border-slate-800 text-xs space-y-1">
+                      <p className="font-bold">{a.label} — {a.province}، {a.city}</p>
+                      <p className="text-ink/70 dark:text-slate-400">{a.addressLine}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form onSubmit={handleSaveAddress} className="space-y-3 pt-3 border-t border-line dark:border-slate-800 text-xs">
+                <h3 className="font-bold">افزودن نشانی جدید</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    value={addrForm.label}
+                    onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
+                    placeholder="عنوان (مثلاً مطب ونک)"
+                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                  <input
+                    value={addrForm.postalCode}
+                    onChange={(e) => setAddrForm({ ...addrForm, postalCode: e.target.value })}
+                    placeholder="کد پستی"
+                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                  <input
+                    value={addrForm.province}
+                    onChange={(e) => setAddrForm({ ...addrForm, province: e.target.value })}
+                    placeholder="استان"
+                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                  <input
+                    value={addrForm.city}
+                    onChange={(e) => setAddrForm({ ...addrForm, city: e.target.value })}
+                    placeholder="شهر"
+                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                  <textarea
+                    rows={2}
+                    required
+                    value={addrForm.addressLine}
+                    onChange={(e) => setAddrForm({ ...addrForm, addressLine: e.target.value })}
+                    placeholder="نشانی کامل..."
+                    className="col-span-2 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </div>
+                <button type="submit" className="px-4 py-2 rounded-xl bg-brand text-white font-bold">
+                  ذخیره نشانی
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Tab 4: Tickets & Credit/Stock Requests */}
+      {/* Tab 6: Tickets & Credit/Stock Requests */}
       {tab === 'tickets' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <form
@@ -692,6 +1126,48 @@ export default function AccountPage() {
         </div>
       )}
 
+      {/* Return Request Modal */}
+      {returnTargetOrder && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <form
+            onSubmit={handleReturnSubmit}
+            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 text-xs"
+          >
+            <h2 className="text-base font-extrabold">ثبت درخواست مرجوعی سفارش {returnTargetOrder.orderNo}</h2>
+            <label className="block space-y-1">
+              <span className="font-bold">علت مرجوعی</span>
+              <textarea
+                required
+                rows={3}
+                value={returnReason}
+                onChange={(e) => setReturnReason(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="font-bold">نحوه تسویه مورد نظر</span>
+              <select
+                value={returnResolution}
+                onChange={(e) => setReturnResolution(e.target.value as typeof returnResolution)}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              >
+                <option value="refund">استرداد وجه به حساب بانکی</option>
+                <option value="replacement">تعویض کالا</option>
+                <option value="credit">شارژ اعتبار کیف پول مطب</option>
+              </select>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setReturnTargetOrder(null)} className="px-4 py-2 rounded-lg border border-line font-bold">
+                انصراف
+              </button>
+              <button type="submit" className="px-5 py-2 rounded-lg bg-brand text-white font-bold">
+                ثبت درخواست مرجوعی
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Printable Proforma Modal */}
       {printProforma && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
@@ -735,18 +1211,58 @@ export default function AccountPage() {
               <span className="tabular-nums text-brand">{formatMoney(printProforma.grandTotal, currency)}</span>
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold"
-              >
+              <button type="button" onClick={() => window.print()} className="px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold">
                 چاپ / ذخیره PDF
               </button>
-              <button
-                type="button"
-                onClick={() => setPrintProforma(null)}
-                className="px-4 py-2 rounded-lg border border-line text-xs font-bold"
-              >
+              <button type="button" onClick={() => setPrintProforma(null)} className="px-4 py-2 rounded-lg border border-line text-xs font-bold">
+                بستن
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Printable Official Invoice Modal */}
+      {printInvoice && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="bg-white text-ink rounded-2xl max-w-2xl w-full p-8 space-y-5 shadow-2xl text-xs">
+            <div className="flex justify-between items-start border-b border-line pb-4">
+              <div>
+                <h2 className="text-xl font-extrabold text-brand">
+                  {settings.storeNameFa} — {printInvoice.isOfficial ? 'صورتحساب فروش رسمی کالا و خدمات' : 'فاکتور فروش'}
+                </h2>
+                <p className="text-ink/60 mt-1">نشانی فروشنده: {settings.addressFa}</p>
+              </div>
+              <div className="text-left space-y-1">
+                <p className="font-extrabold tabular-nums">شماره فاکتور: {printInvoice.invoiceNo}</p>
+                <p>تاریخ صدور: {formatJalaliDate(printInvoice.issuedAt)}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-surface/60">
+              <p>نام خریدار: <strong>{printInvoice.customerName}</strong></p>
+              <p>شناسه ملی / کدملی: <strong className="tabular-nums">{printInvoice.nationalId || '—'}</strong></p>
+              <p>کد اقتصادی: <strong className="tabular-nums">{printInvoice.economicCode || '—'}</strong></p>
+              <p>وضعیت فاکتور: <strong>{printInvoice.status === 'issued' ? 'صادرشده' : 'باطل‌شده'}</strong></p>
+            </div>
+            <div className="space-y-2 border-t border-line pt-3">
+              <div className="flex justify-between">
+                <span>جمع خالص اقلام:</span>
+                <strong className="tabular-nums">{formatMoney(printInvoice.subtotal, currency)}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span>مالیات بر ارزش افزوده:</span>
+                <strong className="tabular-nums">{formatMoney(printInvoice.taxTotal, currency)}</strong>
+              </div>
+              <div className="flex justify-between text-sm font-extrabold text-brand border-t border-line pt-2">
+                <span>مبلغ قابل پرداخت نهایی:</span>
+                <span className="tabular-nums">{formatMoney(printInvoice.grandTotal, currency)}</span>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-3">
+              <button type="button" onClick={() => window.print()} className="px-4 py-2 rounded-lg bg-brand text-white font-bold">
+                چاپ فاکتور
+              </button>
+              <button type="button" onClick={() => setPrintInvoice(null)} className="px-4 py-2 rounded-lg border border-line font-bold">
                 بستن
               </button>
             </div>

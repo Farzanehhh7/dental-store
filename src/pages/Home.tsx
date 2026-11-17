@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Building2, CheckCircle2, FileText, PackageCheck, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Building2, CheckCircle2, FileText, MapPin, PackageCheck, ShieldCheck } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
 import CountdownTimer from '../components/store/CountdownTimer';
 import { useStore } from '../context/StoreContext';
 import { IMG_HERO_CLINIC } from '../data/seed';
+import { t } from '../lib/i18n';
 import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
 import { applySeoHead, buildHomeJsonLd } from '../lib/seo';
-import { resolveVariantPrice } from '../lib/pricing';
+import { getProductPriceSummary, resolveVariantPrice } from '../lib/pricing';
 
-type CollectionTab = 'bestsellers' | 'deals' | 'equipment' | 'consumables';
+type CollectionTab = 'bestsellers' | 'newest' | 'most_viewed' | 'near_expiry' | 'deals' | 'equipment' | 'consumables';
 
 export default function Home() {
   const {
@@ -19,7 +20,11 @@ export default function Home() {
     campaigns,
     bundles,
     agents,
+    banners,
     blogPosts,
+    contractPrices,
+    recentlyViewedIds,
+    authUser,
     currency,
     customerGroup,
     settings,
@@ -28,6 +33,11 @@ export default function Home() {
 
   const [activeTab, setActiveTab] = useState<CollectionTab>('bestsellers');
 
+  const heroBanner = useMemo(
+    () => banners.find((b) => b.slot === 'hero' && b.isActive),
+    [banners]
+  );
+
   useEffect(() => {
     applySeoHead({
       title: `${settings.storeNameFa} | فروشگاه تخصصی تجهیزات و مواد دندانپزشکی`,
@@ -35,10 +45,10 @@ export default function Home() {
       canonicalPath: '/',
       robots: 'index, follow',
       ogType: 'website',
-      ogImage: IMG_HERO_CLINIC,
+      ogImage: heroBanner?.imageUrl || IMG_HERO_CLINIC,
       jsonLd: buildHomeJsonLd(settings),
     });
-  }, [settings]);
+  }, [settings, heroBanner]);
 
   const l1Categories = useMemo(
     () => categories.filter((c) => c.depth === 0 && c.isActive && c.showOnHome).sort((a, b) => a.sortOrder - b.sortOrder),
@@ -53,16 +63,37 @@ export default function Home() {
   const filteredProducts = useMemo(() => {
     const active = products.filter((p) => p.vertical === 'dental' && p.status === 'active');
     if (activeTab === 'deals' && activeCampaign) {
-      return active.filter((p) => activeCampaign.productIds.includes(p.id));
+      return active.filter((p) => activeCampaign.productIds.includes(p.id)).slice(0, 8);
+    }
+    if (activeTab === 'newest') {
+      return [...active]
+        .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+        .slice(0, 8);
+    }
+    if (activeTab === 'most_viewed') {
+      return [...active].sort((a, b) => b.viewCount - a.viewCount).slice(0, 8);
+    }
+    if (activeTab === 'near_expiry') {
+      return active
+        .filter((p) => getProductPriceSummary(p, { customerGroup, campaigns, currency, settings }).nearExpiry)
+        .slice(0, 8);
     }
     if (activeTab === 'equipment') {
-      return active.filter((p) => p.kind === 'capital_equipment');
+      return active.filter((p) => p.kind === 'capital_equipment').slice(0, 8);
     }
     if (activeTab === 'consumables') {
-      return active.filter((p) => p.kind === 'consumable');
+      return active.filter((p) => p.kind === 'consumable').slice(0, 8);
     }
     return [...active].sort((a, b) => b.soldCount - a.soldCount).slice(0, 8);
-  }, [products, activeTab, activeCampaign]);
+  }, [products, activeTab, activeCampaign, customerGroup, campaigns, currency, settings]);
+
+  const recentProducts = useMemo(() => {
+    if (recentlyViewedIds.length === 0) return [];
+    return recentlyViewedIds
+      .map((id) => products.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => Boolean(p))
+      .slice(0, 4);
+  }, [recentlyViewedIds, products]);
 
   const computeBundlePrice = (bundleId: string) => {
     const b = bundles.find((x) => x.id === bundleId);
@@ -72,7 +103,13 @@ export default function Home() {
       const p = products.find((x) => x.id === item.productId);
       const v = p?.variants.find((x) => x.id === item.variantId);
       if (p && v) {
-        const res = resolveVariantPrice(p, v, { customerGroup, campaigns, settings });
+        const res = resolveVariantPrice(p, v, {
+          customerGroup,
+          campaigns,
+          settings,
+          contractPrices,
+          userId: authUser?.uid,
+        });
         regular += (res.unitPrice ?? v.basePrice ?? 0) * item.quantity;
       }
     }
@@ -82,25 +119,26 @@ export default function Home() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-16">
-      {/* 1. Hero Split Section (One dominant focal anchor, high-res 16:9 image, proof strip below) */}
+      {/* 1. Hero Split Section */}
       <section className="space-y-6">
         <div className="grid lg:grid-cols-12 gap-8 items-stretch bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
           <div className="lg:col-span-6 p-8 lg:p-12 flex flex-col justify-center gap-5">
             <p className="text-xs font-bold text-brand dark:text-teal-300">
-              تأمین تخصصی کلینیک‌ها، مطب‌ها و لابراتوارهای دندانپزشکی
+              تأمین تخصصی کلینیک‌ها، مطب‌ها و لابراتوارهای دندانپزشکی ({t('counts.products', { count: products.length })})
             </p>
             <h1 className="text-3xl lg:text-4xl font-extrabold leading-snug text-ink dark:text-slate-100 [text-wrap:balance]">
-              تجهیزات و مواد دندانپزشکی با قیمت شفاف و اصالت IMED
+              {heroBanner?.titleFa || 'تجهیزات و مواد دندانپزشکی با قیمت شفاف و اصالت IMED'}
             </h1>
             <p className="text-sm lg:text-base text-ink/75 dark:text-slate-300 leading-relaxed max-w-xl">
-              از مواد مصرفی روزانه و کامپوزیت‌های ترمیمی با کنترل دقیق تاریخ انقضا تا تجهیزات سرمایه‌ای مطب همراه با پیش‌فاکتور رسمی، نصب در محل و گارانتی شرکتی.
+              {heroBanner?.subtitleFa ||
+                'از مواد مصرفی روزانه و کامپوزیت‌های ترمیمی با کنترل دقیق تاریخ انقضا تا تجهیزات سرمایه‌ای مطب همراه با پیش‌فاکتور رسمی، نصب در محل و گارانتی شرکتی.'}
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <Link
-                to="/category/consumables"
+                to={heroBanner?.linkPath || '/category/consumables'}
                 className="px-6 py-3 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors inline-flex items-center gap-2"
               >
-                <span>مشاهده کاتالوگ محصولات</span>
+                <span>{heroBanner?.ctaTextFa || 'مشاهده کاتالوگ محصولات'}</span>
                 <ArrowLeft className="w-4 h-4" />
               </Link>
               <Link
@@ -114,7 +152,7 @@ export default function Home() {
 
           <div className="lg:col-span-6 min-h-[260px] lg:min-h-[380px] bg-surface dark:bg-slate-800">
             <img
-              src={IMG_HERO_CLINIC}
+              src={heroBanner?.imageUrl || IMG_HERO_CLINIC}
               alt="اتاق درمان کلینیک دندانپزشکی مجهز به یونیت و تجهیزات استریل"
               width={960}
               height={540}
@@ -124,7 +162,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Full-width 4-column Proof Strip */}
+        {/* 4-column Proof Strip */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-4 flex items-center gap-3">
             <ShieldCheck className="w-6 h-6 text-brand shrink-0" />
@@ -161,11 +199,15 @@ export default function Home() {
       <section className="space-y-8">
         <div>
           <div className="flex items-center justify-between gap-4 mb-4">
-            <h2 className="text-xl font-extrabold text-ink dark:text-slate-100">دسته‌بندی‌های تخصصی دندانپزشکی</h2>
-            <Link to="/brands" className="text-xs font-bold text-brand hover:underline">مشاهده همه برندها</Link>
+            <h2 className="text-xl font-extrabold text-ink dark:text-slate-100">
+              دسته‌بندی‌های تخصصی دندانپزشکی ({t('counts.categories', { count: categories.filter((c) => c.isActive).length })})
+            </h2>
+            <Link to="/brands" className="text-xs font-bold text-brand hover:underline">
+              {t('counts.brands', { count: brands.filter((b) => b.isActive).length })}
+            </Link>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {l1Categories.map((cat) => (
+            {l1Categories.slice(0, 12).map((cat) => (
               <Link
                 key={cat.id}
                 to={`/category/${cat.slug}`}
@@ -181,20 +223,32 @@ export default function Home() {
         <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-1 p-1 bg-surface dark:bg-slate-900 rounded-lg border border-line dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setActiveTab('bestsellers')}
-                className={`px-3.5 py-2 text-xs font-bold rounded-md transition-colors whitespace-nowrap ${
-                  activeTab === 'bestsellers' ? 'bg-white dark:bg-slate-800 text-brand dark:text-teal-300 shadow-sm' : 'text-ink/70 dark:text-slate-400'
-                }`}
-              >
-                پرفروش‌ترین محصولات
-              </button>
+              {(
+                [
+                  ['bestsellers', 'پرفروش‌ترین محصولات'],
+                  ['newest', t('home.newest')],
+                  ['most_viewed', t('home.mostViewed')],
+                  ['near_expiry', t('home.nearExpirySection')],
+                  ['equipment', 'تجهیزات سرمایه‌ای'],
+                  ['consumables', 'مواد مصرفی'],
+                ] as [CollectionTab, string][]
+              ).map(([tabKey, tabLabel]) => (
+                <button
+                  key={tabKey}
+                  type="button"
+                  onClick={() => setActiveTab(tabKey)}
+                  className={`px-3 py-2 text-xs font-bold rounded-md transition-colors whitespace-nowrap ${
+                    activeTab === tabKey ? 'bg-white dark:bg-slate-800 text-brand dark:text-teal-300 shadow-sm' : 'text-ink/70 dark:text-slate-400'
+                  }`}
+                >
+                  {tabLabel}
+                </button>
+              ))}
               {activeCampaign && (
                 <button
                   type="button"
                   onClick={() => setActiveTab('deals')}
-                  className={`px-3.5 py-2 text-xs font-bold rounded-md transition-colors whitespace-nowrap inline-flex items-center gap-2 ${
+                  className={`px-3 py-2 text-xs font-bold rounded-md transition-colors whitespace-nowrap inline-flex items-center gap-2 ${
                     activeTab === 'deals' ? 'bg-white dark:bg-slate-800 text-rose-700 dark:text-rose-400 shadow-sm' : 'text-ink/70 dark:text-slate-400'
                   }`}
                 >
@@ -202,24 +256,6 @@ export default function Home() {
                   {activeCampaign.showTimer && <CountdownTimer endsAt={activeCampaign.endsAt} />}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => setActiveTab('equipment')}
-                className={`px-3.5 py-2 text-xs font-bold rounded-md transition-colors whitespace-nowrap ${
-                  activeTab === 'equipment' ? 'bg-white dark:bg-slate-800 text-brand dark:text-teal-300 shadow-sm' : 'text-ink/70 dark:text-slate-400'
-                }`}
-              >
-                تجهیزات سرمایه‌ای مطب
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('consumables')}
-                className={`px-3.5 py-2 text-xs font-bold rounded-md transition-colors whitespace-nowrap ${
-                  activeTab === 'consumables' ? 'bg-white dark:bg-slate-800 text-brand dark:text-teal-300 shadow-sm' : 'text-ink/70 dark:text-slate-400'
-                }`}
-              >
-                مواد مصرفی و ترمیمی
-              </button>
             </div>
           </div>
 
@@ -231,10 +267,10 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 3. Clinic Starter Packs & Authorized Brands */}
+      {/* 3. Clinic Starter Packs */}
       <section className="space-y-8">
         <div>
-          <h2 className="text-xl font-extrabold text-ink dark:text-slate-100 mb-4">پکیج‌های راه‌اندازی مطب و اقتصادی</h2>
+          <h2 className="text-xl font-extrabold text-ink dark:text-slate-100 mb-4">{t('home.starterPacks')}</h2>
           <div className="grid md:grid-cols-2 gap-6">
             {bundles.filter((b) => b.status === 'active').map((bundle) => {
               const { regular, discounted } = computeBundlePrice(bundle.id);
@@ -243,19 +279,23 @@ export default function Home() {
                   key={bundle.id}
                   className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-6 flex flex-col sm:flex-row gap-5"
                 >
-                  <img
-                    src={bundle.imageUrl}
-                    alt={bundle.nameFa}
-                    width={180}
-                    height={135}
-                    className="w-full sm:w-44 h-36 object-cover rounded-lg bg-surface shrink-0"
-                  />
+                  <Link to={`/pack/${bundle.slug}`} className="shrink-0">
+                    <img
+                      src={bundle.imageUrl}
+                      alt={bundle.nameFa}
+                      width={180}
+                      height={135}
+                      className="w-full sm:w-44 h-36 object-cover rounded-lg bg-surface"
+                    />
+                  </Link>
                   <div className="flex-1 flex flex-col justify-between gap-3">
                     <div>
                       <p className="text-xs font-bold text-brand dark:text-teal-300">
                         {toPersianDigits(bundle.items.length)} قلم کالا · {toPersianDigits(bundle.discountPercent)}٪ صرفه‌جویی پکیج
                       </p>
-                      <h3 className="text-base font-extrabold mt-1">{bundle.nameFa}</h3>
+                      <Link to={`/pack/${bundle.slug}`} className="hover:text-brand">
+                        <h3 className="text-base font-extrabold mt-1">{bundle.nameFa}</h3>
+                      </Link>
                       <p className="text-xs text-ink/70 dark:text-slate-400 mt-1.5 leading-relaxed">
                         {bundle.descriptionFa}
                       </p>
@@ -287,10 +327,10 @@ export default function Home() {
           <div className="lg:col-span-5 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-extrabold">برندهای تخصصی همکار</h2>
-              <Link to="/brands" className="text-xs font-bold text-brand hover:underline">فهرست برندها</Link>
+              <Link to="/brands" className="text-xs font-bold text-brand hover:underline">فهرست همه ({toPersianDigits(brands.length)})</Link>
             </div>
             <div className="divide-y divide-line dark:divide-slate-800">
-              {brands.map((b) => (
+              {brands.slice(0, 7).map((b) => (
                 <Link
                   key={b.id}
                   to={`/brand/${b.slug}`}
@@ -317,7 +357,7 @@ export default function Home() {
               <Link to="/blog" className="text-xs font-bold text-brand hover:underline">مشاهده همه مقالات</Link>
             </div>
             <div className="grid sm:grid-cols-2 gap-4">
-              {blogPosts.filter((p) => p.status === 'published').map((post) => (
+              {blogPosts.filter((p) => p.status === 'published').slice(0, 4).map((post) => (
                 <Link
                   key={post.id}
                   to={`/blog/${post.slug}`}
@@ -346,6 +386,42 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* 4. Provincial Agents & Service Centers */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-extrabold text-ink dark:text-slate-100">{t('home.agentsSection')}</h2>
+          <Link to="/agents" className="text-xs font-bold text-brand hover:underline">مشاهده همه استان‌ها</Link>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {agents.filter((a) => a.isActive).slice(0, 4).map((ag) => (
+            <Link
+              key={ag.id}
+              to={`/agents/${ag.provinceSlug}`}
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-4 hover:border-brand transition-colors space-y-2"
+            >
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <MapPin className="w-4 h-4 text-brand shrink-0" />
+                <span>{ag.province} — {ag.city}</span>
+              </div>
+              <p className="text-xs font-medium text-ink/80 dark:text-slate-300 line-clamp-1">{ag.nameFa}</p>
+              <p className="text-[11px] text-ink/60 dark:text-slate-400 tabular-nums">{ag.phone}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* 5. Recently Viewed Products */}
+      {recentProducts.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-extrabold text-ink dark:text-slate-100">{t('home.recentlyViewed')}</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {recentProducts.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

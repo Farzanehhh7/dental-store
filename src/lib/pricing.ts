@@ -1,6 +1,7 @@
 import { daysUntil, formatMoney } from './jalali';
 import {
   Campaign,
+  ContractPrice,
   CurrencyMode,
   CustomerGroupCode,
   Product,
@@ -13,7 +14,8 @@ export interface ResolvedVariantPrice {
   unitPrice: number | null;
   originalPrice: number | null;
   discountPercent: number;
-  priceSource: 'base' | 'group' | 'tier' | 'campaign';
+  discountVerified: boolean;
+  priceSource: 'base' | 'group' | 'tier' | 'campaign' | 'contract';
   campaignEndsAt: string | null;
   campaignBadgeFa: string | null;
   availableStock: number;
@@ -64,6 +66,34 @@ export function getActiveCampaignForProduct(
   return active.sort((a, b) => b.discountPercent - a.discountPercent)[0];
 }
 
+/**
+ * §5.3 Genuine discount verification: checks that the pre-discount base price was not
+ * artificially inflated within `discountProofMinDays` prior to the discount.
+ */
+export function isDiscountGenuineByHistory(
+  product: Product,
+  variantId: string,
+  basePrice: number,
+  discountProofMinDays = 30
+): boolean {
+  if (discountProofMinDays <= 0) return true;
+  const minWindowMs = discountProofMinDays * 86400000;
+  const now = Date.now();
+  const history = (product.priceHistory ?? []).filter((h) => h.variantId === variantId);
+
+  if (history.length > 0) {
+    const recentHike = history.some(
+      (h) => now - new Date(h.changedAt).getTime() < minWindowMs && h.newPrice > h.oldPrice && h.newPrice >= basePrice
+    );
+    if (recentHike) return false;
+    const oldestProof = history.some((h) => now - new Date(h.changedAt).getTime() >= minWindowMs || h.newPrice <= basePrice);
+    if (oldestProof) return true;
+  }
+
+  const pubTime = new Date(product.publishedAt).getTime();
+  return !Number.isNaN(pubTime) && now - pubTime >= minWindowMs;
+}
+
 export function resolveVariantPrice(
   product: Product,
   variant: ProductVariant,
@@ -72,6 +102,8 @@ export function resolveVariantPrice(
     quantity?: number;
     campaigns?: Campaign[];
     settings?: SiteSettings;
+    contractPrices?: ContractPrice[];
+    userId?: string;
   } = {}
 ): ResolvedVariantPrice {
   const {
@@ -79,9 +111,12 @@ export function resolveVariantPrice(
     quantity = 1,
     campaigns = [],
     settings,
+    contractPrices = [],
+    userId,
   } = options;
   const availableStock = getVariantAvailableStock(variant);
   const nearThreshold = settings?.nearExpiryThresholdDays ?? 90;
+  const minProofDays = settings?.discountProofMinDays ?? 30;
   const fefo = getNearestFefoBatch(variant, nearThreshold);
 
   if (product.status === 'coming_soon') {
@@ -90,6 +125,7 @@ export function resolveVariantPrice(
       unitPrice: null,
       originalPrice: null,
       discountPercent: 0,
+      discountVerified: false,
       priceSource: 'base',
       campaignEndsAt: null,
       campaignBadgeFa: null,
@@ -106,6 +142,7 @@ export function resolveVariantPrice(
       unitPrice: null,
       originalPrice: null,
       discountPercent: 0,
+      discountVerified: false,
       priceSource: 'base',
       campaignEndsAt: null,
       campaignBadgeFa: null,
@@ -122,6 +159,7 @@ export function resolveVariantPrice(
       unitPrice: null,
       originalPrice: null,
       discountPercent: 0,
+      discountVerified: false,
       priceSource: 'base',
       campaignEndsAt: null,
       campaignBadgeFa: null,
@@ -133,7 +171,7 @@ export function resolveVariantPrice(
   }
 
   let effectivePrice = variant.basePrice;
-  let priceSource: 'base' | 'group' | 'tier' | 'campaign' = 'base';
+  let priceSource: ResolvedVariantPrice['priceSource'] = 'base';
 
   // 1. Customer group price
   const groupOverride = variant.groupPrices?.[customerGroup];
@@ -142,7 +180,22 @@ export function resolveVariantPrice(
     priceSource = 'group';
   }
 
-  // 2. Tiered quantity pricing
+  // 2. Customer contract price override
+  if (userId && contractPrices.length > 0) {
+    const activeContract = contractPrices.find(
+      (cp) =>
+        cp.isActive &&
+        cp.userId === userId &&
+        cp.variantId === variant.id &&
+        new Date(cp.validUntil).getTime() > Date.now()
+    );
+    if (activeContract && activeContract.unitPrice > 0 && activeContract.unitPrice < effectivePrice) {
+      effectivePrice = activeContract.unitPrice;
+      priceSource = 'contract';
+    }
+  }
+
+  // 3. Tiered quantity pricing
   if (variant.tierPrices && variant.tierPrices.length > 0) {
     const applicableTiers = variant.tierPrices
       .filter((t) => quantity >= t.minQty)
@@ -153,28 +206,36 @@ export function resolveVariantPrice(
     }
   }
 
-  // 3. Real time-bound campaign discount (strictly DB-driven, never fabricated)
+  // 4. Time-bound campaign or near-expiry FEFO discount with history proof verification
   const campaign = getActiveCampaignForProduct(product.id, campaigns);
   let originalPrice: number | null = null;
   let discountPercent = 0;
+  let discountVerified = false;
   let campaignEndsAt: string | null = null;
   let campaignBadgeFa: string | null = null;
+  const genuineHistory = isDiscountGenuineByHistory(product, variant.id, variant.basePrice, minProofDays);
 
   if (campaign && campaign.discountPercent > 0) {
     const discounted = Math.round(variant.basePrice * (1 - campaign.discountPercent / 100));
     if (discounted > 0 && discounted < effectivePrice) {
-      originalPrice = variant.basePrice;
       effectivePrice = discounted;
-      discountPercent = campaign.discountPercent;
       priceSource = 'campaign';
+      if (genuineHistory) {
+        originalPrice = variant.basePrice;
+        discountPercent = campaign.discountPercent;
+        discountVerified = true;
+      }
       campaignEndsAt = campaign.showTimer ? campaign.endsAt : null;
       campaignBadgeFa = campaign.badgeTextFa || null;
     }
   } else if (fefo.nearExpiry && fefo.specialPrice && fefo.specialPrice > 0 && fefo.specialPrice < effectivePrice) {
-    originalPrice = variant.basePrice;
     effectivePrice = fefo.specialPrice;
-    discountPercent = Math.round(((variant.basePrice - fefo.specialPrice) / variant.basePrice) * 100);
     priceSource = 'campaign';
+    if (genuineHistory) {
+      originalPrice = variant.basePrice;
+      discountPercent = Math.round(((variant.basePrice - fefo.specialPrice) / variant.basePrice) * 100);
+      discountVerified = true;
+    }
   }
 
   return {
@@ -182,6 +243,7 @@ export function resolveVariantPrice(
     unitPrice: effectivePrice,
     originalPrice,
     discountPercent,
+    discountVerified,
     priceSource,
     campaignEndsAt,
     campaignBadgeFa,
@@ -211,9 +273,11 @@ export function getProductPriceSummary(
     campaigns?: Campaign[];
     currency?: CurrencyMode;
     settings?: SiteSettings;
+    contractPrices?: ContractPrice[];
+    userId?: string;
   } = {}
 ): ProductPriceSummary {
-  const { customerGroup = 'retail', campaigns = [], currency = 'IRT', settings } = options;
+  const { customerGroup = 'retail', campaigns = [], currency = 'IRT', settings, contractPrices, userId } = options;
 
   if (product.status === 'coming_soon') {
     return {
@@ -231,7 +295,7 @@ export function getProductPriceSummary(
 
   const resolvedList = product.variants
     .filter((v) => v.isActive)
-    .map((v) => resolveVariantPrice(product, v, { customerGroup, campaigns, settings }));
+    .map((v) => resolveVariantPrice(product, v, { customerGroup, campaigns, settings, contractPrices, userId }));
 
   const inStockList = resolvedList.filter((r) => r.state !== 'out_of_stock');
   if (inStockList.length === 0) {

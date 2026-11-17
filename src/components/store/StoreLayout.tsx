@@ -14,7 +14,8 @@ import {
   X,
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { formatMoney, toPersianDigits } from '../../lib/jalali';
+import { t } from '../../lib/i18n';
+import { toPersianDigits } from '../../lib/jalali';
 import { scoreSearchMatch } from '../../lib/persian-search';
 import { getProductPriceSummary } from '../../lib/pricing';
 import CartDrawer from './CartDrawer';
@@ -25,6 +26,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
     brands,
     products,
     campaigns,
+    contractPrices,
     currency,
     setCurrency,
     darkMode,
@@ -35,7 +37,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
     authUser,
     isAdmin,
     settings,
-    pushToast,
+    subscribeNewsletter,
   } = useStore();
 
   const navigate = useNavigate();
@@ -43,7 +45,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [newsletterEmail, setNewsletterEmail] = useState('');
+  const [newsletterInput, setNewsletterInput] = useState('');
 
   const topCategories = useMemo(
     () => categories.filter((c) => c.depth === 0 && c.isActive && c.showInMenu).sort((a, b) => a.sortOrder - b.sortOrder),
@@ -76,14 +78,10 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
     navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
   };
 
-  const handleNewsletter = (e: React.FormEvent) => {
+  const handleNewsletter = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newsletterEmail.includes('@')) {
-      pushToast('لطفاً یک ایمیل معتبر وارد کنید.', 'error');
-      return;
-    }
-    setNewsletterEmail('');
-    pushToast('عضویت شما در خبرنامه تخصصی دنتال‌مارکت ثبت شد.', 'success');
+    await subscribeNewsletter(newsletterInput);
+    setNewsletterInput('');
   };
 
   return (
@@ -105,7 +103,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
               to="/"
               className="text-xl font-extrabold tracking-tight text-brand dark:text-teal-300 whitespace-nowrap shrink-0"
             >
-              {settings.storeNameFa}
+              {settings.storeNameFa || t('brandName')}
             </Link>
           </div>
 
@@ -118,7 +116,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                 `whitespace-nowrap shrink-0 hover:text-brand transition-colors ${isActive ? 'text-brand font-bold' : ''}`
               }
             >
-              فروشگاه
+              {t('nav.store')}
             </NavLink>
 
             <div
@@ -131,20 +129,20 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                 onClick={() => setMegaOpen((v) => !v)}
                 className="inline-flex items-center gap-1 whitespace-nowrap shrink-0 hover:text-brand transition-colors py-2"
               >
-                <span>دسته‌بندی‌ها</span>
+                <span>{t('nav.categories')}</span>
                 <ChevronDown className="w-4 h-4" />
               </button>
 
               {megaOpen && (
-                <div className="absolute right-0 top-full w-[680px] bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl shadow-xl p-6 grid grid-cols-3 gap-5 z-50">
-                  {topCategories.map((cat) => {
-                    const children = categories.filter((c) => c.parentId === cat.id && c.isActive);
+                <div className="absolute right-0 top-full w-[760px] max-w-[92vw] bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl shadow-xl p-6 grid grid-cols-4 gap-5 z-50 max-h-[75vh] overflow-y-auto">
+                  {topCategories.slice(0, 12).map((cat) => {
+                    const children = categories.filter((c) => c.parentId === cat.id && c.isActive).slice(0, 5);
                     return (
                       <div key={cat.id} className="space-y-1.5">
                         <Link
                           to={`/category/${cat.slug}`}
                           onClick={() => setMegaOpen(false)}
-                          className="block font-bold text-sm text-brand dark:text-teal-300 hover:underline"
+                          className="block font-bold text-xs text-brand dark:text-teal-300 hover:underline"
                         >
                           {cat.nameFa}
                         </Link>
@@ -155,7 +153,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                                 <Link
                                   to={`/category/${sub.slug}`}
                                   onClick={() => setMegaOpen(false)}
-                                  className="text-xs text-ink/70 dark:text-slate-400 hover:text-brand"
+                                  className="text-[11px] text-ink/70 dark:text-slate-400 hover:text-brand line-clamp-1"
                                 >
                                   {sub.nameFa}
                                 </Link>
@@ -163,7 +161,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                             ))}
                           </ul>
                         ) : (
-                          <p className="text-xs text-ink/50 dark:text-slate-500 line-clamp-2">{cat.descriptionFa}</p>
+                          <p className="text-[11px] text-ink/50 dark:text-slate-500 line-clamp-2">{cat.descriptionFa}</p>
                         )}
                       </div>
                     );
@@ -178,7 +176,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                 `whitespace-nowrap shrink-0 hover:text-brand transition-colors ${isActive ? 'text-brand font-bold' : ''}`
               }
             >
-              برندها
+              {t('nav.brands')}
             </NavLink>
             <NavLink
               to="/agents"
@@ -186,7 +184,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                 `whitespace-nowrap shrink-0 hover:text-brand transition-colors ${isActive ? 'text-brand font-bold' : ''}`
               }
             >
-              نمایندگی‌ها
+              {t('nav.agents')}
             </NavLink>
             <NavLink
               to="/blog"
@@ -194,7 +192,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                 `whitespace-nowrap shrink-0 hover:text-brand transition-colors ${isActive ? 'text-brand font-bold' : ''}`
               }
             >
-              مجله تخصصی
+              {t('nav.blog')}
             </NavLink>
           </nav>
 
@@ -203,7 +201,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              aria-label="جستجو در فروشگاه"
+              aria-label={t('nav.search')}
               className="p-2 rounded-lg border border-line dark:border-slate-700 text-ink/70 dark:text-slate-300 hover:border-brand transition-colors"
             >
               <Search className="w-4 h-4" />
@@ -223,29 +221,40 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
             <button
               type="button"
               onClick={() => setCartOpen(true)}
-              aria-label="سبد خرید"
+              aria-label={t('nav.cart')}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line dark:border-slate-700 text-xs font-bold hover:border-brand transition-colors whitespace-nowrap shrink-0"
             >
               <ShoppingBag className="w-4 h-4 text-brand" />
-              <span className="hidden sm:inline">سبد خرید</span>
+              <span className="hidden sm:inline">{t('nav.cart')}</span>
               <span className="tabular-nums text-brand dark:text-teal-300">{toPersianDigits(cartCount)}</span>
             </button>
+
+            {!isAdmin && (
+              <Link
+                to="/admin?preview=1"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-400/80 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs font-bold hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors whitespace-nowrap shrink-0"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">مدیریت سایت (موقت)</span>
+                <span className="sm:hidden">مدیریت</span>
+              </Link>
+            )}
 
             <Link
               to={isAdmin ? '/admin' : '/account'}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-brand text-white text-xs font-bold hover:bg-brandDark transition-colors whitespace-nowrap shrink-0"
             >
               {isAdmin ? <LayoutDashboard className="w-4 h-4" /> : <User className="w-4 h-4" />}
-              <span>{isAdmin ? 'پنل مدیریت' : authUser ? 'حساب من' : 'ورود / حساب'}</span>
+              <span>{isAdmin ? t('nav.admin') : authUser ? 'حساب من' : 'ورود / حساب'}</span>
             </Link>
           </div>
         </div>
 
         {/* Mobile Drawer Menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-line dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-4 space-y-3">
+          <div className="md:hidden border-t border-line dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
             <div className="grid grid-cols-2 gap-2">
-              {topCategories.map((cat) => (
+              {topCategories.slice(0, 10).map((cat) => (
                 <Link
                   key={cat.id}
                   to={`/category/${cat.slug}`}
@@ -257,10 +266,13 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
               ))}
             </div>
             <div className="flex flex-wrap gap-4 pt-2 border-t border-line dark:border-slate-800 text-sm">
-              <Link to="/brands" onClick={() => setMobileMenuOpen(false)}>برندها</Link>
-              <Link to="/agents" onClick={() => setMobileMenuOpen(false)}>نمایندگی‌ها</Link>
-              <Link to="/blog" onClick={() => setMobileMenuOpen(false)}>مجله تخصصی</Link>
-              <Link to="/admin" onClick={() => setMobileMenuOpen(false)} className="text-brand font-bold">پنل مدیریت</Link>
+              <Link to="/brands" onClick={() => setMobileMenuOpen(false)}>{t('nav.brands')}</Link>
+              <Link to="/agents" onClick={() => setMobileMenuOpen(false)}>{t('nav.agents')}</Link>
+              <Link to="/blog" onClick={() => setMobileMenuOpen(false)}>{t('nav.blog')}</Link>
+              <Link to="/page/contact" onClick={() => setMobileMenuOpen(false)}>{t('nav.contact')}</Link>
+              <Link to={isAdmin ? '/admin' : '/admin?preview=1'} onClick={() => setMobileMenuOpen(false)} className="text-brand font-bold">
+                {isAdmin ? t('nav.admin') : 'مدیریت سایت (موقت)'}
+              </Link>
             </div>
           </div>
         )}
@@ -269,7 +281,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
       {/* Main Content */}
       <main className="flex-1 pb-16 md:pb-0">{children}</main>
 
-      {/* Footer with Trust Info, Currency Switcher, Dark Mode, Newsletter */}
+      {/* Footer */}
       <footer className="border-t border-line dark:border-slate-800 bg-white dark:bg-slate-900 mt-16 pb-20 md:pb-0">
         <div className="max-w-7xl mx-auto px-4 lg:px-8 py-12 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="space-y-3">
@@ -294,8 +306,10 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
             <h3 className="font-bold text-ink dark:text-slate-200">قوانین و مجوزها</h3>
             <ul className="space-y-1.5 text-xs text-ink/70 dark:text-slate-400">
               <li><Link to="/page/about" className="hover:text-brand">درباره دنتال‌مارکت</Link></li>
-              <li><Link to="/page/returns" className="hover:text-brand">شرایط مرجوعی و گارانتی</Link></li>
+              <li><Link to="/page/returns" className="hover:text-brand">شرایط مرجوعی کالا</Link></li>
+              <li><Link to="/page/warranty" className="hover:text-brand">گارانتی و خدمات پس از فروش</Link></li>
               <li><Link to="/page/privacy" className="hover:text-brand">حریم خصوصی و امنیت داده‌ها</Link></li>
+              <li><Link to="/page/contact" className="hover:text-brand">تماس با ما و مشاوره</Link></li>
               <li className="tabular-nums pt-1 text-ink/80 dark:text-slate-300">کد IMED: {settings.imedRegistryCode}</li>
               <li className="tabular-nums text-ink/80 dark:text-slate-300">شناسه نماد اعتماد: {settings.enamadCode}</li>
             </ul>
@@ -306,10 +320,10 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
               <h3 className="text-sm font-bold text-ink dark:text-slate-200">خبرنامه اطلاع‌رسانی علمی و تخفیف‌ها</h3>
               <form onSubmit={handleNewsletter} className="flex gap-2">
                 <input
-                  type="email"
-                  value={newsletterEmail}
-                  onChange={(e) => setNewsletterEmail(e.target.value)}
-                  placeholder="ایمیل شما..."
+                  type="text"
+                  value={newsletterInput}
+                  onChange={(e) => setNewsletterInput(e.target.value)}
+                  placeholder={t('footer.newsletterPlaceholder')}
                   className="flex-1 min-w-0 px-3 py-2 text-xs rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
                 <button
@@ -328,14 +342,14 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                   onClick={() => setCurrency('IRT')}
                   className={`px-2.5 py-1 rounded-md font-medium ${currency === 'IRT' ? 'bg-white dark:bg-slate-700 shadow-sm font-bold' : ''}`}
                 >
-                  تومان
+                  {t('price.toman')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setCurrency('IRR')}
                   className={`px-2.5 py-1 rounded-md font-medium ${currency === 'IRR' ? 'bg-white dark:bg-slate-700 shadow-sm font-bold' : ''}`}
                 >
-                  ریال
+                  {t('price.rial')}
                 </button>
               </div>
 
@@ -353,12 +367,12 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
         </div>
 
         <div className="border-t border-line dark:border-slate-800 py-4 px-4 lg:px-8 text-xs text-ink/60 dark:text-slate-500 max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-          <span>© {toPersianDigits(new Date().getFullYear())} {settings.storeNameFa} — تمامی حقوق محفوظ است.</span>
+          <span>© {toPersianDigits(new Date().getFullYear())} {settings.storeNameFa} — {t('footer.copyright')}</span>
           <Link to="/admin" className="hover:text-brand font-medium">ورود به پنل مدیریت و عملیات انبار</Link>
         </div>
       </footer>
 
-      {/* Mobile Bottom Navigation Bar (<= 15% viewport height) */}
+      {/* Mobile Bottom Navigation Bar */}
       <nav
         aria-label="ناوبری پایین موبایل"
         className="md:hidden fixed bottom-0 inset-x-0 z-40 h-14 bg-white dark:bg-slate-900 border-t border-line dark:border-slate-800 grid grid-cols-4 text-[11px] font-medium"
@@ -373,7 +387,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
           className="flex flex-col items-center justify-center gap-0.5 text-ink/80 dark:text-slate-300"
         >
           <Search className="w-4 h-4" />
-          <span>جستجو</span>
+          <span>{t('nav.search')}</span>
         </button>
         <button
           type="button"
@@ -427,7 +441,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                 </div>
               ) : (
                 searchSuggestions.map(({ product }) => {
-                  const summary = getProductPriceSummary(product, { campaigns, currency, settings });
+                  const summary = getProductPriceSummary(product, { campaigns, currency, settings, contractPrices, userId: authUser?.uid });
                   return (
                     <Link
                       key={product.id}

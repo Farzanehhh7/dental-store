@@ -1,6 +1,16 @@
 import { stripKashida } from './persian-search';
 import { getProductPriceSummary } from './pricing';
-import { AgentBranch, BlogPost, Brand, Campaign, Category, Product, SiteSettings } from '../types/domain';
+import {
+  AgentBranch,
+  AttributeDef,
+  BlogPost,
+  Brand,
+  Bundle,
+  Campaign,
+  Category,
+  Product,
+  SiteSettings,
+} from '../types/domain';
 
 export interface SeoHeadInput {
   title: string;
@@ -37,10 +47,11 @@ export function applySeoHead(input: SeoHeadInput): void {
   setMeta('property', 'og:url', canonicalUrl);
   setMeta('property', 'og:locale', 'fa_IR');
   setMeta('property', 'og:type', input.ogType ?? 'website');
-  if (input.ogImage) {
-    const absImg = input.ogImage.startsWith('http') ? input.ogImage : `${origin}${input.ogImage}`;
-    setMeta('property', 'og:image', absImg);
-  }
+  const ogImg = input.ogImage || '/og-default.svg';
+  const absImg = ogImg.startsWith('http') ? ogImg : `${origin}${ogImg}`;
+  setMeta('property', 'og:image', absImg);
+  setMeta('property', 'og:image:width', '1200');
+  setMeta('property', 'og:image:height', '630');
 
   let canonicalEl = document.querySelector('link[rel="canonical"]');
   if (!canonicalEl) {
@@ -50,7 +61,6 @@ export function applySeoHead(input: SeoHeadInput): void {
   }
   canonicalEl.setAttribute('href', canonicalUrl);
 
-  // Replace dynamic JSON-LD scripts
   document.querySelectorAll('script[data-dental-jsonld="true"]').forEach((n) => n.remove());
   if (input.jsonLd && input.jsonLd.length > 0) {
     for (const schemaObj of input.jsonLd) {
@@ -71,6 +81,7 @@ export function buildHomeJsonLd(settings: SiteSettings) {
       '@type': 'Organization',
       name: settings.storeNameFa,
       url: origin,
+      logo: `${origin}/og-default.svg`,
       contactPoint: {
         '@type': 'ContactPoint',
         telephone: settings.phone,
@@ -84,6 +95,11 @@ export function buildHomeJsonLd(settings: SiteSettings) {
       '@type': 'WebSite',
       name: settings.storeNameFa,
       url: origin,
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: `${origin}/search?q={search_term_string}`,
+        'query-input': 'required name=search_term_string',
+      },
     },
   ];
 }
@@ -102,21 +118,112 @@ export function buildBreadcrumbJsonLd(items: { name: string; path: string }[]) {
   };
 }
 
+export function buildFaqJsonLd(faqs: { q: string; a: string }[]) {
+  if (!faqs || faqs.length === 0) return null;
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqs.map((f) => ({
+      '@type': 'Question',
+      name: f.q,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: f.a,
+      },
+    })),
+  };
+}
+
+export function buildBrandJsonLd(brand: Brand) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Brand',
+    name: brand.nameFa,
+    alternateName: brand.nameEn,
+    description: brand.descriptionFa,
+    url: `${origin}/brand/${brand.slug}`,
+  };
+}
+
+export function buildStaticPageJsonLd(slug: string, title: string, settings: SiteSettings) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  const type = slug === 'about' ? 'AboutPage' : slug === 'contact' ? 'ContactPage' : 'WebPage';
+  return {
+    '@context': 'https://schema.org',
+    '@type': type,
+    name: title,
+    url: `${origin}/page/${slug}`,
+    publisher: {
+      '@type': 'Organization',
+      name: settings.storeNameFa,
+      telephone: settings.phone,
+    },
+  };
+}
+
+export function buildBundleJsonLd(bundle: Bundle, discountedPrice: number) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: bundle.nameFa,
+    description: bundle.descriptionFa,
+    image: bundle.imageUrl.startsWith('http') ? bundle.imageUrl : `${origin}${bundle.imageUrl}`,
+    sku: bundle.id.toUpperCase(),
+    url: `${origin}/pack/${bundle.slug}`,
+    offers:
+      discountedPrice > 0
+        ? {
+            '@type': 'Offer',
+            priceCurrency: 'IRR',
+            price: discountedPrice * 10,
+            availability: 'https://schema.org/InStock',
+          }
+        : undefined,
+  };
+}
+
 /**
  * Generates Product JSON-LD strictly matching spec §17.4:
  * - priceCurrency is ALWAYS "IRR" (Toman * 10)
  * - omits offers when pricingMode === 'call_for_price'
  * - aggregateRating only included when real approved reviews exist
+ * - includes additionalProperty PropertyValue from technical attributes
  */
 export function buildProductJsonLd(
   product: Product,
   brand: Brand | undefined,
   campaigns: Campaign[],
-  settings: SiteSettings
+  settings: SiteSettings,
+  attributes: AttributeDef[] = []
 ) {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
   const summary = getProductPriceSummary(product, { campaigns, settings });
   const absImg = product.imageUrl.startsWith('http') ? product.imageUrl : `${origin}${product.imageUrl}`;
+
+  const additionalProperty = Object.entries(product.attributes || {}).map(([code, raw]) => {
+    const def = attributes.find((a) => a.code === code);
+    let valText = String(raw);
+    if (typeof raw === 'boolean') valText = raw ? 'بله' : 'خیر';
+    else if (Array.isArray(raw)) valText = raw.join('، ');
+    else if (def?.options) {
+      valText = def.options.find((o) => o.key === String(raw))?.labelFa ?? String(raw);
+    }
+    return {
+      '@type': 'PropertyValue',
+      name: def?.labelFa ?? code,
+      value: def?.unit ? `${valText} ${def.unit}` : valText,
+    };
+  });
+
+  if (product.imedCode) {
+    additionalProperty.unshift({
+      '@type': 'PropertyValue',
+      name: 'کد IMED وزارت بهداشت',
+      value: product.imedCode,
+    });
+  }
 
   const schema: Record<string, unknown> = {
     '@context': 'https://schema.org',
@@ -128,6 +235,7 @@ export function buildProductJsonLd(
     sku: product.sku,
     url: `${origin}/product/${product.slug}`,
     brand: brand ? { '@type': 'Brand', name: brand.nameFa } : undefined,
+    ...(additionalProperty.length > 0 ? { additionalProperty } : {}),
   };
 
   if (product.gtin) schema.gtin = product.gtin;
@@ -205,6 +313,16 @@ export function buildAgentJsonLd(agent: AgentBranch) {
       longitude: agent.lng,
     },
   };
+}
+
+export function findOrphanProducts(products: Product[], categories: Category[]): Product[] {
+  const activeCatIds = new Set(categories.filter((c) => c.isActive).map((c) => c.id));
+  return products.filter(
+    (p) =>
+      p.status === 'active' &&
+      !activeCatIds.has(p.primaryCategoryId) &&
+      !p.categoryIds.some((cid) => activeCatIds.has(cid))
+  );
 }
 
 export interface SeoHealthFinding {

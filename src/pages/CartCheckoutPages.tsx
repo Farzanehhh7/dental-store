@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CheckCircle2,
   CreditCard,
@@ -7,12 +7,14 @@ import {
   Plus,
   ShieldCheck,
   ShoppingBag,
+  Smartphone,
   Tag,
   Trash2,
   Truck,
 } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
 import { useStore } from '../context/StoreContext';
+import { trackEcommerceEvent } from '../lib/analytics';
 import { formatJalaliDateTime, formatMoney, toPersianDigits } from '../lib/jalali';
 import { resolveVariantPrice } from '../lib/pricing';
 import { applySeoHead } from '../lib/seo';
@@ -23,7 +25,9 @@ export function CartPage() {
     cart,
     products,
     campaigns,
+    contractPrices,
     coupons,
+    authUser,
     currency,
     customerGroup,
     settings,
@@ -58,6 +62,8 @@ export function CartPage() {
           quantity: ci.quantity,
           campaigns,
           settings,
+          contractPrices,
+          userId: authUser?.uid,
         });
         const unitPrice = resolved.unitPrice ?? 0;
         const originalUnit = resolved.originalPrice ?? unitPrice;
@@ -72,7 +78,7 @@ export function CartPage() {
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
-  }, [cart, products, customerGroup, campaigns, settings]);
+  }, [cart, products, customerGroup, campaigns, settings, contractPrices, authUser?.uid]);
 
   const subtotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
   const itemDiscount = lines.reduce((sum, l) => sum + l.lineDiscount, 0);
@@ -145,7 +151,7 @@ export function CartPage() {
       items: orderItems,
     });
     if (pf) {
-      navigate('/account');
+      navigate(pf.shareToken ? `/proforma/${pf.shareToken}` : '/account');
     }
   };
 
@@ -194,12 +200,16 @@ export function CartPage() {
                       {resolved.nearestBatchNo ? ` · بچ ${resolved.nearestBatchNo}` : ''}
                     </p>
                     <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
-                      {resolved.priceSource === 'tier'
+                      {resolved.priceSource === 'contract'
+                        ? 'تعرفه قرارداد اختصاصی کلینیک'
+                        : resolved.priceSource === 'tier'
                         ? 'قیمت پلکانی عمده اعمال شد'
                         : resolved.priceSource === 'group'
                         ? 'تعرفه اختصاصی گروه همکار'
                         : resolved.priceSource === 'campaign'
                         ? 'تخفیف جشنواره فعال'
+                        : resolved.nearExpiry
+                        ? 'تخفیف ویژه انقضای نزدیک'
                         : 'قیمت مصوب واحد'}
                     </p>
                   </div>
@@ -359,6 +369,7 @@ export function CheckoutPage() {
     cart,
     products,
     campaigns,
+    contractPrices,
     coupons,
     currency,
     customerGroup,
@@ -371,8 +382,8 @@ export function CheckoutPage() {
     pushToast,
   } = useStore();
 
-  const urlParams = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
-  const initialCoupon = urlParams.get('coupon') ?? '';
+  const [searchParams] = useSearchParams();
+  const initialCoupon = searchParams.get('coupon') ?? '';
 
   const [customerName, setCustomerName] = useState(userProfile?.displayName || authUser?.displayName || '');
   const [customerMobile, setCustomerMobile] = useState(userProfile?.mobile || '');
@@ -389,6 +400,21 @@ export function CheckoutPage() {
   const [customerNote, setCustomerNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Mobile OTP verification (optional quick verify for guest/checkout)
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [otpHint, setOtpHint] = useState('');
+
+  // Server calculation verification
+  const [serverTotals, setServerTotals] = useState<{
+    subtotal: number;
+    couponDiscount: number;
+    shippingTotal: number;
+    taxTotal: number;
+    grandTotal: number;
+  } | null>(null);
+
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [gatewayModalOpen, setGatewayModalOpen] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -401,6 +427,12 @@ export function CheckoutPage() {
       robots: 'noindex, nofollow',
     });
   }, [settings.storeNameFa]);
+
+  useEffect(() => {
+    if (cart.length > 0) {
+      trackEcommerceEvent('begin_checkout', { item_count: cart.length });
+    }
+  }, [cart.length]);
 
   useEffect(() => {
     if (userProfile) {
@@ -416,15 +448,29 @@ export function CheckoutPage() {
     }
   }, [userProfile]);
 
-  const subtotal = useMemo(() => {
-    return cart.reduce((acc, ci) => {
-      const p = products.find((x) => x.id === ci.productId);
-      const v = p?.variants.find((x) => x.id === ci.variantId);
-      if (!p || !v) return acc;
-      const res = resolveVariantPrice(p, v, { customerGroup, quantity: ci.quantity, campaigns, settings });
-      return acc + (res.unitPrice ?? 0) * ci.quantity;
-    }, 0);
-  }, [cart, products, customerGroup, campaigns, settings]);
+  const resolvedCartLines = useMemo(() => {
+    return cart
+      .map((ci) => {
+        const p = products.find((x) => x.id === ci.productId);
+        const v = p?.variants.find((x) => x.id === ci.variantId);
+        if (!p || !v) return null;
+        const res = resolveVariantPrice(p, v, {
+          customerGroup,
+          quantity: ci.quantity,
+          campaigns,
+          settings,
+          contractPrices,
+          userId: authUser?.uid,
+        });
+        return { unitPrice: res.unitPrice ?? 0, quantity: ci.quantity };
+      })
+      .filter((x): x is { unitPrice: number; quantity: number } => x !== null);
+  }, [cart, products, customerGroup, campaigns, settings, contractPrices, authUser?.uid]);
+
+  const subtotal = useMemo(
+    () => resolvedCartLines.reduce((acc, item) => acc + item.unitPrice * item.quantity, 0),
+    [resolvedCartLines]
+  );
 
   const activeCoupon = coupons.find((c) => c.code.toUpperCase() === couponCode.trim().toUpperCase() && c.isActive);
   let couponDiscount = 0;
@@ -444,12 +490,80 @@ export function CheckoutPage() {
   const taxTotal = Math.round(((Math.max(0, subtotal - couponDiscount) * settings.taxRatePercent)) / 100);
   const grandTotal = Math.max(0, subtotal - couponDiscount) + shippingFee + taxTotal;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!authUser) {
-      pushToast('برای ثبت سفارش ابتدا با حساب کاربری وارد شوید.', 'error');
+  // Authoritative server-side total recalculation
+  useEffect(() => {
+    if (cart.length === 0) {
+      setServerTotals(null);
       return;
     }
+    const ctrl = new AbortController();
+    fetch('/api/checkout/calculate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        items: cart,
+        customerGroup,
+        couponCode,
+        shippingMethod,
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.ok && typeof data.grandTotal === 'number') setServerTotals(data);
+      })
+      .catch(() => {
+        // Offline / fallback already computed above
+      });
+    return () => ctrl.abort();
+  }, [cart, customerGroup, couponCode, shippingMethod]);
+
+  const handleSendOtp = async () => {
+    const mobile = customerMobile.trim();
+    if (!mobile) {
+      pushToast('ابتدا شماره موبایل خود را وارد کنید.', 'error');
+      return;
+    }
+    try {
+      const res = await fetch('/api/auth/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        pushToast(data.message || data.error || 'خطا در ارسال کد تایید', 'error');
+        return;
+      }
+      setOtpSent(true);
+      setOtpHint(data.mode === 'sandbox' ? 'کد آزمایشی: ۱۲۳۴۵۶' : data.message || '');
+      pushToast(data.message || 'کد تایید پیامکی ارسال شد.', 'info');
+    } catch {
+      pushToast('خطا در برقراری ارتباط با سرویس OTP', 'error');
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    try {
+      const res = await fetch('/api/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile: customerMobile.trim(), code: otpCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || (!data.ok && !data.verified)) {
+        pushToast(data.message || data.error || 'کد تایید نادرست است.', 'error');
+        return;
+      }
+      setOtpVerified(true);
+      pushToast('شماره موبایل با موفقیت تایید شد.', 'success');
+    } catch {
+      pushToast('خطا در تایید کد OTP', 'error');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!customerName.trim() || !customerMobile.trim() || !addressLine.trim()) {
       pushToast('لطفاً نام تحویل‌گیرنده، شماره همراه و نشانی دقیق را وارد کنید.', 'error');
       return;
@@ -461,7 +575,7 @@ export function CheckoutPage() {
         customerName: customerName.trim(),
         customerMobile: customerMobile.trim(),
         shippingMethod: chosenShipping.label,
-        shippingTotal: shippingFee,
+        shippingTotal: serverTotals?.shippingTotal ?? shippingFee,
         address: { province, city, postalCode: postalCode || '1417933111', addressLine },
         paymentMethod,
         couponCode: activeCoupon?.code,
@@ -484,7 +598,7 @@ export function CheckoutPage() {
     if (!createdOrder) return;
     setVerifying(true);
     try {
-      await verifyOnlinePayment(createdOrder.id);
+      await verifyOnlinePayment(createdOrder.id, gatewayName);
       setCreatedOrder({ ...createdOrder, status: 'paid', paymentStatus: 'paid' });
       setGatewayModalOpen(false);
     } finally {
@@ -533,6 +647,12 @@ export function CheckoutPage() {
             </div>
           </div>
 
+          {createdOrder.userId === 'guest' && (
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200">
+              این سفارش به‌صورت مهمان ثبت شد. با شماره سفارش <strong className="tabular-nums">{createdOrder.orderNo}</strong> و شماره همراه <strong className="tabular-nums">{createdOrder.customerMobile}</strong> می‌توانید در بخش «پیگیری سفارش مهمان» وضعیت مرسوله را دنبال کنید.
+            </div>
+          )}
+
           {createdOrder.status === 'pending_payment' && createdOrder.paymentMethod === 'online' && (
             <button
               type="button"
@@ -545,7 +665,7 @@ export function CheckoutPage() {
 
           <div className="flex flex-wrap gap-3 pt-2">
             <Link to="/account" className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
-              پیگیری در حساب کاربری
+              پیگیری در حساب کاربری / سفارش مهمان
             </Link>
             <Link to="/" className="px-5 py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold">
               بازگشت به فروشگاه
@@ -597,13 +717,13 @@ export function CheckoutPage() {
       <h1 className="text-2xl font-extrabold">تکمیل اطلاعات و تسویه‌حساب</h1>
 
       {!authUser && (
-        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="bg-surface/60 dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="font-bold text-sm text-amber-900 dark:text-amber-200">
-              برای ثبت نهایی سفارش و ذخیره سوابق در حساب مطب، ابتدا وارد شوید.
+            <p className="font-bold text-sm text-ink dark:text-slate-100">
+              امکان خرید به‌صورت مهمان (بدون نیاز به ورود) فعال است.
             </p>
-            <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-0.5">
-              اطلاعات سفارش‌ها و پیش‌فاکتورهای شما با امنیت کامل در حساب کاربری نگهداری می‌شود.
+            <p className="text-xs text-ink/65 dark:text-slate-400 mt-0.5">
+              در صورت تمایل به اعمال تعرفه همکار (B2B) یا ذخیره دائمی سفارش‌ها، با گوگل وارد شوید.
             </p>
           </div>
           <button
@@ -611,7 +731,7 @@ export function CheckoutPage() {
             onClick={signInWithGoogle}
             className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
           >
-            ورود سریع با حساب گوگل
+            ورود با حساب گوگل
           </button>
         </div>
       )}
@@ -640,17 +760,49 @@ export function CheckoutPage() {
                     className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                   />
                 </label>
-                <label className="text-xs space-y-1.5">
-                  <span className="font-bold">شماره همراه *</span>
-                  <input
-                    required
-                    type="tel"
-                    value={customerMobile}
-                    onChange={(e) => setCustomerMobile(e.target.value)}
-                    placeholder="0912..."
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
-                  />
-                </label>
+                <div className="text-xs space-y-1.5">
+                  <span className="font-bold block">شماره همراه *</span>
+                  <div className="flex gap-2">
+                    <input
+                      required
+                      type="tel"
+                      value={customerMobile}
+                      onChange={(e) => {
+                        setCustomerMobile(e.target.value);
+                        setOtpVerified(false);
+                      }}
+                      placeholder="0912..."
+                      className="flex-1 px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendOtp}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-brand text-brand text-xs font-bold shrink-0"
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>{otpVerified ? 'تایید شد' : 'ارسال کد OTP'}</span>
+                    </button>
+                  </div>
+                  {otpSent && !otpVerified && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={otpCode}
+                        onChange={(e) => setOtpCode(e.target.value)}
+                        placeholder={otpHint || 'کد ۶ رقمی (۱۲۳۴۵۶)'}
+                        className="w-40 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleVerifyOtp}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold"
+                      >
+                        تایید کد
+                      </button>
+                      {otpHint && <span className="text-[11px] text-ink/60">{otpHint}</span>}
+                    </div>
+                  )}
+                </div>
                 <label className="text-xs space-y-1.5">
                   <span className="font-bold">استان *</span>
                   <input
@@ -844,36 +996,40 @@ export function CheckoutPage() {
             <div className="space-y-2 text-sm border-y border-line dark:border-slate-800 py-4">
               <div className="flex justify-between">
                 <span className="text-ink/70 dark:text-slate-400">جمع اقلام ({toPersianDigits(cart.length)})</span>
-                <span className="font-bold tabular-nums">{formatMoney(subtotal, currency)}</span>
+                <span className="font-bold tabular-nums">{formatMoney(serverTotals?.subtotal ?? subtotal, currency)}</span>
               </div>
-              {couponDiscount > 0 && (
+              {(serverTotals?.couponDiscount ?? couponDiscount) > 0 && (
                 <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
                   <span>تخفیف کد</span>
-                  <span className="font-bold tabular-nums">−{formatMoney(couponDiscount, currency)}</span>
+                  <span className="font-bold tabular-nums">
+                    −{formatMoney(serverTotals?.couponDiscount ?? couponDiscount, currency)}
+                  </span>
                 </div>
               )}
               <div className="flex justify-between">
                 <span className="text-ink/70 dark:text-slate-400">هزینه ارسال</span>
                 <span className="font-bold tabular-nums">
-                  {shippingFee === 0 ? 'رایگان' : formatMoney(shippingFee, currency)}
+                  {(serverTotals?.shippingTotal ?? shippingFee) === 0
+                    ? 'رایگان'
+                    : formatMoney(serverTotals?.shippingTotal ?? shippingFee, currency)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-ink/70 dark:text-slate-400">مالیات ({toPersianDigits(settings.taxRatePercent)}٪)</span>
-                <span className="font-bold tabular-nums">{formatMoney(taxTotal, currency)}</span>
+                <span className="font-bold tabular-nums">{formatMoney(serverTotals?.taxTotal ?? taxTotal, currency)}</span>
               </div>
             </div>
 
             <div className="flex justify-between items-center">
               <span className="font-extrabold">جمع نهایی</span>
               <span className="text-xl font-extrabold text-brand dark:text-teal-300 tabular-nums">
-                {formatMoney(grandTotal, currency)}
+                {formatMoney(serverTotals?.grandTotal ?? grandTotal, currency)}
               </span>
             </div>
 
             <button
               type="submit"
-              disabled={submitting || !authUser}
+              disabled={submitting}
               className="w-full py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark disabled:opacity-50 transition-colors"
             >
               {submitting ? 'در حال ثبت سفارش...' : 'تایید و ثبت نهایی سفارش'}

@@ -9,6 +9,7 @@ import {
   GitCompareArrows,
   Heart,
   MessageSquare,
+  PlayCircle,
   ShieldCheck,
   ShoppingBag,
   Star,
@@ -19,9 +20,10 @@ import {
 import ProductCard from '../components/store/ProductCard';
 import CountdownTimer from '../components/store/CountdownTimer';
 import { useStore } from '../context/StoreContext';
+import { trackEcommerceEvent } from '../lib/analytics';
 import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
 import { resolveVariantPrice } from '../lib/pricing';
-import { applySeoHead, buildBreadcrumbJsonLd, buildProductJsonLd } from '../lib/seo';
+import { applySeoHead, buildBreadcrumbJsonLd, buildFaqJsonLd, buildProductJsonLd } from '../lib/seo';
 
 export default function ProductPage() {
   const { slug } = useParams();
@@ -31,8 +33,10 @@ export default function ProductPage() {
     brands,
     attributes,
     campaigns,
+    contractPrices,
     reviews,
     questions,
+    recentlyViewedIds,
     currency,
     customerGroup,
     settings,
@@ -44,6 +48,7 @@ export default function ProductPage() {
     markViewed,
     requestProforma,
     submitConsultation,
+    submitStockNotification,
     submitReview,
     submitQuestion,
     authUser,
@@ -58,6 +63,7 @@ export default function ProductPage() {
   const [selectedVariantId, setSelectedVariantId] = useState<string>('');
   const [qty, setQty] = useState(1);
   const [activeImage, setActiveImage] = useState('');
+  const [showVideo, setShowVideo] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
 
   // Modals & Forms
@@ -72,8 +78,14 @@ export default function ProductPage() {
       const def = product.variants.find((v) => v.isDefault) ?? product.variants[0];
       setSelectedVariantId(def?.id ?? '');
       setActiveImage(product.imageUrl);
+      setShowVideo(false);
       setQty(product.minOrderQty || 1);
       markViewed(product.id);
+      trackEcommerceEvent('view_item', {
+        item_id: product.id,
+        item_name: product.titleFa,
+        sku: product.sku,
+      });
     }
   }, [product?.id]);
 
@@ -84,24 +96,36 @@ export default function ProductPage() {
       ...(category ? [{ name: category.nameFa, path: `/category/${category.slug}` }] : []),
       { name: product.titleFa, path: `/product/${product.slug}` },
     ];
+    const faqLd = product.faqs?.length ? buildFaqJsonLd(product.faqs) : null;
+    const jsonLdList: Record<string, unknown>[] = [
+      buildBreadcrumbJsonLd(breadcrumbs),
+      buildProductJsonLd(product, brand, campaigns, settings, attributes),
+    ];
+    if (faqLd) jsonLdList.push(faqLd);
+
     applySeoHead({
-      title: `${product.titleFa} | ${brand?.nameFa ?? ''} | ${settings.storeNameFa}`,
-      description: product.shortDescriptionFa,
+      title: product.metaTitle || `${product.titleFa} | ${brand?.nameFa ?? ''} | ${settings.storeNameFa}`,
+      description: product.metaDescription || product.shortDescriptionFa,
       canonicalPath: `/product/${product.slug}`,
       robots: product.status === 'active' || product.status === 'out_of_stock' ? 'index, follow' : 'noindex, follow',
       ogType: 'product',
       ogImage: product.imageUrl,
-      jsonLd: [
-        buildBreadcrumbJsonLd(breadcrumbs),
-        buildProductJsonLd(product, brand, campaigns, settings),
-      ],
+      jsonLd: jsonLdList,
     });
-  }, [product, brand, category, campaigns, settings]);
+  }, [product, brand, category, campaigns, settings, attributes]);
 
   const variant = useMemo(() => {
     if (!product) return undefined;
     return product.variants.find((v) => v.id === selectedVariantId) ?? product.variants[0];
   }, [product, selectedVariantId]);
+
+  const recentProducts = useMemo(() => {
+    return recentlyViewedIds
+      .filter((id) => id !== product?.id)
+      .map((id) => products.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => Boolean(p))
+      .slice(0, 4);
+  }, [recentlyViewedIds, products, product?.id]);
 
   if (!product || !variant) {
     return (
@@ -119,6 +143,8 @@ export default function ProductPage() {
     quantity: qty,
     campaigns,
     settings,
+    contractPrices,
+    userId: authUser?.uid,
   });
 
   const productReviews = reviews.filter((r) => r.productId === product.id && r.status === 'approved');
@@ -147,7 +173,7 @@ export default function ProductPage() {
           unitPrice,
           discountAmount: 0,
           lineTotal: unitPrice * qty,
-          priceSource: 'base',
+          priceSource: resolved.priceSource,
         },
       ],
     });
@@ -194,39 +220,57 @@ export default function ProductPage() {
 
       {/* Main Contiguous Product Showcase + Purchase Module */}
       <section className="grid lg:grid-cols-12 gap-8 items-start">
-        {/* Left: Zoomable Gallery */}
+        {/* Left: Zoomable Gallery + Optional Video Slot */}
         <div className="lg:col-span-5 space-y-3 lg:sticky lg:top-24">
           <div className="relative aspect-[4/3] bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
-            <img
-              src={activeImage || product.imageUrl}
-              alt={product.titleFa}
-              width={640}
-              height={480}
-              className="w-full h-full object-cover"
-            />
-            <button
-              type="button"
-              onClick={() => setZoomOpen(true)}
-              aria-label="بزرگنمایی تصویر"
-              className="absolute bottom-3 left-3 p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-line dark:border-slate-700 text-ink dark:text-slate-100 hover:border-brand"
-            >
-              <ZoomIn className="w-4 h-4" />
-            </button>
+            {showVideo && product.videoUrl ? (
+              <video src={product.videoUrl} controls autoPlay className="w-full h-full object-cover" />
+            ) : (
+              <>
+                <img
+                  src={activeImage || product.imageUrl}
+                  alt={product.titleFa}
+                  width={640}
+                  height={480}
+                  className="w-full h-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => setZoomOpen(true)}
+                  aria-label="بزرگنمایی تصویر"
+                  className="absolute bottom-3 left-3 p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-line dark:border-slate-700 text-ink dark:text-slate-100 hover:border-brand"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
+              </>
+            )}
           </div>
-          {product.galleryUrls.length > 1 && (
-            <div className="flex gap-2">
+          {(product.galleryUrls.length > 1 || product.videoUrl) && (
+            <div className="flex gap-2 flex-wrap">
               {product.galleryUrls.map((url, idx) => (
                 <button
                   key={idx}
                   type="button"
-                  onClick={() => setActiveImage(url)}
+                  onClick={() => { setShowVideo(false); setActiveImage(url); }}
                   className={`w-20 h-16 rounded-lg overflow-hidden border ${
-                    activeImage === url ? 'border-brand ring-2 ring-brand/30' : 'border-line dark:border-slate-800'
+                    !showVideo && activeImage === url ? 'border-brand ring-2 ring-brand/30' : 'border-line dark:border-slate-800'
                   }`}
                 >
                   <img src={url} alt={`${product.titleFa} - ${idx + 1}`} className="w-full h-full object-cover" />
                 </button>
               ))}
+              {product.videoUrl && (
+                <button
+                  type="button"
+                  onClick={() => setShowVideo(true)}
+                  className={`w-20 h-16 rounded-lg border flex flex-col items-center justify-center gap-1 text-[11px] font-bold ${
+                    showVideo ? 'border-brand bg-brand/10 text-brand' : 'border-line dark:border-slate-800'
+                  }`}
+                >
+                  <PlayCircle className="w-5 h-5" />
+                  <span>ویدئو</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -377,14 +421,19 @@ export default function ProductPage() {
           <div className="pt-4 border-t border-line dark:border-slate-800 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                {resolved.originalPrice && resolved.discountPercent > 0 && (
+                {resolved.discountVerified && resolved.originalPrice && resolved.discountPercent > 0 && (
                   <div className="flex items-center gap-2 text-xs mb-1">
                     <span className="line-through text-ink/45 tabular-nums">{formatMoney(resolved.originalPrice, currency)}</span>
                     <span className="font-bold text-rose-700 dark:text-rose-400 tabular-nums">
-                      {toPersianDigits(resolved.discountPercent)}٪ تخفیف
+                      {toPersianDigits(resolved.discountPercent)}٪ تخفیف تاییدشده
                     </span>
                     {resolved.campaignEndsAt && <CountdownTimer endsAt={resolved.campaignEndsAt} />}
                   </div>
+                )}
+                {resolved.priceSource === 'contract' && (
+                  <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-0.5">
+                    نرخ قرارداد اختصاصی حساب شما
+                  </p>
                 )}
                 <p className="text-2xl font-extrabold text-brand dark:text-teal-300 tabular-nums">
                   {resolved.state === 'out_of_stock'
@@ -462,16 +511,22 @@ export default function ProductPage() {
               </div>
             ) : (
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   if (!notifyMobile.trim()) return;
+                  await submitStockNotification({
+                    productId: product.id,
+                    variantId: variant.id,
+                    productTitleFa: product.titleFa,
+                    mobile: notifyMobile.trim(),
+                  });
                   setNotifyMobile('');
-                  pushToast('شماره شما برای اطلاع‌رسانی موجودی مجدد ثبت شد.', 'success');
                 }}
                 className="flex flex-wrap gap-2"
               >
                 <input
                   type="tel"
+                  required
                   value={notifyMobile}
                   onChange={(e) => setNotifyMobile(e.target.value)}
                   placeholder="شماره موبایل جهت اطلاع از موجودی..."
@@ -486,7 +541,7 @@ export default function ProductPage() {
         </div>
       </section>
 
-      {/* Spec Table + Description + Downloads */}
+      {/* Spec Table + Description + Real Certificate Downloads */}
       <section className="grid lg:grid-cols-12 gap-8">
         <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-6">
           <div>
@@ -526,10 +581,10 @@ export default function ProductPage() {
               <h2 className="text-lg font-extrabold">کاتالوگ و گواهینامه‌ها (CE / ISO / IMED)</h2>
               <div className="space-y-2">
                 {product.files.map((f) => (
-                  <button
+                  <a
                     key={f.id}
-                    type="button"
-                    onClick={() => pushToast(`دریافت فایل «${f.titleFa}» آماده شد.`, 'info')}
+                    href={`/api/files/certificate?sku=${encodeURIComponent(product.sku)}&title=${encodeURIComponent(f.titleFa)}&code=${encodeURIComponent(f.code || 'CE-ISO')}`}
+                    download
                     className="w-full p-3 rounded-xl border border-line dark:border-slate-800 flex items-center justify-between text-right hover:border-brand transition-colors"
                   >
                     <div>
@@ -537,7 +592,7 @@ export default function ProductPage() {
                       <p className="text-[11px] text-ink/55 tabular-nums mt-0.5">{f.fileSizeLabel} {f.code ? `· ${f.code}` : ''}</p>
                     </div>
                     <Download className="w-4 h-4 text-brand shrink-0" />
-                  </button>
+                  </a>
                 ))}
               </div>
             </div>
@@ -659,6 +714,17 @@ export default function ProductPage() {
           <h2 className="text-xl font-extrabold">محصولات مکمل و مرتبط</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {relatedProducts.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {recentProducts.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-extrabold">بازدیدهای اخیر شما</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {recentProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
           </div>

@@ -15,6 +15,8 @@
         "slug": { "type": "string", "minLength": 1, "maxLength": 120 },
         "descriptionFa": { "type": "string", "maxLength": 500 },
         "seoTextFa": { "type": "string", "maxLength": 2000 },
+        "metaTitle": { "type": "string", "maxLength": 160 },
+        "metaDescription": { "type": "string", "maxLength": 320 },
         "isActive": { "type": "boolean" },
         "showInMenu": { "type": "boolean" },
         "showOnHome": { "type": "boolean" },
@@ -63,7 +65,7 @@
     },
     "Product": {
       "title": "Product",
-      "description": "Dental product with variants, batches, specs, and SEO fields.",
+      "description": "Public dental product with variants (no costPrice), batches, specs, and SEO fields.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
@@ -80,10 +82,22 @@
         "vertical": { "type": "string", "enum": ["dental", "medical", "lab"] },
         "shortDescriptionFa": { "type": "string", "maxLength": 500 },
         "descriptionFa": { "type": "string", "maxLength": 5000 },
+        "videoUrl": { "type": "string", "maxLength": 300 },
         "variants": { "type": "array" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "sku", "titleFa", "slug", "brandId", "primaryCategoryId", "kind", "status", "pricingMode", "vertical", "updatedAt"]
+    },
+    "ProductCostRecord": {
+      "title": "ProductCostRecord",
+      "description": "Private supplier buy cost and margin records visible only to finance and admin roles.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string", "maxLength": 128 },
+        "variantCosts": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "variantCosts", "updatedAt"]
     },
     "Campaign": {
       "title": "Campaign",
@@ -111,6 +125,7 @@
         "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
         "orderNo": { "type": "string", "maxLength": 40 },
         "userId": { "type": "string", "maxLength": 128 },
+        "isGuest": { "type": "boolean" },
         "customerName": { "type": "string", "maxLength": 120 },
         "customerMobile": { "type": "string", "maxLength": 20 },
         "status": { "type": "string", "enum": ["pending_payment", "awaiting_review", "payment_failed", "paid", "processing", "packed", "shipped", "delivered", "completed", "cancelled", "return_requested", "returned"] },
@@ -130,6 +145,7 @@
       "properties": {
         "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
         "proformaNo": { "type": "string", "maxLength": 40 },
+        "shareToken": { "type": "string", "maxLength": 64 },
         "userId": { "type": "string", "maxLength": 128 },
         "status": { "type": "string", "enum": ["draft", "sent", "viewed", "accepted", "rejected", "expired", "converted"] },
         "grandTotal": { "type": "number" },
@@ -152,6 +168,11 @@
         "accountType": { "type": "string", "enum": ["individual", "clinic", "lab", "student", "agent", "company"] },
         "clinicName": { "type": "string", "maxLength": 160 },
         "medicalCouncilNo": { "type": "string", "maxLength": 40 },
+        "legalCompanyName": { "type": "string", "maxLength": 160 },
+        "economicCode": { "type": "string", "maxLength": 40 },
+        "nationalId": { "type": "string", "maxLength": 40 },
+        "registrationNo": { "type": "string", "maxLength": 40 },
+        "isBlocked": { "type": "boolean" },
         "b2bStatus": { "type": "string", "enum": ["none", "pending", "approved", "rejected", "needs_info"] },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -190,6 +211,22 @@
       },
       "required": ["id", "ticketNo", "userId", "subject", "department", "status", "createdAt", "updatedAt"]
     },
+    "ReturnRequest": {
+      "title": "ReturnRequest",
+      "description": "Customer RMA / return request workflow.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "returnNo": { "type": "string", "maxLength": 40 },
+        "orderId": { "type": "string", "maxLength": 128 },
+        "orderNo": { "type": "string", "maxLength": 40 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "reasonFa": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["requested", "approved", "received", "refunded", "rejected"] },
+        "refundAmount": { "type": "number" }
+      },
+      "required": ["id", "returnNo", "orderId", "userId", "status", "refundAmount"]
+    },
     "AuditLog": {
       "title": "AuditLog",
       "description": "Immutable admin activity audit entry.",
@@ -205,13 +242,27 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "actorUid", "action", "entityType", "entityId", "createdAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "RBAC admin registry mapping uid to AdminRoleCode.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["super_admin", "admin", "sales_mgr", "warehouse", "content", "support", "accountant"] },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "updatedAt"]
     }
   },
   "firestore": {
     "/categories/{categoryId}": { "schema": { "$ref": "#/entities/Category" }, "description": "Catalog categories" },
     "/brands/{brandId}": { "schema": { "$ref": "#/entities/Brand" }, "description": "Catalog brands" },
     "/attributes/{attributeId}": { "schema": { "$ref": "#/entities/AttributeDef" }, "description": "Dynamic attribute dictionary" },
-    "/products/{productId}": { "schema": { "$ref": "#/entities/Product" }, "description": "Dental products and variants" },
+    "/products/{productId}": { "schema": { "$ref": "#/entities/Product" }, "description": "Dental products and variants (public without costPrice)" },
+    "/productCosts/{productId}": { "schema": { "$ref": "#/entities/ProductCostRecord" }, "description": "Private buy cost records locked to finance/admin" },
     "/campaigns/{campaignId}": { "schema": { "$ref": "#/entities/Campaign" }, "description": "Time-bound discount campaigns" },
     "/bundles/{bundleId}": { "schema": "Bundle", "description": "Clinic starter packs and economy bundles" },
     "/agents/{agentId}": { "schema": "Agent", "description": "Provincial agents and branches" },
@@ -220,17 +271,30 @@
     "/reviews/{reviewId}": { "schema": { "$ref": "#/entities/Review" }, "description": "Product reviews" },
     "/questions/{questionId}": { "schema": "Question", "description": "Product Q&A" },
     "/orders/{orderId}": { "schema": { "$ref": "#/entities/Order" }, "description": "Customer orders" },
+    "/invoices/{invoiceId}": { "schema": "InvoiceRecord", "description": "Official tax and commercial invoices" },
+    "/paymentLedger/{entryId}": { "schema": "PaymentLedgerEntry", "description": "Gateway and settlement payment ledger" },
+    "/returns/{returnId}": { "schema": { "$ref": "#/entities/ReturnRequest" }, "description": "Customer RMA returns" },
     "/proformas/{proformaId}": { "schema": { "$ref": "#/entities/Proforma" }, "description": "Proforma invoices" },
     "/paymentPlans/{planId}": { "schema": "PaymentPlan", "description": "Credit/installment/cheque requests" },
     "/stockRequests/{requestId}": { "schema": "StockRequest", "description": "Unavailable item requests" },
+    "/stockNotifications/{notifId}": { "schema": "StockNotification", "description": "Back-in-stock mobile alerts" },
+    "/newsletterSubscribers/{subId}": { "schema": "NewsletterSubscriber", "description": "Newsletter and discount subscribers" },
     "/consultationRequests/{requestId}": { "schema": "ConsultationRequest", "description": "Capital equipment consultations" },
     "/tickets/{ticketId}": { "schema": { "$ref": "#/entities/Ticket" }, "description": "Support tickets" },
     "/users/{userId}": { "schema": { "$ref": "#/entities/UserProfile" }, "description": "User profiles and B2B verification status" },
     "/b2bVerifications/{verificationId}": { "schema": "B2BVerification", "description": "B2B upgrade verification queue" },
+    "/warehouses/{warehouseId}": { "schema": "Warehouse", "description": "Physical warehouses" },
+    "/suppliers/{supplierId}": { "schema": "Supplier", "description": "Dental suppliers" },
+    "/stockMovements/{movementId}": { "schema": "StockMovement", "description": "Inventory movement ledger" },
+    "/contractPrices/{contractId}": { "schema": "ContractPrice", "description": "Customer-specific contract price agreements" },
+    "/pages/{pageId}": { "schema": "SitePage", "description": "Static CMS informational pages" },
+    "/banners/{bannerId}": { "schema": "BannerItem", "description": "Storefront hero and promo banners" },
+    "/faqs/{faqId}": { "schema": "FaqItem", "description": "Global FAQ knowledge base" },
+    "/notFoundLogs/{logId}": { "schema": "NotFoundLog", "description": "404 path hits log" },
     "/redirects/{redirectId}": { "schema": "Redirect", "description": "301/302/410 URL redirects" },
     "/auditLogs/{logId}": { "schema": { "$ref": "#/entities/AuditLog" }, "description": "Append-only admin audit logs" },
     "/settings/{settingId}": { "schema": "Setting", "description": "Public and system store configuration" },
-    "/admins/{uid}": { "schema": "AdminUser", "description": "Admin RBAC registry" },
+    "/admins/{uid}": { "schema": { "$ref": "#/entities/AdminUser" }, "description": "Admin RBAC registry" },
     "/test/connection": { "schema": "HealthCheck", "description": "Firestore connectivity probe document" }
   }
 }

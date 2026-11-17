@@ -11,6 +11,8 @@ export default function ProductCard({ product }: { product: Product }) {
   const {
     brands,
     campaigns,
+    contractPrices,
+    authUser,
     currency,
     customerGroup,
     settings,
@@ -23,7 +25,14 @@ export default function ProductCard({ product }: { product: Product }) {
 
   const [imgFailed, setImgFailed] = useState(false);
   const brand = brands.find((b) => b.id === product.brandId);
-  const summary = getProductPriceSummary(product, { customerGroup, campaigns, currency, settings });
+  const summary = getProductPriceSummary(product, {
+    customerGroup,
+    campaigns,
+    currency,
+    settings,
+    contractPrices,
+    userId: authUser?.uid,
+  });
   const isWishlisted = wishlistIds.includes(product.id);
   const isCompared = compareIds.includes(product.id);
   const activeVariants = product.variants.filter((v) => v.isActive);

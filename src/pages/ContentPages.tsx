@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { Award, Clock, MapPin, Phone, ShieldCheck } from 'lucide-react';
+import { Link, useLocation, useParams } from 'react-router-dom';
+import { Award, Clock, MapPin, PackagePlus, Phone, Printer, ShieldCheck } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
 import { useStore } from '../context/StoreContext';
-import { formatJalaliDate, toPersianDigits } from '../lib/jalali';
+import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
+import { getProductPriceSummary } from '../lib/pricing';
 import {
   applySeoHead,
   buildAgentJsonLd,
   buildBlogPostJsonLd,
+  buildBrandJsonLd,
   buildBreadcrumbJsonLd,
+  buildBundleJsonLd,
+  buildFaqJsonLd,
+  buildStaticPageJsonLd,
 } from '../lib/seo';
 
 export function BrandsListPage() {
@@ -80,6 +85,7 @@ export function BrandDetailPage() {
       canonicalPath: `/brand/${brand.slug}`,
       robots: 'index, follow',
       jsonLd: [
+        buildBrandJsonLd(brand),
         buildBreadcrumbJsonLd([
           { name: 'خانه', path: '/' },
           { name: 'برندها', path: '/brands' },
@@ -124,6 +130,226 @@ export function BrandDetailPage() {
         {brandProducts.map((p) => (
           <ProductCard key={p.id} product={p} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+export function PackDetailPage() {
+  const { slug } = useParams();
+  const { bundles, products, campaigns, currency, customerGroup, settings, contractPrices, authUser, addBundleToCart } = useStore();
+  const bundle = bundles.find((b) => b.slug === slug);
+
+  const itemsResolved = (bundle?.items ?? [])
+    .map((bi) => {
+      const product = products.find((p) => p.id === bi.productId);
+      const variant = product?.variants.find((v) => v.id === bi.variantId) ?? product?.variants[0];
+      if (!product || !variant) return null;
+      const summary = getProductPriceSummary(product, {
+        customerGroup,
+        campaigns,
+        currency,
+        settings,
+        contractPrices,
+        userId: authUser?.uid,
+      });
+      return { bi, product, variant, unitPrice: summary.minPrice ?? variant.basePrice ?? 0 };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  const originalTotal = itemsResolved.reduce((sum, x) => sum + x.unitPrice * x.bi.quantity, 0);
+  const discountedTotal = bundle ? Math.round(originalTotal * (1 - bundle.discountPercent / 100)) : 0;
+
+  useEffect(() => {
+    if (!bundle) return;
+    applySeoHead({
+      title: `${bundle.nameFa} | ${settings.storeNameFa}`,
+      description: bundle.descriptionFa,
+      canonicalPath: `/pack/${bundle.slug}`,
+      robots: 'index, follow',
+      ogImage: bundle.imageUrl,
+      jsonLd: [
+        buildBundleJsonLd(bundle, discountedTotal),
+        buildBreadcrumbJsonLd([
+          { name: 'خانه', path: '/' },
+          { name: bundle.nameFa, path: `/pack/${bundle.slug}` },
+        ]),
+      ],
+    });
+  }, [bundle, discountedTotal, settings.storeNameFa]);
+
+  if (!bundle) {
+    return (
+      <div className="max-w-4xl mx-auto p-12 text-center space-y-4">
+        <h1 className="text-xl font-bold">پک تجهیزاتی مورد نظر یافت نشد</h1>
+        <Link to="/" className="text-brand font-bold">بازگشت به صفحه اصلی</Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 lg:px-8 py-8 space-y-8">
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+        <img
+          src={bundle.imageUrl}
+          alt={bundle.nameFa}
+          className="lg:col-span-5 w-full aspect-[4/3] object-cover rounded-xl bg-surface"
+        />
+        <div className="lg:col-span-7 space-y-4">
+          <span className="text-xs font-bold text-rose-600">
+            پک آماده کلینیکی با {toPersianDigits(bundle.discountPercent)}٪ صرفه‌جویی اقتصادی
+          </span>
+          <h1 className="text-2xl lg:text-3xl font-extrabold">{bundle.nameFa}</h1>
+          <p className="text-sm text-ink/75 dark:text-slate-300 leading-relaxed">{bundle.descriptionFa}</p>
+
+          <div className="p-4 rounded-xl bg-surface/60 dark:bg-slate-800 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              {originalTotal > 0 && (
+                <p className="text-xs text-ink/45 line-through tabular-nums">{formatMoney(originalTotal, currency)}</p>
+              )}
+              <p className="text-2xl font-extrabold text-brand dark:text-teal-300 tabular-nums">
+                {discountedTotal > 0 ? formatMoney(discountedTotal, currency) : 'استعلام قیمت'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => addBundleToCart(bundle.id)}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
+            >
+              <PackagePlus className="w-4 h-4" />
+              <span>افزودن کل پک به سبد خرید</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <section className="space-y-4">
+        <h2 className="text-lg font-extrabold">اقلام موجود در این پک</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {itemsResolved.map(({ bi, product, variant, unitPrice }) => (
+            <Link
+              key={`${product.id}_${variant.id}`}
+              to={`/product/${product.slug}`}
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-4 flex items-center gap-4 hover:border-brand transition-colors"
+            >
+              <img src={product.imageUrl} alt={product.titleFa} className="w-20 h-16 object-cover rounded-lg bg-surface shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-sm truncate">{product.titleFa}</p>
+                <p className="text-xs text-ink/60">
+                  {variant.labelFa} · تعداد در پک: <strong className="tabular-nums">{toPersianDigits(bi.quantity)}</strong>
+                </p>
+              </div>
+              <span className="text-xs font-extrabold text-brand tabular-nums">
+                {unitPrice > 0 ? formatMoney(unitPrice, currency) : 'تماس'}
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function PublicProformaPage() {
+  const { token } = useParams();
+  const { proformas, currency, settings, respondProforma } = useStore();
+  const pf = proformas.find((p) => p.shareToken === token || p.id === token);
+
+  useEffect(() => {
+    if (!pf) return;
+    applySeoHead({
+      title: `پیش‌فاکتور ${pf.proformaNo} | ${settings.storeNameFa}`,
+      description: `پیش‌فاکتور رسمی کلینیک برای ${pf.contactName}`,
+      canonicalPath: `/proforma/${token ?? ''}`,
+      robots: 'noindex, nofollow',
+    });
+  }, [pf, token, settings.storeNameFa]);
+
+  if (!pf) {
+    return (
+      <div className="max-w-3xl mx-auto p-12 text-center space-y-4">
+        <h1 className="text-xl font-bold">پیش‌فاکتور یافت نشد یا منقضی شده است</h1>
+        <Link to="/" className="text-brand font-bold">بازگشت به فروشگاه</Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-10 space-y-6">
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
+        <div className="flex flex-wrap justify-between items-start gap-4 border-b border-line dark:border-slate-800 pb-4">
+          <div>
+            <h1 className="text-xl font-extrabold text-brand">{settings.storeNameFa} — پیش‌فاکتور رسمی کلینیک</h1>
+            <p className="text-xs text-ink/60 mt-1">کد IMED: {settings.imedRegistryCode} · تلفن: {settings.phone}</p>
+          </div>
+          <div className="text-left text-xs space-y-1">
+            <p className="font-extrabold tabular-nums">شماره: {pf.proformaNo}</p>
+            <p>اعتبار تا: {formatJalaliDate(pf.validUntil)}</p>
+            <p className="font-bold text-brand">وضعیت: {pf.status}</p>
+          </div>
+        </div>
+
+        <div className="text-xs space-y-1">
+          <p>خریدار: <strong>{pf.contactName}</strong> {pf.clinicName ? `(${pf.clinicName})` : ''}</p>
+          <p>شماره تماس: <span className="tabular-nums">{pf.contactMobile}</span></p>
+        </div>
+
+        <table className="w-full text-xs border-collapse border border-line dark:border-slate-700">
+          <thead>
+            <tr className="bg-surface dark:bg-slate-800">
+              <th className="border border-line dark:border-slate-700 p-2 text-right">شرح کالا</th>
+              <th className="border border-line dark:border-slate-700 p-2">تعداد</th>
+              <th className="border border-line dark:border-slate-700 p-2">فی</th>
+              <th className="border border-line dark:border-slate-700 p-2">جمع</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pf.items.map((it) => (
+              <tr key={it.variantId}>
+                <td className="border border-line dark:border-slate-700 p-2">{it.titleFa} ({it.variantLabelFa})</td>
+                <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{toPersianDigits(it.quantity)}</td>
+                <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{formatMoney(it.unitPrice, currency)}</td>
+                <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{formatMoney(it.lineTotal, currency)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div className="flex justify-between items-center text-sm font-extrabold pt-2">
+          <span>مبلغ نهایی قابل پرداخت:</span>
+          <span className="tabular-nums text-brand">{formatMoney(pf.grandTotal, currency)}</span>
+        </div>
+
+        <p className="text-xs text-ink/70 dark:text-slate-400">{pf.termsFa}</p>
+
+        <div className="flex flex-wrap gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>چاپ پیش‌فاکتور</span>
+          </button>
+          {(pf.status === 'draft' || pf.status === 'sent' || pf.status === 'viewed') && (
+            <>
+              <button
+                type="button"
+                onClick={() => respondProforma(pf.id, 'accepted')}
+                className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+              >
+                تایید پیش‌فاکتور
+              </button>
+              <button
+                type="button"
+                onClick={() => respondProforma(pf.id, 'rejected')}
+                className="px-4 py-2 rounded-xl border border-rose-300 text-rose-700 text-xs font-bold"
+              >
+                رد پیش‌فاکتور
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -206,29 +432,57 @@ export function AgentsPage() {
 }
 
 export function BlogListPage() {
+  const { slug: categorySlug } = useParams();
   const { blogPosts, settings } = useStore();
   const published = blogPosts.filter((p) => p.status === 'published');
+  const categories = Array.from(new Set(published.map((p) => p.categoryFa)));
+  const filtered = categorySlug
+    ? published.filter((p) => p.categoryFa === decodeURIComponent(categorySlug))
+    : published;
 
   useEffect(() => {
     applySeoHead({
-      title: `مجله تخصصی دندانپزشکی | ${settings.storeNameFa}`,
+      title: `مجله تخصصی دندانپزشکی ${categorySlug ? `— ${decodeURIComponent(categorySlug)}` : ''} | ${settings.storeNameFa}`,
       description: 'مقالات آموزشی، راهنمای خرید تجهیزات و پروتکل‌های کلینیکی دندانپزشکی',
-      canonicalPath: '/blog',
+      canonicalPath: categorySlug ? `/blog/category/${categorySlug}` : '/blog',
       robots: 'index, follow',
     });
-  }, [settings.storeNameFa]);
+  }, [settings.storeNameFa, categorySlug]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-2">
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
         <h1 className="text-2xl font-extrabold">مجله تخصصی و راهنمای خرید تجهیزات دندانپزشکی</h1>
         <p className="text-sm text-ink/70 dark:text-slate-400">
           نگارش و بازبینی علمی توسط متخصصان دندانپزشکی و مهندسی پزشکی
         </p>
+        <div className="flex flex-wrap gap-2 pt-2 text-xs">
+          <Link
+            to="/blog"
+            className={`px-3 py-1.5 rounded-lg border font-bold ${
+              !categorySlug ? 'bg-brand text-white border-brand' : 'border-line dark:border-slate-700'
+            }`}
+          >
+            همه مقالات
+          </Link>
+          {categories.map((cat) => (
+            <Link
+              key={cat}
+              to={`/blog/category/${encodeURIComponent(cat)}`}
+              className={`px-3 py-1.5 rounded-lg border font-bold ${
+                categorySlug && decodeURIComponent(categorySlug) === cat
+                  ? 'bg-brand text-white border-brand'
+                  : 'border-line dark:border-slate-700'
+              }`}
+            >
+              {cat}
+            </Link>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {published.map((post) => (
+        {filtered.map((post) => (
           <Link
             key={post.id}
             to={`/blog/${post.slug}`}
@@ -260,9 +514,10 @@ export function BlogPostPage() {
 
   useEffect(() => {
     if (!post) return;
+    const faqLd = post.faq ? buildFaqJsonLd(post.faq) : null;
     applySeoHead({
-      title: `${post.titleFa} | ${settings.storeNameFa}`,
-      description: post.excerptFa,
+      title: `${post.metaTitle || post.titleFa} | ${settings.storeNameFa}`,
+      description: post.metaDescription || post.excerptFa,
       canonicalPath: `/blog/${post.slug}`,
       robots: 'index, follow',
       ogType: 'article',
@@ -274,6 +529,7 @@ export function BlogPostPage() {
           { name: 'مجله تخصصی', path: '/blog' },
           { name: post.titleFa, path: `/blog/${post.slug}` },
         ]),
+        ...(faqLd ? [faqLd] : []),
       ],
     });
   }, [post, settings]);
@@ -340,6 +596,10 @@ const STATIC_CONTENT: Record<string, { title: string; body: string }> = {
     title: 'درباره دنتال‌مارکت',
     body: 'دنتال‌مارکت سامانه تخصصی تامین مواد مصرفی، ابزار دقیق و تجهیزات سرمایه‌ای دندانپزشکی در ایران است. تمامی محصولات دارای اصالت گارانتی، شناسه رهگیری IMED و تاریخ انقضای شفاف (FEFO) برای دندانپزشکان، کلینیک‌ها و لابراتوارها عرضه می‌شوند.',
   },
+  contact: {
+    title: 'تماس با ما و پشتیبانی کلینیک‌ها',
+    body: 'کارشناسان فروش و مهندسان پزشکی دنتال‌مارکت همه‌روزه از ساعت ۹ تا ۱۸ آماده مشاوره تجهیز مطب، پیگیری پیش‌فاکتورها و هماهنگی نصب تجهیزات هستند.',
+  },
   returns: {
     title: 'شرایط مرجوعی و گارانتی تجهیزات',
     body: 'مواد مصرفی دندانپزشکی با بسته‌بندی پلمپ و دست‌نخورده تا ۷ روز کاری پس از تحویل قابل بازگشت هستند. تجهیزات سرمایه‌ای شامل گارانتی رسمی شرکت واردکننده و خدمات نصب توسط تیم فنی استانی هستند.',
@@ -355,35 +615,58 @@ const STATIC_CONTENT: Record<string, { title: string; body: string }> = {
 };
 
 export function StaticInfoPage() {
-  const { slug } = useParams();
-  const { settings } = useStore();
-  const page = STATIC_CONTENT[slug ?? 'about'] ?? STATIC_CONTENT.about;
+  const { slug = 'about' } = useParams();
+  const { pages, faqs, settings } = useStore();
+  const cmsPage = pages.find((p) => p.slug === slug && p.status === 'published');
+  const fallback = STATIC_CONTENT[slug] ?? STATIC_CONTENT.about;
+  const pageTitle = cmsPage?.titleFa || fallback.title;
+  const pageBody = cmsPage?.bodyFa || fallback.body;
+  const activeFaqs = faqs.filter((f) => f.isActive);
 
   useEffect(() => {
+    const faqLd = activeFaqs.length > 0 ? buildFaqJsonLd(activeFaqs.map((f) => ({ q: f.questionFa, a: f.answerFa }))) : null;
     applySeoHead({
-      title: `${page.title} | ${settings.storeNameFa}`,
-      description: page.body.slice(0, 150),
-      canonicalPath: `/page/${slug ?? 'about'}`,
+      title: `${cmsPage?.metaTitle || pageTitle} | ${settings.storeNameFa}`,
+      description: cmsPage?.metaDescription || pageBody.slice(0, 150),
+      canonicalPath: `/page/${slug}`,
       robots: 'index, follow',
+      jsonLd: [
+        buildStaticPageJsonLd(slug, pageTitle, settings),
+        ...(faqLd ? [faqLd] : []),
+      ],
     });
-  }, [page, slug, settings.storeNameFa]);
+  }, [cmsPage, pageTitle, pageBody, slug, settings, activeFaqs]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-4">
-        <h1 className="text-2xl font-extrabold">{page.title}</h1>
-        <p className="text-sm leading-8 text-ink/80 dark:text-slate-300">{page.body}</p>
+        <h1 className="text-2xl font-extrabold">{pageTitle}</h1>
+        <p className="text-sm leading-8 text-ink/80 dark:text-slate-300 whitespace-pre-line">{pageBody}</p>
         <div className="pt-4 border-t border-line dark:border-slate-800 text-xs text-ink/60 dark:text-slate-400 space-y-1">
           <p>نشانی: {settings.addressFa}</p>
           <p className="tabular-nums">تلفن: {settings.phone} · کد IMED: {settings.imedRegistryCode}</p>
         </div>
       </div>
+
+      {activeFaqs.length > 0 && (
+        <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
+          <h2 className="text-lg font-extrabold">پرسش‌های متداول خرید و ضمانت</h2>
+          {activeFaqs.map((fq) => (
+            <div key={fq.id} className="p-4 rounded-xl bg-surface/50 dark:bg-slate-800/50 space-y-1">
+              <p className="text-sm font-bold">{fq.questionFa}</p>
+              <p className="text-xs text-ink/75 dark:text-slate-300 leading-relaxed">{fq.answerFa}</p>
+            </div>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
 
 export function NotFoundPage() {
-  const { settings } = useStore();
+  const { settings, recordNotFoundHit } = useStore();
+  const location = useLocation();
+
   useEffect(() => {
     applySeoHead({
       title: `صفحه پیدا نشد | ${settings.storeNameFa}`,
@@ -391,7 +674,8 @@ export function NotFoundPage() {
       canonicalPath: '/404',
       robots: 'noindex, nofollow',
     });
-  }, [settings.storeNameFa]);
+    void recordNotFoundHit(location.pathname);
+  }, [settings.storeNameFa, location.pathname]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-5">

@@ -10,6 +10,13 @@
     "search": "Search",
     "cart": "Cart",
     "account": "Account",
-    "admin": "Admin"
+    "admin": "Admin",
+    "about": "About",
+    "contact": "Contact"
+  },
+  "counts": {
+    "products": "{count} products",
+    "categories": "{count} categories",
+    "brands": "{count} brands"
   }
 }

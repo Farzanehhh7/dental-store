@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import StoreLayout from './components/store/StoreLayout';
 import AdminLayout from './components/admin/AdminLayout';
 import { useStore } from './context/StoreContext';
@@ -16,6 +16,8 @@ import {
   BrandDetailPage,
   BrandsListPage,
   NotFoundPage,
+  PackDetailPage,
+  PublicProformaPage,
   StaticInfoPage,
 } from './pages/ContentPages';
 import AdminDashboardHome from './pages/admin/AdminDashboardHome';
@@ -46,6 +48,44 @@ function ScrollToTop() {
   return null;
 }
 
+function RedirectInterceptor({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { redirects, incrementRedirectHit } = useStore();
+  const [gonePath, setGonePath] = useState<string | null>(null);
+
+  useEffect(() => {
+    const match = redirects.find((r) => r.fromPath === pathname);
+    if (!match) {
+      setGonePath(null);
+      return;
+    }
+    void incrementRedirectHit(match.id);
+    if (match.statusCode === 410) {
+      setGonePath(pathname);
+    } else if (match.toPath && match.toPath !== pathname) {
+      setGonePath(null);
+      navigate(match.toPath, { replace: true });
+    }
+  }, [pathname, redirects, navigate]);
+
+  if (gonePath === pathname) {
+    return (
+      <StoreLayout>
+        <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
+          <p className="text-4xl font-extrabold text-amber-600 tabular-nums">۴۱۰</p>
+          <h1 className="text-2xl font-extrabold">این صفحه به‌صورت دائم حذف شده است (410 Gone)</h1>
+          <Link to="/" className="inline-block px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
+            بازگشت به صفحه اصلی
+          </Link>
+        </div>
+      </StoreLayout>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 function ToastContainer() {
   const { toasts } = useStore();
   if (toasts.length === 0) return null;
@@ -73,44 +113,49 @@ export default function App() {
   return (
     <>
       <ScrollToTop />
-      <Routes>
-        {/* Admin Routes */}
-        <Route path="/admin" element={<AdminLayout><AdminDashboardHome /></AdminLayout>} />
-        <Route path="/admin/reports" element={<AdminLayout><AdminReportsPage /></AdminLayout>} />
-        <Route path="/admin/products" element={<AdminLayout><AdminProductsPage /></AdminLayout>} />
-        <Route path="/admin/categories" element={<AdminLayout><AdminCategoriesPage /></AdminLayout>} />
-        <Route path="/admin/brands" element={<AdminLayout><AdminBrandsPage /></AdminLayout>} />
-        <Route path="/admin/pricing" element={<AdminLayout><AdminPricingCampaignsPage /></AdminLayout>} />
-        <Route path="/admin/inventory" element={<AdminLayout><AdminInventoryPage /></AdminLayout>} />
-        <Route path="/admin/orders" element={<AdminLayout><AdminSalesPage /></AdminLayout>} />
-        <Route path="/admin/customers" element={<AdminLayout><AdminCustomersSupportPage mode="customers" /></AdminLayout>} />
-        <Route path="/admin/support" element={<AdminLayout><AdminCustomersSupportPage mode="support" /></AdminLayout>} />
-        <Route path="/admin/content" element={<AdminLayout><AdminContentPage /></AdminLayout>} />
-        <Route path="/admin/seo" element={<AdminLayout><AdminSeoPage /></AdminLayout>} />
-        <Route path="/admin/import-export" element={<AdminLayout><AdminImportExportPage /></AdminLayout>} />
-        <Route path="/admin/system" element={<AdminLayout><AdminSystemPage /></AdminLayout>} />
+      <RedirectInterceptor>
+        <Routes>
+          {/* Admin Routes */}
+          <Route path="/admin" element={<AdminLayout><AdminDashboardHome /></AdminLayout>} />
+          <Route path="/admin/reports" element={<AdminLayout><AdminReportsPage /></AdminLayout>} />
+          <Route path="/admin/products" element={<AdminLayout><AdminProductsPage /></AdminLayout>} />
+          <Route path="/admin/categories" element={<AdminLayout><AdminCategoriesPage /></AdminLayout>} />
+          <Route path="/admin/brands" element={<AdminLayout><AdminBrandsPage /></AdminLayout>} />
+          <Route path="/admin/pricing" element={<AdminLayout><AdminPricingCampaignsPage /></AdminLayout>} />
+          <Route path="/admin/inventory" element={<AdminLayout><AdminInventoryPage /></AdminLayout>} />
+          <Route path="/admin/orders" element={<AdminLayout><AdminSalesPage /></AdminLayout>} />
+          <Route path="/admin/customers" element={<AdminLayout><AdminCustomersSupportPage mode="customers" /></AdminLayout>} />
+          <Route path="/admin/support" element={<AdminLayout><AdminCustomersSupportPage mode="support" /></AdminLayout>} />
+          <Route path="/admin/content" element={<AdminLayout><AdminContentPage /></AdminLayout>} />
+          <Route path="/admin/seo" element={<AdminLayout><AdminSeoPage /></AdminLayout>} />
+          <Route path="/admin/import-export" element={<AdminLayout><AdminImportExportPage /></AdminLayout>} />
+          <Route path="/admin/system" element={<AdminLayout><AdminSystemPage /></AdminLayout>} />
 
-        {/* Storefront Routes */}
-        <Route path="/" element={<StoreLayout><Home /></StoreLayout>} />
-        <Route path="/category/:slug" element={<StoreLayout><CategoryPage /></StoreLayout>} />
-        <Route path="/category/:slug/brand/:brandSlug" element={<StoreLayout><CategoryPage /></StoreLayout>} />
-        <Route path="/product/:slug" element={<StoreLayout><ProductPage /></StoreLayout>} />
-        <Route path="/search" element={<StoreLayout><SearchPage /></StoreLayout>} />
-        <Route path="/compare" element={<StoreLayout><ComparePage /></StoreLayout>} />
-        <Route path="/wishlist" element={<StoreLayout><WishlistPage /></StoreLayout>} />
-        <Route path="/cart" element={<StoreLayout><CartPage /></StoreLayout>} />
-        <Route path="/checkout" element={<StoreLayout><CheckoutPage /></StoreLayout>} />
-        <Route path="/account" element={<StoreLayout><AccountPage /></StoreLayout>} />
-        <Route path="/login" element={<StoreLayout><AccountPage /></StoreLayout>} />
-        <Route path="/brands" element={<StoreLayout><BrandsListPage /></StoreLayout>} />
-        <Route path="/brand/:slug" element={<StoreLayout><BrandDetailPage /></StoreLayout>} />
-        <Route path="/agents" element={<StoreLayout><AgentsPage /></StoreLayout>} />
-        <Route path="/agents/:provinceSlug" element={<StoreLayout><AgentsPage /></StoreLayout>} />
-        <Route path="/blog" element={<StoreLayout><BlogListPage /></StoreLayout>} />
-        <Route path="/blog/:slug" element={<StoreLayout><BlogPostPage /></StoreLayout>} />
-        <Route path="/page/:slug" element={<StoreLayout><StaticInfoPage /></StoreLayout>} />
-        <Route path="*" element={<StoreLayout><NotFoundPage /></StoreLayout>} />
-      </Routes>
+          {/* Storefront Routes */}
+          <Route path="/" element={<StoreLayout><Home /></StoreLayout>} />
+          <Route path="/category/:slug" element={<StoreLayout><CategoryPage /></StoreLayout>} />
+          <Route path="/category/:slug/brand/:brandSlug" element={<StoreLayout><CategoryPage /></StoreLayout>} />
+          <Route path="/product/:slug" element={<StoreLayout><ProductPage /></StoreLayout>} />
+          <Route path="/pack/:slug" element={<StoreLayout><PackDetailPage /></StoreLayout>} />
+          <Route path="/search" element={<StoreLayout><SearchPage /></StoreLayout>} />
+          <Route path="/compare" element={<StoreLayout><ComparePage /></StoreLayout>} />
+          <Route path="/wishlist" element={<StoreLayout><WishlistPage /></StoreLayout>} />
+          <Route path="/cart" element={<StoreLayout><CartPage /></StoreLayout>} />
+          <Route path="/checkout" element={<StoreLayout><CheckoutPage /></StoreLayout>} />
+          <Route path="/account" element={<StoreLayout><AccountPage /></StoreLayout>} />
+          <Route path="/login" element={<StoreLayout><AccountPage /></StoreLayout>} />
+          <Route path="/proforma/:token" element={<StoreLayout><PublicProformaPage /></StoreLayout>} />
+          <Route path="/brands" element={<StoreLayout><BrandsListPage /></StoreLayout>} />
+          <Route path="/brand/:slug" element={<StoreLayout><BrandDetailPage /></StoreLayout>} />
+          <Route path="/agents" element={<StoreLayout><AgentsPage /></StoreLayout>} />
+          <Route path="/agents/:provinceSlug" element={<StoreLayout><AgentsPage /></StoreLayout>} />
+          <Route path="/blog" element={<StoreLayout><BlogListPage /></StoreLayout>} />
+          <Route path="/blog/category/:slug" element={<StoreLayout><BlogListPage /></StoreLayout>} />
+          <Route path="/blog/:slug" element={<StoreLayout><BlogPostPage /></StoreLayout>} />
+          <Route path="/page/:slug" element={<StoreLayout><StaticInfoPage /></StoreLayout>} />
+          <Route path="*" element={<StoreLayout><NotFoundPage /></StoreLayout>} />
+        </Routes>
+      </RedirectInterceptor>
       <ToastContainer />
     </>
   );

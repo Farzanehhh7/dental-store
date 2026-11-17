@@ -10,7 +10,9 @@
     "search": "جستجو",
     "cart": "سبد خرید",
     "account": "حساب کاربری",
-    "admin": "پنل مدیریت"
+    "admin": "پنل مدیریت",
+    "about": "درباره ما",
+    "contact": "تماس با ما"
   },
   "price": {
     "toman": "تومان",
@@ -19,7 +21,8 @@
     "callForPrice": "تماس برای قیمت",
     "outOfStock": "ناموجود",
     "comingSoon": "به‌زودی",
-    "nearExpiry": "انقضا نزدیک"
+    "nearExpiry": "انقضا نزدیک",
+    "verifiedDiscount": "تخفیف تاییدشده با سابقه قیمت"
   },
   "actions": {
     "addToCart": "افزودن به سبد خرید",
@@ -32,8 +35,31 @@
     "save": "ذخیره تغییرات",
     "cancel": "انصراف",
     "exportCsv": "خروجی CSV",
+    "exportXlsx": "خروجی Excel",
     "signInGoogle": "ورود با حساب گوگل",
     "signOut": "خروج"
+  },
+  "home": {
+    "bestsellers": "پرفروش‌ترین ملزومات و مواد مصرفی",
+    "newest": "تازه‌ترین محصولات کاتالوگ",
+    "mostViewed": "پربازدیدترین کالاهای تخصصی",
+    "nearExpirySection": "تخفیف‌های انقضای نزدیک (FEFO)",
+    "campaigns": "پیشنهادهای ویژه و کمپین‌ها",
+    "starterPacks": "پک‌های تجهیز مطب و کیت‌های اقتصادی",
+    "agentsSection": "شبکه نمایندگی‌های استانی",
+    "recentlyViewed": "بازدیدهای اخیر شما"
+  },
+  "counts": {
+    "products": "{count} محصول",
+    "categories": "{count} دسته‌بندی",
+    "brands": "{count} برند معتبر",
+    "daysLeft": "{count} روز باقی‌مانده"
+  },
+  "checkout": {
+    "guestCheckout": "ثبت سفارش بدون نیاز به ورود (مهمان)",
+    "otpSend": "ارسال کد تایید ۶ رقمی",
+    "otpVerify": "تایید شماره موبایل",
+    "verifyOnline": "پرداخت و تایید درگاه"
   },
   "orderStatus": {
     "pending_payment": "در انتظار پرداخت",
@@ -66,5 +92,10 @@
     "student": "دانشجو",
     "agent": "نماینده فروش",
     "wholesale": "همکار عمده"
+  },
+  "footer": {
+    "newsletterPlaceholder": "ایمیل یا شماره موبایل برای اطلاع‌رسانی تخفیف‌ها",
+    "newsletterSubmit": "عضویت در خبرنامه",
+    "copyright": "تمامی حقوق مادی و معنوی برای دنتال‌مارکت محفوظ است."
   }
 }

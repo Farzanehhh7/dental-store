@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0E4E5C"/>
+      <stop offset="55%" stop-color="#17788C"/>
+      <stop offset="100%" stop-color="#0D3B46"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1050" cy="110" r="180" fill="#ffffff" fill-opacity="0.06"/>
+  <circle cx="160" cy="540" r="220" fill="#ffffff" fill-opacity="0.05"/>
+  <rect x="80" y="96" width="1040" height="438" rx="28" fill="#ffffff" fill-opacity="0.08" stroke="#ffffff" stroke-opacity="0.18"/>
+  <text x="1040" y="245" text-anchor="end" fill="#ffffff" font-family="Vazirmatn, Tahoma, sans-serif" font-size="72" font-weight="800">دنتال‌مارکت</text>
+  <text x="1040" y="325" text-anchor="end" fill="#D5F4FA" font-family="Vazirmatn, Tahoma, sans-serif" font-size="34" font-weight="500">فروشگاه تخصصی تجهیزات و مواد مصرفی دندانپزشکی</text>
+  <text x="1040" y="405" text-anchor="end" fill="#9EE2EE" font-family="Vazirmatn, Tahoma, sans-serif" font-size="24">کد ردیابی IMED · کنترل تاریخ انقضای FEFO · پیش‌فاکتور رسمی کلینیک‌ها</text>
+</svg>

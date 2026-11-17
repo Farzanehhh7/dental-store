@@ -183,6 +183,7 @@ export interface Product {
   descriptionFa: string;
   imageUrl: string;
   galleryUrls: string[];
+  videoUrl?: string;
   warrantyMonths?: number;
   warrantyProvider?: string;
   installationAvailable: boolean;
@@ -207,6 +208,24 @@ export interface Product {
   metaDescription?: string;
   publishedAt: string;
   updatedAt: string;
+}
+
+export interface ProductCostRecord {
+  productId: string;
+  variantCosts: Record<string, number>;
+  updatedAt: string;
+}
+
+export interface ContractPrice {
+  id: string;
+  userId: string;
+  customerName: string;
+  productId: string;
+  productTitleFa: string;
+  variantId: string;
+  unitPrice: number;
+  validUntil: string;
+  isActive: boolean;
 }
 
 export interface Campaign {
@@ -260,6 +279,7 @@ export interface BlogPost {
   titleFa: string;
   slug: string;
   categoryFa: string;
+  categorySlug?: string;
   excerptFa: string;
   bodyFa: string;
   imageUrl: string;
@@ -269,6 +289,8 @@ export interface BlogPost {
   readingMinutes: number;
   productIds: string[];
   faq?: { q: string; a: string }[];
+  metaTitle?: string;
+  metaDescription?: string;
   status: 'draft' | 'published';
   publishedAt: string;
   updatedAt: string;
@@ -298,7 +320,7 @@ export interface OrderItem {
   unitPrice: number;
   discountAmount: number;
   lineTotal: number;
-  priceSource: 'base' | 'group' | 'tier' | 'campaign';
+  priceSource: 'base' | 'group' | 'tier' | 'campaign' | 'contract';
   batchNo?: string;
 }
 
@@ -306,6 +328,7 @@ export interface Order {
   id: string;
   orderNo: string;
   userId: string;
+  isGuest?: boolean;
   customerName: string;
   customerMobile: string;
   customerGroup: CustomerGroupCode;
@@ -333,9 +356,57 @@ export interface Order {
   updatedAt: string;
 }
 
+export interface InvoiceRecord {
+  id: string;
+  invoiceNo: string;
+  orderId: string;
+  orderNo: string;
+  userId: string;
+  customerName: string;
+  isOfficial: boolean;
+  nationalId?: string;
+  economicCode?: string;
+  subtotal: number;
+  discountTotal: number;
+  taxTotal: number;
+  grandTotal: number;
+  status: 'issued' | 'voided';
+  issuedAt: string;
+}
+
+export interface PaymentLedgerEntry {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  gateway: string;
+  amount: number;
+  idempotencyKey: string;
+  refId: string;
+  status: 'initiated' | 'verified' | 'failed' | 'refunded';
+  createdAt: string;
+}
+
+export interface ReturnRequest {
+  id: string;
+  returnNo: string;
+  orderId: string;
+  orderNo: string;
+  userId: string;
+  customerName: string;
+  items: { productId: string; variantId: string; titleFa: string; quantity: number }[];
+  reasonFa: string;
+  resolution: 'refund' | 'replacement' | 'credit';
+  status: 'requested' | 'approved' | 'received' | 'refunded' | 'rejected';
+  refundAmount: number;
+  adminNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProformaInvoice {
   id: string;
   proformaNo: string;
+  shareToken?: string;
   userId: string;
   contactName: string;
   contactMobile: string;
@@ -426,6 +497,25 @@ export interface StockRequest {
   createdAt: string;
 }
 
+export interface StockNotification {
+  id: string;
+  productId: string;
+  variantId?: string;
+  productTitleFa: string;
+  mobile: string;
+  userId?: string;
+  status: 'pending' | 'notified';
+  createdAt: string;
+}
+
+export interface NewsletterSubscriber {
+  id: string;
+  contact: string;
+  type: 'email' | 'mobile';
+  status: 'active' | 'unsubscribed';
+  createdAt: string;
+}
+
 export interface ConsultationRequest {
   id: string;
   userId: string;
@@ -449,6 +539,8 @@ export interface B2BVerification {
   clinicName: string;
   medicalCouncilNo: string;
   documentSummary?: string;
+  attachmentName?: string;
+  attachmentPreview?: string;
   status: 'pending' | 'approved' | 'rejected' | 'needs_info';
   rejectReason?: string;
   reviewedBy?: string;
@@ -466,6 +558,11 @@ export interface UserProfile {
   clinicName?: string;
   medicalCouncilNo?: string;
   specialty?: string;
+  legalCompanyName?: string;
+  economicCode?: string;
+  nationalId?: string;
+  registrationNo?: string;
+  isBlocked?: boolean;
   b2bStatus: B2BStatus;
   addresses?: {
     id: string;
@@ -478,6 +575,79 @@ export interface UserProfile {
   }[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Warehouse {
+  id: string;
+  code: string;
+  nameFa: string;
+  city: string;
+  address: string;
+  isActive: boolean;
+  isDefault?: boolean;
+}
+
+export interface Supplier {
+  id: string;
+  nameFa: string;
+  contactName: string;
+  phone: string;
+  brandIds: string[];
+  leadTimeDays: number;
+  isActive: boolean;
+}
+
+export interface StockMovement {
+  id: string;
+  productId: string;
+  productTitleFa: string;
+  variantId: string;
+  sku: string;
+  warehouseCode: string;
+  delta: number;
+  type: 'receive' | 'sale' | 'adjust' | 'return' | 'stocktake';
+  reason: string;
+  actorEmail: string;
+  createdAt: string;
+}
+
+export interface SitePage {
+  id: string;
+  slug: string;
+  titleFa: string;
+  bodyFa: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  status: 'published' | 'draft';
+  updatedAt: string;
+}
+
+export interface BannerItem {
+  id: string;
+  slot: 'hero' | 'top_strip' | 'mid_promo';
+  titleFa: string;
+  subtitleFa: string;
+  ctaTextFa: string;
+  linkPath: string;
+  imageUrl: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface FaqItem {
+  id: string;
+  categoryFa: string;
+  questionFa: string;
+  answerFa: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface NotFoundLog {
+  id: string;
+  path: string;
+  hitCount: number;
+  lastSeenAt: string;
 }
 
 export interface RedirectRule {

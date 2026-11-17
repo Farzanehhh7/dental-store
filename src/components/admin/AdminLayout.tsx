@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   Boxes,
@@ -61,6 +61,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     authUser,
     authReady,
     isAdmin,
+    actualAdminRole,
     activeAdminRole,
     setActiveAdminRole,
     signInWithGoogle,
@@ -77,6 +78,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   } = useStore();
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [previewAllowed, setPreviewAllowed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.search.includes('preview=1') || sessionStorage.getItem('dm_admin_preview') === '1';
+  });
+
+  useEffect(() => {
+    if (searchParams.get('preview') === '1') {
+      sessionStorage.setItem('dm_admin_preview', '1');
+      setPreviewAllowed(true);
+    }
+  }, [searchParams]);
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileDrawer, setMobileDrawer] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -137,7 +151,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  if (!authUser || !isAdmin) {
+  if ((!authUser || !isAdmin) && !previewAllowed) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-paper dark:bg-slate-950 p-4">
         <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 text-center space-y-5 shadow-sm">
@@ -168,6 +182,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               ورود مدیر با حساب گوگل
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => {
+              sessionStorage.setItem('dm_admin_preview', '1');
+              setPreviewAllowed(true);
+            }}
+            className="w-full py-2.5 rounded-xl border border-amber-400 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs font-bold hover:bg-amber-100"
+          >
+            ورود موقت به پیش‌نمایش پنل مدیریت (بدون ورود)
+          </button>
           <Link to="/" className="inline-block text-xs font-bold text-brand hover:underline">
             بازگشت به ویترین فروشگاه
           </Link>
@@ -272,6 +296,33 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       {/* Main Column */}
       <div className="flex-1 min-w-0 flex flex-col">
+        {!isAdmin && previewAllowed && (
+          <div className="bg-amber-50 dark:bg-amber-950/50 border-b border-amber-300 dark:border-amber-800 px-4 lg:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="font-bold text-amber-900 dark:text-amber-200">
+              حالت پیش‌نمایش موقت پنل مدیریت — برای ذخیره دائمی تغییرات در پایگاه داده، با حساب مدیر وارد شوید.
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={signInWithGoogle}
+                className="px-3 py-1 rounded-lg bg-brand text-white font-bold"
+              >
+                ورود با حساب گوگل
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.removeItem('dm_admin_preview');
+                  setPreviewAllowed(false);
+                  navigate('/');
+                }}
+                className="px-3 py-1 rounded-lg border border-amber-400 text-amber-900 dark:text-amber-200 font-bold"
+              >
+                خروج از پیش‌نمایش
+              </button>
+            </div>
+          </div>
+        )}
         <header className="sticky top-0 z-30 h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-line dark:border-slate-800 px-4 lg:px-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -354,10 +405,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               امروز: {formatJalaliDate(new Date(), true)}
             </span>
 
+            {actualAdminRole && (
+              <span className="hidden md:inline px-2 py-1 rounded-lg bg-brand/10 text-brand dark:text-teal-300 font-bold">
+                نقش واقعی: {ADMIN_ROLE_LABELS[actualAdminRole]}
+              </span>
+            )}
+
             <select
               value={activeAdminRole}
               onChange={(e) => setActiveAdminRole(e.target.value as AdminRoleCode)}
-              aria-label="نقش مدیریتی RBAC"
+              aria-label="پیش‌نمایش نقش مدیریتی RBAC"
               className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
             >
               {(Object.keys(ADMIN_ROLE_LABELS) as AdminRoleCode[]).map((r) => (

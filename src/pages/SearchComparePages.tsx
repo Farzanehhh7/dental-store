@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Search, Trash2 } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
 import { useStore } from '../context/StoreContext';
+import { trackEcommerceEvent } from '../lib/analytics';
 import { toPersianDigits } from '../lib/jalali';
 import { scoreSearchMatch } from '../lib/persian-search';
 import { getProductPriceSummary } from '../lib/pricing';
@@ -17,6 +18,9 @@ export function SearchPage() {
 
   useEffect(() => {
     setInput(q);
+    if (q.trim()) {
+      trackEcommerceEvent('search', { search_term: q.trim() });
+    }
     applySeoHead({
       title: `جستجو: ${q || 'کاتالوگ'} | ${settings.storeNameFa}`,
       description: 'جستجوی تخصصی در محصولات دندانپزشکی',
@@ -136,7 +140,7 @@ export function SearchPage() {
 }
 
 export function ComparePage() {
-  const { compareIds, toggleCompare, products, brands, attributes, campaigns, currency, customerGroup, settings } = useStore();
+  const { compareIds, toggleCompare, products, brands, attributes, campaigns, contractPrices, authUser, currency, customerGroup, settings } = useStore();
 
   useEffect(() => {
     applySeoHead({
@@ -188,7 +192,7 @@ export function ComparePage() {
                 <td className="p-4 font-bold text-ink/70">قیمت</td>
                 {items.map((p) => (
                   <td key={p.id} className="p-4 font-extrabold text-brand tabular-nums">
-                    {getProductPriceSummary(p, { customerGroup, campaigns, currency, settings }).label}
+                    {getProductPriceSummary(p, { customerGroup, campaigns, currency, settings, contractPrices, userId: authUser?.uid }).label}
                   </td>
                 ))}
               </tr>
