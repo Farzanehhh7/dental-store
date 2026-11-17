@@ -51,7 +51,9 @@ export default function ProductPage() {
     submitStockNotification,
     submitReview,
     submitQuestion,
+    submitRfq,
     authUser,
+    mobileSession,
     userProfile,
     pushToast,
   } = useStore();
@@ -69,6 +71,15 @@ export default function ProductPage() {
   // Modals & Forms
   const [consultOpen, setConsultOpen] = useState(false);
   const [consultForm, setConsultForm] = useState({ name: '', mobile: '', clinicName: '', budgetRange: '', message: '' });
+  const [rfqOpen, setRfqOpen] = useState(false);
+  const [rfqForm, setRfqForm] = useState({
+    customerName: '',
+    customerMobile: '',
+    clinicName: '',
+    quantity: 5,
+    targetUnitPrice: '',
+    note: '',
+  });
   const [notifyMobile, setNotifyMobile] = useState('');
   const [reviewForm, setReviewForm] = useState({ rating: 5, title: '', body: '' });
   const [questionText, setQuestionText] = useState('');
@@ -188,6 +199,35 @@ export default function ProductPage() {
     });
     setConsultOpen(false);
     setConsultForm({ name: '', mobile: '', clinicName: '', budgetRange: '', message: '' });
+  };
+
+  const openRfqModal = () => {
+    setRfqForm((prev) => ({
+      ...prev,
+      customerName: prev.customerName || userProfile?.displayName || authUser?.displayName || mobileSession?.displayName || '',
+      customerMobile: prev.customerMobile || userProfile?.mobile || mobileSession?.mobile || '',
+      clinicName: prev.clinicName || userProfile?.clinicName || '',
+      quantity: Math.max(qty, product.minOrderQty || 1),
+    }));
+    setRfqOpen(true);
+  };
+
+  const handleRfqSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const created = await submitRfq({
+      productId: product.id,
+      variantId: variant.id,
+      quantity: rfqForm.quantity,
+      customerName: rfqForm.customerName.trim(),
+      customerMobile: rfqForm.customerMobile.trim(),
+      clinicName: rfqForm.clinicName.trim() || undefined,
+      targetUnitPrice: rfqForm.targetUnitPrice ? Number(rfqForm.targetUnitPrice) : undefined,
+      note: rfqForm.note.trim() || undefined,
+    });
+    if (created) {
+      setRfqOpen(false);
+      setRfqForm({ customerName: '', customerMobile: '', clinicName: '', quantity: 5, targetUnitPrice: '', note: '' });
+    }
   };
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
@@ -491,6 +531,13 @@ export default function ProductPage() {
                     <span>صدور پیش‌فاکتور</span>
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={openRfqModal}
+                  className="py-3 px-4 rounded-lg border border-line dark:border-slate-700 text-xs font-bold hover:border-brand transition-colors"
+                >
+                  استعلام قیمت همکاری / چانه‌زنی (RFQ)
+                </button>
               </div>
             ) : resolved.state === 'call_for_price' ? (
               <div className="flex flex-wrap gap-3">
@@ -503,10 +550,10 @@ export default function ProductPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={handleRequestProforma}
+                  onClick={openRfqModal}
                   className="py-3 px-5 rounded-lg border border-brand text-brand dark:text-teal-300 text-sm font-bold"
                 >
-                  ثبت پیش‌فاکتور رسمی
+                  ثبت استعلام قیمت رسمی (RFQ)
                 </button>
               </div>
             ) : (
@@ -578,18 +625,33 @@ export default function ProductPage() {
         <div className="lg:col-span-5 space-y-6">
           {product.files && product.files.length > 0 && (
             <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
-              <h2 className="text-lg font-extrabold">کاتالوگ و گواهینامه‌ها (CE / ISO / IMED)</h2>
+              <h2 className="text-lg font-extrabold">کاتالوگ و مستندات فنی (CE / ISO / IMED)</h2>
               <div className="space-y-2">
                 {product.files.map((f) => (
                   <a
                     key={f.id}
-                    href={`/api/files/certificate?sku=${encodeURIComponent(product.sku)}&title=${encodeURIComponent(f.titleFa)}&code=${encodeURIComponent(f.code || 'CE-ISO')}`}
+                    href={`/api/files/certificate?productId=${encodeURIComponent(product.id)}&fileId=${encodeURIComponent(f.id)}&sku=${encodeURIComponent(product.sku)}`}
                     download
                     className="w-full p-3 rounded-xl border border-line dark:border-slate-800 flex items-center justify-between text-right hover:border-brand transition-colors"
                   >
                     <div>
-                      <p className="text-xs font-bold">{f.titleFa}</p>
-                      <p className="text-[11px] text-ink/55 tabular-nums mt-0.5">{f.fileSizeLabel} {f.code ? `· ${f.code}` : ''}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-xs font-bold">{f.titleFa}</p>
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                            f.isVerified
+                              ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-surface dark:bg-slate-800 text-ink/60 dark:text-slate-400'
+                          }`}
+                        >
+                          {f.isVerified ? 'مدرک تاییدشده' : 'برگه مشخصات فنی'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-ink/55 tabular-nums mt-0.5">
+                        {f.fileSizeLabel}
+                        {f.code ? ` · ${f.code}` : ''}
+                        {f.issuer ? ` · مرجع: ${f.issuer}` : ''}
+                      </p>
                     </div>
                     <Download className="w-4 h-4 text-brand shrink-0" />
                   </a>
@@ -785,6 +847,79 @@ export default function ProductPage() {
               />
               <button type="submit" className="w-full py-2.5 rounded-lg bg-brand text-white font-bold">
                 ثبت درخواست مشاوره
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Two-Way RFQ Modal */}
+      {rfqOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-extrabold text-base">استعلام قیمت و چانه‌زنی B2B (RFQ)</h2>
+              <button type="button" onClick={() => setRfqOpen(false)}><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-xs text-ink/65 dark:text-slate-400">
+              {product.titleFa} ({variant.labelFa}) — وضعیت درخواست و قیمت پیشنهادی کارشناس در پنل کاربری قابل پیگیری و مذاکره است.
+            </p>
+            <form onSubmit={handleRfqSubmit} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  required
+                  placeholder="نام و نام خانوادگی *"
+                  value={rfqForm.customerName}
+                  onChange={(e) => setRfqForm((f) => ({ ...f, customerName: e.target.value }))}
+                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+                <input
+                  required
+                  type="tel"
+                  placeholder="موبایل * (0912...)"
+                  value={rfqForm.customerMobile}
+                  onChange={(e) => setRfqForm((f) => ({ ...f, customerMobile: e.target.value }))}
+                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="space-y-1">
+                  <span className="font-bold">تعداد درخواستی *</span>
+                  <input
+                    required
+                    type="number"
+                    min={1}
+                    value={rfqForm.quantity}
+                    onChange={(e) => setRfqForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold">قیمت هدف واحد (تومان - اختیاری)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={rfqForm.targetUnitPrice}
+                    onChange={(e) => setRfqForm((f) => ({ ...f, targetUnitPrice: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+              </div>
+              <input
+                placeholder="نام کلینیک / شرکت (اختیاری)"
+                value={rfqForm.clinicName}
+                onChange={(e) => setRfqForm((f) => ({ ...f, clinicName: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
+              <textarea
+                rows={3}
+                placeholder="توضیحات تعداد بسته، شرایط تحویل یا درخواست تخفیف همکاری..."
+                value={rfqForm.note}
+                onChange={(e) => setRfqForm((f) => ({ ...f, note: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
+              <button type="submit" className="w-full py-2.5 rounded-lg bg-brand text-white font-bold">
+                ثبت و ارسال استعلام قیمت
               </button>
             </form>
           </div>

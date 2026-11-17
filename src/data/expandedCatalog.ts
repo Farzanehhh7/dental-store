@@ -695,7 +695,7 @@ export const SEED_SUPPLIERS: Supplier[] = [
 ];
 
 export const SEED_STOCK_MOVEMENTS: StockMovement[] = [
-  { id: 'sm_1', productId: 'prod_composite_3m', productTitleFa: 'کامپوزیت نانوهیبرید یونیورسال تری‌ام سری Filtek', variantId: 'var_comp_a2', sku: 'DM-RST-2001-A2', warehouseCode: 'TEH-CENTRAL', delta: 30, type: 'receive', reason: 'ورود محموله وارداتی فاکتور ۴۴۱۲', actorEmail: 'farina.connect@gmail.com', createdAt: minusDaysIso(6) },
+  { id: 'sm_1', productId: 'prod_composite_3m', productTitleFa: 'کامپوزیت نانوهیبرید یونیورسال تری‌ام سری Filtek', variantId: 'var_comp_a2', sku: 'DM-RST-2001-A2', warehouseCode: 'TEH-CENTRAL', delta: 30, type: 'receive', reason: 'ورود محموله وارداتی فاکتور ۴۴۱۲', actorEmail: 'warehouse@dentalmarket.ir', createdAt: minusDaysIso(6) },
   { id: 'sm_2', productId: 'prod_curing_light', productTitleFa: 'لایت‌کیور بی‌سیم وودپیکر مدل LED.F', variantId: 'var_led_f', sku: 'DM-EQP-4001-STD', warehouseCode: 'TEH-CENTRAL', delta: -1, type: 'sale', reason: 'خروج بابت سفارش DM-1405-10041', actorEmail: 'system', createdAt: minusDaysIso(2) },
 ];
 

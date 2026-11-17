@@ -375,8 +375,11 @@ export function CheckoutPage() {
     customerGroup,
     settings,
     authUser,
+    mobileSession,
     userProfile,
     signInWithGoogle,
+    sendMobileOtp,
+    verifyMobileOtp,
     placeOrder,
     verifyOnlinePayment,
     pushToast,
@@ -404,6 +407,7 @@ export function CheckoutPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpVerified, setOtpVerified] = useState(false);
+  const [otpVerifiedToken, setOtpVerifiedToken] = useState('');
   const [otpHint, setOtpHint] = useState('');
 
   // Server calculation verification
@@ -447,6 +451,13 @@ export function CheckoutPage() {
       }
     }
   }, [userProfile]);
+
+  useEffect(() => {
+    if (mobileSession) {
+      if (!customerMobile) setCustomerMobile(mobileSession.mobile);
+      if (!customerName && mobileSession.displayName) setCustomerName(mobileSession.displayName);
+    }
+  }, [mobileSession]);
 
   const resolvedCartLines = useMemo(() => {
     return cart
@@ -506,6 +517,7 @@ export function CheckoutPage() {
         customerGroup,
         couponCode,
         shippingMethod,
+        userId: authUser?.uid,
       }),
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -516,7 +528,7 @@ export function CheckoutPage() {
         // Offline / fallback already computed above
       });
     return () => ctrl.abort();
-  }, [cart, customerGroup, couponCode, shippingMethod]);
+  }, [cart, customerGroup, couponCode, shippingMethod, authUser?.uid]);
 
   const handleSendOtp = async () => {
     const mobile = customerMobile.trim();
@@ -524,42 +536,17 @@ export function CheckoutPage() {
       pushToast('ابتدا شماره موبایل خود را وارد کنید.', 'error');
       return;
     }
-    try {
-      const res = await fetch('/api/auth/otp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        pushToast(data.message || data.error || 'خطا در ارسال کد تایید', 'error');
-        return;
-      }
-      setOtpSent(true);
-      setOtpHint(data.mode === 'sandbox' ? 'کد آزمایشی: ۱۲۳۴۵۶' : data.message || '');
-      pushToast(data.message || 'کد تایید پیامکی ارسال شد.', 'info');
-    } catch {
-      pushToast('خطا در برقراری ارتباط با سرویس OTP', 'error');
-    }
+    const res = await sendMobileOtp(mobile);
+    if (!res.ok) return;
+    setOtpSent(true);
+    setOtpHint(res.sandboxCode ? `کد آزمایشی: ${res.sandboxCode}` : res.message || '');
   };
 
   const handleVerifyOtp = async () => {
-    try {
-      const res = await fetch('/api/auth/otp/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile: customerMobile.trim(), code: otpCode.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok || (!data.ok && !data.verified)) {
-        pushToast(data.message || data.error || 'کد تایید نادرست است.', 'error');
-        return;
-      }
-      setOtpVerified(true);
-      pushToast('شماره موبایل با موفقیت تایید شد.', 'success');
-    } catch {
-      pushToast('خطا در تایید کد OTP', 'error');
-    }
+    const res = await verifyMobileOtp(customerMobile.trim(), otpCode.trim(), customerName.trim() || undefined);
+    if (!res.ok) return;
+    setOtpVerified(true);
+    setOtpVerifiedToken(res.verifiedToken || '');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -575,6 +562,7 @@ export function CheckoutPage() {
         customerName: customerName.trim(),
         customerMobile: customerMobile.trim(),
         shippingMethod: chosenShipping.label,
+        shippingMethodId: shippingMethod,
         shippingTotal: serverTotals?.shippingTotal ?? shippingFee,
         address: { province, city, postalCode: postalCode || '1417933111', addressLine },
         paymentMethod,
@@ -582,6 +570,7 @@ export function CheckoutPage() {
         customerNote: customerNote.trim() || undefined,
         installmentsCount,
         proposedTermsFa,
+        verifiedToken: otpVerifiedToken || undefined,
       });
       if (order) {
         setCreatedOrder(order);
@@ -598,9 +587,11 @@ export function CheckoutPage() {
     if (!createdOrder) return;
     setVerifying(true);
     try {
-      await verifyOnlinePayment(createdOrder.id, gatewayName);
-      setCreatedOrder({ ...createdOrder, status: 'paid', paymentStatus: 'paid' });
-      setGatewayModalOpen(false);
+      const ok = await verifyOnlinePayment(createdOrder.id, gatewayName);
+      if (ok) {
+        setCreatedOrder({ ...createdOrder, status: 'paid', paymentStatus: 'paid' });
+        setGatewayModalOpen(false);
+      }
     } finally {
       setVerifying(false);
     }
@@ -770,6 +761,7 @@ export function CheckoutPage() {
                       onChange={(e) => {
                         setCustomerMobile(e.target.value);
                         setOtpVerified(false);
+                        setOtpVerifiedToken('');
                       }}
                       placeholder="0912..."
                       className="flex-1 px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
@@ -780,7 +772,7 @@ export function CheckoutPage() {
                       className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-brand text-brand text-xs font-bold shrink-0"
                     >
                       <Smartphone className="w-3.5 h-3.5" />
-                      <span>{otpVerified ? 'تایید شد' : 'ارسال کد OTP'}</span>
+                      <span>{otpVerified || (mobileSession && mobileSession.mobile === customerMobile) ? 'تایید شد' : 'ارسال کد OTP'}</span>
                     </button>
                   </div>
                   {otpSent && !otpVerified && (
@@ -789,7 +781,7 @@ export function CheckoutPage() {
                         type="text"
                         value={otpCode}
                         onChange={(e) => setOtpCode(e.target.value)}
-                        placeholder={otpHint || 'کد ۶ رقمی (۱۲۳۴۵۶)'}
+                        placeholder="کد تایید ۶ رقمی"
                         className="w-40 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
                       />
                       <button

@@ -2,90 +2,32 @@ import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { normalizePersian, scoreSearchMatch } from './src/lib/persian-search';
+import { getProductPriceSummary, resolveVariantPrice } from './src/lib/pricing';
 import {
-  EXPANDED_BRANDS,
-  EXPANDED_CATEGORIES,
-  EXPANDED_PRODUCTS,
-} from './src/data/expandedCatalog';
-import {
-  SEED_AGENTS,
-  SEED_BLOG_POSTS,
-  SEED_BUNDLES,
-  SEED_CAMPAIGNS,
-  SEED_COUPONS,
-  SEED_REDIRECTS,
-  SEED_SETTINGS,
-} from './src/data/seed';
-import { resolveVariantPrice } from './src/lib/pricing';
-import {
-  AgentBranch,
-  BlogPost,
-  Brand,
-  Bundle,
-  Campaign,
-  Category,
   CustomerGroupCode,
   Order,
-  OrderItem,
-  PaymentLedgerEntry,
-  Product,
-  RedirectRule,
+  ProformaInvoice,
+  RfqRequest,
 } from './src/types/domain';
+import {
+  createMobileSession,
+  generateOtpCode,
+  getSmsModeConfig,
+  hashToken,
+  normalizeMobile,
+  resolveMobileSession,
+  timingSafeHashEquals,
+  verifyFirebaseAdmin,
+  verifyFirebaseUser,
+} from './server/auth';
+import { handlePaymentInitiate, handlePaymentVerify } from './server/payments';
+import { createServerStore } from './server/persistence';
+import { calculateAuthoritativeCheckout } from './server/pricing';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT || 3000);
-const isProd = process.env.NODE_ENV === 'production';
-
-// Server-side in-memory SEO, catalog, OTP & payment/guest-order store synced from Firestore clients
-interface ServerCatalogSnapshot {
-  categories: Category[];
-  brands: Brand[];
-  products: Product[];
-  campaigns: Campaign[];
-  bundles: Bundle[];
-  agents: AgentBranch[];
-  blogPosts: BlogPost[];
-  redirects: RedirectRule[];
-  updatedAt: string;
-}
-
-const catalogState: ServerCatalogSnapshot = {
-  categories: EXPANDED_CATEGORIES,
-  brands: EXPANDED_BRANDS,
-  products: EXPANDED_PRODUCTS,
-  campaigns: SEED_CAMPAIGNS,
-  bundles: SEED_BUNDLES,
-  agents: SEED_AGENTS,
-  blogPosts: SEED_BLOG_POSTS,
-  redirects: SEED_REDIRECTS,
-  updatedAt: new Date().toISOString(),
-};
-
-const otpStore = new Map<string, { code: string; expiresAt: number; attempts: number; lastSentAt: number }>();
-const paymentSessions = new Map<
-  string,
-  {
-    authority: string;
-    orderId: string;
-    orderNo: string;
-    amount: number;
-    gateway: string;
-    idempotencyKey: string;
-    status: 'initiated' | 'verified' | 'failed';
-    refId?: string;
-    createdAt: string;
-  }
->();
-const guestOrders = new Map<string, Order>();
-
-function normalizeMobile(raw: string): string {
-  const map: Record<string, string> = {
-    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4',
-    '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
-  };
-  return raw.replace(/[۰-۹]/g, (d) => map[d] || d).replace(/[\s\-()]/g, '');
-}
+const DEFAULT_PORT = Number(process.env.PORT || 3000);
 
 function escapeXml(str: string): string {
   return str
@@ -99,12 +41,21 @@ function escapeXml(str: string): string {
 function getOrigin(req: express.Request): string {
   if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-  const host = req.headers.host || `localhost:${PORT}`;
+  const host = req.headers.host || `localhost:${DEFAULT_PORT}`;
   return `${proto}://${host}`;
 }
 
-async function startServer() {
+export interface CreateServerAppOptions {
+  dataDir?: string;
+  attachVite?: boolean;
+}
+
+export async function createServerApp(options: CreateServerAppOptions = {}) {
+  const isProd = process.env.NODE_ENV === 'production';
+  const attachVite = options.attachVite ?? true;
+  const store = createServerStore(options.dataDir);
   const app = express();
+
   app.use(express.json({ limit: '4mb' }));
 
   // --- Redirect Rules Middleware (§17.7) ---
@@ -120,9 +71,10 @@ async function startServer() {
     ) {
       return next();
     }
-    const match = catalogState.redirects.find((r) => r.fromPath === req.path);
+    const match = store.data.catalogState.redirects.find((r) => r.fromPath === req.path);
     if (match) {
       match.hitCount = (match.hitCount || 0) + 1;
+      store.save();
       if (match.statusCode === 410) {
         return res.status(410).send('410 Gone - این صفحه برای همیشه حذف شده است.');
       }
@@ -167,7 +119,9 @@ async function startServer() {
       '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
       ...subs.map(
         (s) =>
-          `  <sitemap><loc>${escapeXml(`${origin}/${s}`)}</loc><lastmod>${escapeXml(catalogState.updatedAt)}</lastmod></sitemap>`
+          `  <sitemap><loc>${escapeXml(`${origin}/${s}`)}</loc><lastmod>${escapeXml(
+            store.data.catalogState.updatedAt
+          )}</lastmod></sitemap>`
       ),
       '</sitemapindex>',
     ].join('\n');
@@ -176,64 +130,107 @@ async function startServer() {
 
   app.get('/sitemap-categories.xml', (req, res) => {
     const origin = getOrigin(req);
-    const urls = catalogState.categories
+    const urls = store.data.catalogState.categories
       .filter((c) => c.isActive)
-      .map((c) => `  <url><loc>${escapeXml(`${origin}/category/${c.slug}`)}</loc><lastmod>${escapeXml(c.updatedAt)}</lastmod><changefreq>daily</changefreq><priority>0.85</priority></url>`);
-    res.type('application/xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
+      .map(
+        (c) =>
+          `  <url><loc>${escapeXml(`${origin}/category/${c.slug}`)}</loc><lastmod>${escapeXml(
+            c.updatedAt
+          )}</lastmod><changefreq>daily</changefreq><priority>0.85</priority></url>`
+      );
+    res
+      .type('application/xml; charset=utf-8')
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
   });
 
   app.get('/sitemap-products.xml', (req, res) => {
     const origin = getOrigin(req);
-    const urls = catalogState.products
+    const urls = store.data.catalogState.products
       .filter((p) => p.status !== 'draft' && p.status !== 'archived')
-      .map((p) => `  <url><loc>${escapeXml(`${origin}/product/${p.slug}`)}</loc><lastmod>${escapeXml(p.updatedAt)}</lastmod><changefreq>daily</changefreq><priority>0.90</priority></url>`);
-    res.type('application/xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
+      .map(
+        (p) =>
+          `  <url><loc>${escapeXml(`${origin}/product/${p.slug}`)}</loc><lastmod>${escapeXml(
+            p.updatedAt
+          )}</lastmod><changefreq>daily</changefreq><priority>0.90</priority></url>`
+      );
+    res
+      .type('application/xml; charset=utf-8')
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
   });
 
   app.get('/sitemap-brands.xml', (req, res) => {
     const origin = getOrigin(req);
-    const urls = catalogState.brands
+    const urls = store.data.catalogState.brands
       .filter((b) => b.isActive)
-      .map((b) => `  <url><loc>${escapeXml(`${origin}/brand/${b.slug}`)}</loc><lastmod>${escapeXml(b.updatedAt)}</lastmod><changefreq>weekly</changefreq><priority>0.75</priority></url>`);
-    res.type('application/xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
+      .map(
+        (b) =>
+          `  <url><loc>${escapeXml(`${origin}/brand/${b.slug}`)}</loc><lastmod>${escapeXml(
+            b.updatedAt
+          )}</lastmod><changefreq>weekly</changefreq><priority>0.75</priority></url>`
+      );
+    res
+      .type('application/xml; charset=utf-8')
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
   });
 
   app.get('/sitemap-blog.xml', (req, res) => {
     const origin = getOrigin(req);
-    const urls = catalogState.blogPosts
+    const urls = store.data.catalogState.blogPosts
       .filter((p) => p.status === 'published')
-      .map((p) => `  <url><loc>${escapeXml(`${origin}/blog/${p.slug}`)}</loc><lastmod>${escapeXml(p.updatedAt)}</lastmod><changefreq>weekly</changefreq><priority>0.75</priority></url>`);
-    res.type('application/xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
+      .map(
+        (p) =>
+          `  <url><loc>${escapeXml(`${origin}/blog/${p.slug}`)}</loc><lastmod>${escapeXml(
+            p.updatedAt
+          )}</lastmod><changefreq>weekly</changefreq><priority>0.75</priority></url>`
+      );
+    res
+      .type('application/xml; charset=utf-8')
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
   });
 
   app.get('/sitemap-agents.xml', (req, res) => {
     const origin = getOrigin(req);
-    const urls = catalogState.agents
+    const urls = store.data.catalogState.agents
       .filter((a) => a.isActive)
-      .map((a) => `  <url><loc>${escapeXml(`${origin}/agents/${a.provinceSlug}`)}</loc><lastmod>${escapeXml(a.updatedAt)}</lastmod><changefreq>monthly</changefreq><priority>0.70</priority></url>`);
-    res.type('application/xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
+      .map(
+        (a) =>
+          `  <url><loc>${escapeXml(`${origin}/agents/${a.provinceSlug}`)}</loc><lastmod>${escapeXml(
+            a.updatedAt
+          )}</lastmod><changefreq>monthly</changefreq><priority>0.70</priority></url>`
+      );
+    res
+      .type('application/xml; charset=utf-8')
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
   });
 
   app.get('/sitemap-packs.xml', (req, res) => {
     const origin = getOrigin(req);
-    const urls = catalogState.bundles
+    const urls = store.data.catalogState.bundles
       .filter((b) => b.status === 'active')
-      .map((b) => `  <url><loc>${escapeXml(`${origin}/pack/${b.slug}`)}</loc><lastmod>${escapeXml(b.updatedAt)}</lastmod><changefreq>weekly</changefreq><priority>0.75</priority></url>`);
-    res.type('application/xml; charset=utf-8').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
+      .map(
+        (b) =>
+          `  <url><loc>${escapeXml(`${origin}/pack/${b.slug}`)}</loc><lastmod>${escapeXml(
+            b.updatedAt
+          )}</lastmod><changefreq>weekly</changefreq><priority>0.75</priority></url>`
+      );
+    res
+      .type('application/xml; charset=utf-8')
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`);
   });
 
   // --- Torob / Emalls Price Comparison Feed (§17.12) ---
   app.get('/feeds/price-comparison.json', (req, res) => {
     const origin = getOrigin(req);
-    const items = catalogState.products
+    const catalog = store.data.catalogState;
+    const items = catalog.products
       .filter((p) => p.status === 'active' && p.pricingMode !== 'call_for_price')
       .flatMap((p) =>
         p.variants
           .filter((v) => v.isActive && v.basePrice !== null && v.basePrice > 0)
           .map((v) => {
             const resolved = resolveVariantPrice(p, v, {
-              campaigns: catalogState.campaigns,
-              settings: SEED_SETTINGS,
+              campaigns: catalog.campaigns,
+              settings: catalog.settings,
             });
             if (resolved.state !== 'fixed' || !resolved.unitPrice) return null;
             return {
@@ -262,287 +259,781 @@ async function startServer() {
     });
   });
 
-  // --- Catalog Sync Hook (updates server SEO/redirect/feed snapshot from live StoreContext) ---
-  app.post('/api/seo/sync', (req, res) => {
-    const { categories, brands, products, campaigns, bundles, agents, blogPosts, redirects } = req.body || {};
-    if (Array.isArray(categories) && categories.length > 0) catalogState.categories = categories;
-    if (Array.isArray(brands) && brands.length > 0) catalogState.brands = brands;
-    if (Array.isArray(products) && products.length > 0) catalogState.products = products;
-    if (Array.isArray(campaigns)) catalogState.campaigns = campaigns;
-    if (Array.isArray(bundles)) catalogState.bundles = bundles;
-    if (Array.isArray(agents)) catalogState.agents = agents;
-    if (Array.isArray(blogPosts)) catalogState.blogPosts = blogPosts;
-    if (Array.isArray(redirects)) catalogState.redirects = redirects;
-    catalogState.updatedAt = new Date().toISOString();
-    res.json({ ok: true, products: catalogState.products.length, redirects: catalogState.redirects.length });
+  // --- Server-Side Paginated Search & Filtered Catalog Query ---
+  app.get('/api/catalog/products', (req, res) => {
+    const catalog = store.data.catalogState;
+    const q = String(req.query.q || '').trim();
+    const categorySlug = String(req.query.category || '').trim();
+    const brandIdOrSlug = String(req.query.brand || '').trim();
+    const vertical = String(req.query.vertical || '').trim();
+    const kind = String(req.query.kind || '').trim();
+    const onlyInStock = req.query.inStock === '1' || req.query.inStock === 'true';
+    const onlyDiscount = req.query.discount === '1' || req.query.discount === 'true';
+    const sort = String(req.query.sort || (q ? 'relevance' : 'best_selling')).trim();
+    const customerGroup = (String(req.query.group || 'retail') as CustomerGroupCode) || 'retail';
+    const page = Math.max(1, Number(req.query.page || 1) || 1);
+    const limit = Math.min(60, Math.max(1, Number(req.query.limit || 24) || 24));
+
+    let allowedCategoryIds: Set<string> | null = null;
+    if (categorySlug) {
+      const cat = catalog.categories.find((c) => c.slug === categorySlug || c.id === categorySlug);
+      if (!cat) {
+        return res.json({ ok: true, items: [], total: 0, page, totalPages: 1 });
+      }
+      const descendants = catalog.categories
+        .filter((c) => c.parentId === cat.id || c.path.includes(cat.slug))
+        .map((c) => c.id);
+      allowedCategoryIds = new Set([cat.id, ...descendants]);
+    }
+
+    let resolvedBrandId = '';
+    if (brandIdOrSlug) {
+      const br = catalog.brands.find((b) => b.id === brandIdOrSlug || b.slug === brandIdOrSlug);
+      resolvedBrandId = br?.id || brandIdOrSlug;
+    }
+
+    const scored = catalog.products
+      .filter((p) => p.status !== 'draft' && p.status !== 'archived')
+      .map((p) => {
+        if (vertical && p.vertical !== vertical) return null;
+        if (kind && p.kind !== kind) return null;
+        if (allowedCategoryIds && !allowedCategoryIds.has(p.primaryCategoryId) && !p.categoryIds.some((cid) => allowedCategoryIds!.has(cid))) {
+          return null;
+        }
+        if (resolvedBrandId && p.brandId !== resolvedBrandId) return null;
+
+        const summary = getProductPriceSummary(p, {
+          customerGroup,
+          campaigns: catalog.campaigns,
+          settings: catalog.settings,
+          contractPrices: catalog.contractPrices,
+        });
+        if (onlyInStock && !summary.inStock) return null;
+        if (onlyDiscount && summary.discountPercent <= 0) return null;
+
+        let score = 1;
+        if (q) {
+          const brandName = catalog.brands.find((b) => b.id === p.brandId)?.nameFa ?? '';
+          score = scoreSearchMatch(q, {
+            exactCodes: [p.sku, p.imedCode ?? '', p.gtin ?? '', ...p.variants.map((v) => v.sku)],
+            textFields: [p.titleFa, p.titleEn, brandName, ...p.tags, normalizePersian(p.shortDescriptionFa)],
+          });
+          if (score <= 0) return null;
+        }
+
+        return { product: p, score, summary };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    scored.sort((a, b) => {
+      if (sort === 'relevance' && q && b.score !== a.score) return b.score - a.score;
+      if (sort === 'newest') return new Date(b.product.publishedAt).getTime() - new Date(a.product.publishedAt).getTime();
+      if (sort === 'price_asc') return (a.summary.minPrice ?? Number.MAX_SAFE_INTEGER) - (b.summary.minPrice ?? Number.MAX_SAFE_INTEGER);
+      if (sort === 'price_desc') return (b.summary.minPrice ?? 0) - (a.summary.minPrice ?? 0);
+      if (sort === 'discount') return b.summary.discountPercent - a.summary.discountPercent;
+      return b.product.soldCount - a.product.soldCount;
+    });
+
+    const total = scored.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const offset = (page - 1) * limit;
+    const paged = scored.slice(offset, offset + limit).map((x) => x.product);
+
+    return res.json({
+      ok: true,
+      items: paged,
+      total,
+      page,
+      limit,
+      totalPages,
+    });
   });
 
-  // --- Real Certificate / Datasheet File Download (§11.11 / §6.2) ---
+  // --- Authenticated Admin Catalog / SEO / Pricing Sync Hook ---
+  app.post('/api/seo/sync', async (req, res) => {
+    const adminCheck = await verifyFirebaseAdmin(req);
+    if ('errorStatus' in adminCheck) {
+      return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
+    }
+
+    const { categories, brands, products, campaigns, bundles, agents, blogPosts, redirects, coupons, contractPrices, settings } =
+      req.body || {};
+
+    if (Array.isArray(categories) && categories.length > 0) store.data.catalogState.categories = categories;
+    if (Array.isArray(brands) && brands.length > 0) store.data.catalogState.brands = brands;
+    if (Array.isArray(products) && products.length > 0) store.data.catalogState.products = products;
+    if (Array.isArray(campaigns)) store.data.catalogState.campaigns = campaigns;
+    if (Array.isArray(bundles)) store.data.catalogState.bundles = bundles;
+    if (Array.isArray(agents)) store.data.catalogState.agents = agents;
+    if (Array.isArray(blogPosts)) store.data.catalogState.blogPosts = blogPosts;
+    if (Array.isArray(redirects)) store.data.catalogState.redirects = redirects;
+    if (Array.isArray(coupons)) store.data.catalogState.coupons = coupons;
+    if (Array.isArray(contractPrices)) store.data.catalogState.contractPrices = contractPrices;
+    if (settings && typeof settings === 'object' && settings.id) store.data.catalogState.settings = settings;
+
+    store.data.catalogState.updatedAt = new Date().toISOString();
+    store.save();
+
+    return res.json({
+      ok: true,
+      syncedBy: adminCheck.user.uid,
+      role: adminCheck.role,
+      products: store.data.catalogState.products.length,
+      redirects: store.data.catalogState.redirects.length,
+    });
+  });
+
+  // --- Honest Regulatory / Technical Certificate Lookup & Download ---
   app.get('/api/files/certificate', (req, res) => {
-    const sku = String(req.query.sku || 'DM-ITEM').replace(/[^a-zA-Z0-9_\-]/g, '');
-    const title = String(req.query.title || 'گواهینامه اصالت و کاتالوگ فنی').slice(0, 120);
-    const code = String(req.query.code || 'CE-ISO13485').replace(/[^a-zA-Z0-9_\-]/g, '');
+    const productIdParam = String(req.query.productId || '').trim();
+    const skuParam = String(req.query.sku || '').trim();
+    const fileIdParam = String(req.query.fileId || '').trim();
+    const catalog = store.data.catalogState;
+
+    const product = catalog.products.find(
+      (p) =>
+        (productIdParam && p.id === productIdParam) ||
+        (skuParam && (p.sku === skuParam || p.variants.some((v) => v.sku === skuParam)))
+    );
+
+    if (!product) {
+      return res.status(404).json({ ok: false, message: 'محصول یا مدرک فنی درخواستی یافت نشد.' });
+    }
+
+    const fileRecord =
+      product.files?.find((f) => (fileIdParam ? f.id === fileIdParam : true)) || product.files?.[0];
+
+    if (fileRecord?.isVerified && fileRecord.fileUrl) {
+      return res.redirect(302, fileRecord.fileUrl);
+    }
+
+    const safeSku = product.sku.replace(/[^a-zA-Z0-9_\-]/g, '');
+    const verificationStatus = fileRecord?.isVerified
+      ? `VERIFIED REGISTRY RECORD (${fileRecord.issuer || 'Official Manufacturer / Regulator'})`
+      : 'UNVERIFIED PRODUCT INFORMATION SHEET — NOT AN OFFICIAL CE / ISO / IMED CERTIFICATE';
+
     const docBody = [
-      'DENTALMARKET TECHNICAL DATASHEET & CONFORMITY CERTIFICATE',
-      '==========================================================',
-      `Document Title : ${title}`,
-      `SKU / Product  : ${sku}`,
-      `Registry Code  : ${code}`,
-      `Standard       : CE Class IIa / ISO 13485 / IMED Verified`,
-      `Issued By      : DentalMarket Regulatory & QA Desk`,
+      'DENTALMARKET PRODUCT DOCUMENTATION & REGULATORY NOTICE',
+      '======================================================',
+      `Status         : ${verificationStatus}`,
+      `Product Title  : ${product.titleEn} (${product.titleFa})`,
+      `SKU            : ${product.sku}`,
+      `IMED Code      : ${product.imedCode || 'Not registered'}`,
+      `Document Title : ${fileRecord?.titleFa || 'مشخصات فنی محصول'}`,
+      `Document Code  : ${fileRecord?.code || 'N/A'}`,
+      `Verification   : ${fileRecord?.isVerified ? 'Verified file metadata on record' : 'No verified certificate URL uploaded yet'}`,
+      `Issuer         : ${fileRecord?.issuer || 'Catalog Technical Metadata'}`,
       `Generated At   : ${new Date().toISOString()}`,
       '',
-      'Storage & Handling:',
-      '- Store at 15-25°C away from direct sunlight.',
-      '- Check FEFO batch expiry before clinical administration.',
-      '- Official warranty & technical support: 021-88451200',
+      'Clinical Storage & Handling Guidance:',
+      '- Follow manufacturer IFU inside packaging.',
+      '- Inspect FEFO batch expiry before clinical use.',
+      `- Customer & Technical Support: ${catalog.settings.phone}`,
     ].join('\n');
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${sku}-${code}-datasheet.txt"`);
-    res.send(docBody);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeSku}-documentation.txt"`);
+    return res.send(docBody);
   });
 
-  // --- Mobile OTP Verification API (§8.1 Sandbox with Rate Limit & 5-min TTL) ---
-  app.post('/api/auth/otp/send', (req, res) => {
+  // --- Mobile OTP Verification & Session Auth (§8.1 Fail-Closed) ---
+  app.post('/api/auth/otp/send', async (req, res) => {
+    store.pruneExpired();
+    const smsMode = getSmsModeConfig();
+    if (!smsMode.ok) {
+      return res.status(smsMode.status).json({ ok: false, message: smsMode.message });
+    }
+
     const mobile = normalizeMobile(String(req.body?.mobile || ''));
     if (!/^09\d{9}$/.test(mobile)) {
       return res.status(400).json({ ok: false, message: 'شماره موبایل معتبر وارد کنید (مثال: 09123456789).' });
     }
-    const existing = otpStore.get(mobile);
+
+    const existing = store.data.otpChallenges[mobile];
     if (existing && Date.now() - existing.lastSentAt < 30000) {
       return res.status(429).json({ ok: false, message: 'لطفاً ۳۰ ثانیه قبل از ارسال مجدد کد صبر کنید.' });
     }
-    const code = process.env.SMS_PROVIDER === 'live'
-      ? String(Math.floor(100000 + Math.random() * 900000))
-      : '123456';
-    otpStore.set(mobile, {
-      code,
+
+    const code = generateOtpCode();
+
+    if (smsMode.mode === 'live') {
+      const template = process.env.SMS_OTP_TEMPLATE?.trim() || 'verify';
+      const smsRes = await fetch(`https://api.kavenegar.com/v1/${encodeURIComponent(process.env.SMS_API_KEY!.trim())}/verify/lookup.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ receptor: mobile, token: code, template }).toString(),
+      });
+      if (!smsRes.ok) {
+        return res.status(502).json({ ok: false, message: 'خطا در ارسال پیامک از طریق سرویس‌دهنده.' });
+      }
+    }
+
+    store.data.otpChallenges[mobile] = {
+      codeHash: hashToken(`${mobile}:${code}`),
       expiresAt: Date.now() + 5 * 60 * 1000,
       attempts: 0,
       lastSentAt: Date.now(),
-    });
+    };
+    store.save();
+
     return res.json({
       ok: true,
-      mode: process.env.SMS_PROVIDER || 'sandbox',
-      message: 'کد تایید ارسال شد (در حالت آزمایشی کد ۱۲۳۴۵۶ معتبر است).',
+      mode: smsMode.mode,
+      ...(smsMode.mode === 'sandbox' ? { sandboxCode: code } : {}),
+      message:
+        smsMode.mode === 'sandbox'
+          ? `کد تایید آزمایشی تولید شد (کد: ${code}).`
+          : 'کد تایید از طریق پیامک به شماره شما ارسال شد.',
       expiresInSec: 300,
     });
   });
 
   app.post('/api/auth/otp/verify', (req, res) => {
+    store.pruneExpired();
+    const smsMode = getSmsModeConfig();
+    if (!smsMode.ok) {
+      return res.status(smsMode.status).json({ ok: false, message: smsMode.message });
+    }
+
     const mobile = normalizeMobile(String(req.body?.mobile || ''));
     const code = normalizeMobile(String(req.body?.code || ''));
-    const record = otpStore.get(mobile);
+    const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim().slice(0, 80) : undefined;
+    const record = store.data.otpChallenges[mobile];
+
     if (!record) {
       return res.status(400).json({ ok: false, message: 'ابتدا درخواست ارسال کد بدهید.' });
     }
     if (Date.now() > record.expiresAt) {
-      otpStore.delete(mobile);
+      delete store.data.otpChallenges[mobile];
+      store.save();
       return res.status(400).json({ ok: false, message: 'کد تایید منقضی شده است.' });
     }
+
     record.attempts += 1;
     if (record.attempts > 5) {
-      otpStore.delete(mobile);
+      delete store.data.otpChallenges[mobile];
+      store.save();
       return res.status(429).json({ ok: false, message: 'تعداد تلاش‌های ناموفق بیش از حد مجاز بود.' });
     }
-    if (record.code !== code) {
+
+    const expectedHash = hashToken(`${mobile}:${code}`);
+    if (!timingSafeHashEquals(expectedHash, record.codeHash)) {
+      store.save();
       return res.status(400).json({ ok: false, message: 'کد تایید نادرست است.' });
     }
-    otpStore.delete(mobile);
+
+    delete store.data.otpChallenges[mobile];
+
+    // 1. Short-lived verified token for guest/mobile checkout binding
+    const verifiedToken = `vtok_${crypto.randomBytes(18).toString('hex')}`;
+    const verifiedHash = hashToken(verifiedToken);
+    store.data.otpVerifiedTokens[verifiedHash] = {
+      tokenHash: verifiedHash,
+      mobile,
+      expiresAt: Date.now() + 30 * 60 * 1000,
+    };
+
+    // 2. Durable 7-day mobile session (Bearer + HTTP-only cookie)
+    const { token: sessionToken, session } = createMobileSession(store, mobile, displayName);
+
+    res.setHeader(
+      'Set-Cookie',
+      `dm_mobile_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`
+    );
+
     return res.json({
       ok: true,
       mobile,
-      verifiedToken: crypto.randomBytes(16).toString('hex'),
-    });
-  });
-
-  // --- Authoritative Cart / Checkout Pricing Verification (§8.2 / §16) ---
-  app.post('/api/checkout/calculate', (req, res) => {
-    const {
-      items = [],
-      customerGroup = 'retail',
-      couponCode = '',
-      shippingMethod = 'tehran_courier',
-    } = req.body || {};
-
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ ok: false, message: 'سبد خرید خالی است.' });
-    }
-
-    const pricedItems: OrderItem[] = [];
-    for (const raw of items) {
-      const product = catalogState.products.find((p) => p.id === raw.productId);
-      const variant = product?.variants.find((v) => v.id === raw.variantId);
-      if (!product || !variant) continue;
-      const qty = Math.max(1, Number(raw.quantity || 1));
-      const resolved = resolveVariantPrice(product, variant, {
-        customerGroup: customerGroup as CustomerGroupCode,
-        quantity: qty,
-        campaigns: catalogState.campaigns,
-        settings: SEED_SETTINGS,
-      });
-      if (resolved.state !== 'fixed' || !resolved.unitPrice) continue;
-      const base = variant.basePrice ?? resolved.unitPrice;
-      const discountAmount = Math.max(0, (base - resolved.unitPrice) * qty);
-      pricedItems.push({
-        productId: product.id,
-        variantId: variant.id,
-        sku: variant.sku,
-        titleFa: product.titleFa,
-        variantLabelFa: variant.labelFa,
-        quantity: qty,
-        unitPrice: resolved.unitPrice,
-        discountAmount,
-        lineTotal: resolved.unitPrice * qty,
-        priceSource: resolved.priceSource,
-        batchNo: resolved.nearestBatchNo ?? undefined,
-      });
-    }
-
-    const subtotal = pricedItems.reduce((s, i) => s + i.lineTotal, 0);
-    const coupon = SEED_COUPONS.find(
-      (c) => c.isActive && c.code.toUpperCase() === String(couponCode).trim().toUpperCase() && subtotal >= c.minOrderAmount
-    );
-    let couponDiscount = 0;
-    if (coupon) {
-      if (coupon.type === 'percent') {
-        couponDiscount = Math.round((subtotal * coupon.value) / 100);
-        if (coupon.maxDiscountAmount) couponDiscount = Math.min(couponDiscount, coupon.maxDiscountAmount);
-      } else if (coupon.type === 'fixed') {
-        couponDiscount = coupon.value;
-      }
-    }
-    const SHIPPING_FEES: Record<string, number> = {
-      courier_tehran: 120000,
-      tipax: 185000,
-      post_pishtaz: 145000,
-      heavy_freight: 0,
-      express_post: 250000,
-    };
-    const baseShipping = SHIPPING_FEES[String(shippingMethod)] ?? 180000;
-    const afterDiscount = Math.max(0, subtotal - couponDiscount);
-    const shippingTotal =
-      afterDiscount >= SEED_SETTINGS.freeShippingThreshold || coupon?.type === 'free_shipping'
-        ? 0
-        : baseShipping;
-    const taxTotal = Math.round((afterDiscount * SEED_SETTINGS.taxRatePercent) / 100);
-    const grandTotal = afterDiscount + shippingTotal + taxTotal;
-
-    return res.json({
-      ok: true,
-      items: pricedItems,
-      subtotal,
-      couponDiscount,
-      shippingTotal,
-      taxTotal,
-      grandTotal,
-    });
-  });
-
-  // --- Idempotent Payment Gateway Initiate & Verify (§8.3) ---
-  app.post('/api/payments/initiate', (req, res) => {
-    const { orderId, orderNo, amount, gateway = 'zarinpal', idempotencyKey } = req.body || {};
-    const key = String(idempotencyKey || `IDEMP-${orderId}`);
-    for (const session of paymentSessions.values()) {
-      if (session.idempotencyKey === key) {
-        return res.json({ ok: true, reused: true, session });
-      }
-    }
-    const authority = `AUTH-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
-    const session = {
-      authority,
-      orderId: String(orderId || ''),
-      orderNo: String(orderNo || ''),
-      amount: Number(amount || 0),
-      gateway: String(gateway),
-      idempotencyKey: key,
-      status: 'initiated' as const,
-      createdAt: new Date().toISOString(),
-    };
-    paymentSessions.set(authority, session);
-    return res.json({
-      ok: true,
-      mode: process.env.PAYMENT_MODE || 'sandbox',
+      verifiedToken,
+      sessionToken,
       session,
     });
   });
 
-  app.post('/api/payments/verify', (req, res) => {
-    const { authority, status = 'OK' } = req.body || {};
-    const session = paymentSessions.get(String(authority || ''));
-    if (!session) {
-      return res.status(404).json({ ok: false, message: 'تراکنش پرداخت یافت نشد.' });
+  app.get('/api/auth/session', (req, res) => {
+    const mob = resolveMobileSession(store, req);
+    if (!mob) {
+      return res.json({ ok: true, authenticated: false, session: null });
     }
-    if (session.status === 'verified') {
-      return res.json({ ok: true, alreadyVerified: true, refId: session.refId, session });
-    }
-    if (status !== 'OK') {
-      session.status = 'failed';
-      return res.status(400).json({ ok: false, message: 'پرداخت توسط کاربر لغو یا ناموفق شد.', session });
-    }
-    session.status = 'verified';
-    session.refId = String(Math.floor(100000000 + Math.random() * 899999999));
-    const ledgerEntry: PaymentLedgerEntry = {
-      id: `pay_${Date.now()}`,
-      orderId: session.orderId,
-      orderNo: session.orderNo,
-      gateway: session.gateway,
-      amount: session.amount,
-      idempotencyKey: session.idempotencyKey,
-      refId: session.refId,
-      status: 'verified',
-      createdAt: new Date().toISOString(),
-    };
-    return res.json({ ok: true, refId: session.refId, session, ledgerEntry });
+    return res.json({
+      ok: true,
+      authenticated: true,
+      session: {
+        mobile: mob.mobile,
+        displayName: mob.displayName,
+        expiresAt: mob.expiresAt,
+      },
+    });
   });
 
-  // --- Guest Order Placement & Tracking (§8.1 Guest Checkout) ---
-  app.post('/api/orders/guest', (req, res) => {
-    const order = req.body?.order as Order | undefined;
-    if (!order || !order.orderNo || !order.customerMobile) {
-      return res.status(400).json({ ok: false, message: 'اطلاعات سفارش مهمان کامل نیست.' });
+  app.post('/api/auth/logout', (req, res) => {
+    const mob = resolveMobileSession(store, req);
+    if (mob) {
+      delete store.data.mobileSessions[mob.tokenHash];
+      store.save();
     }
-    guestOrders.set(order.orderNo, { ...order, isGuest: true });
+    res.setHeader('Set-Cookie', 'dm_mobile_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+    return res.json({ ok: true });
+  });
+
+  // --- Authoritative Cart / Checkout Pricing Verification (§8.2 / §16) ---
+  app.post('/api/checkout/calculate', (req, res) => {
+    const { items = [], customerGroup = 'retail', couponCode = '', shippingMethod = 'courier_tehran', userId } = req.body || {};
+    const calc = calculateAuthoritativeCheckout(store.data.catalogState, {
+      items,
+      customerGroup: customerGroup as CustomerGroupCode,
+      couponCode,
+      shippingMethod,
+      userId: typeof userId === 'string' ? userId : undefined,
+    });
+    if (!calc.ok) {
+      return res.status(calc.status).json({ ok: false, message: calc.message });
+    }
+    return res.json(calc);
+  });
+
+  // --- Idempotent Payment Gateway Initiate & Verify (§8.3) ---
+  app.post('/api/payments/initiate', (req, res) => handlePaymentInitiate(store, req, res));
+  app.post('/api/payments/verify', (req, res) => handlePaymentVerify(store, req, res));
+
+  app.get('/api/payments/status/:orderId', async (req, res) => {
+    const orderId = String(req.params.orderId || '').trim();
+    const verified = store.data.verifiedOrderStatuses[orderId];
+    if (!verified) {
+      return res.json({ ok: true, paid: false, verifiedOrder: null });
+    }
+    return res.json({ ok: true, paid: true, verifiedOrder: verified });
+  });
+
+  app.get('/api/payments/ledger', async (req, res) => {
+    const adminCheck = await verifyFirebaseAdmin(req);
+    if ('errorStatus' in adminCheck) {
+      return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
+    }
+    return res.json({ ok: true, entries: store.data.paymentLedger, verifiedOrderStatuses: store.data.verifiedOrderStatuses });
+  });
+
+  // --- Authoritative Guest & Mobile-Authenticated Order Placement ---
+  app.post('/api/orders/guest', (req, res) => {
+    const body = req.body || {};
+    const customerName = String(body.customerName || '').trim().slice(0, 120);
+    const customerMobile = normalizeMobile(String(body.customerMobile || ''));
+    const items = body.items;
+    const shippingMethod = String(body.shippingMethod || 'courier_tehran');
+    const paymentMethod = String(body.paymentMethod || 'online') as Order['paymentMethod'];
+    const couponCode = String(body.couponCode || '');
+    const shippingAddress = body.shippingAddress || {};
+    const verifiedToken = typeof body.verifiedToken === 'string' ? body.verifiedToken.trim() : '';
+
+    if (!customerName || !/^09\d{9}$/.test(customerMobile)) {
+      return res.status(400).json({ ok: false, message: 'نام و شماره موبایل معتبر برای ثبت سفارش الزامی است.' });
+    }
+
+    if (!shippingAddress.city || !shippingAddress.addressLine) {
+      return res.status(400).json({ ok: false, message: 'شهر و نشانی کامل تحویل الزامی است.' });
+    }
+
+    // Optional binding check when caller presents OTP verification proof or mobile session
+    const mobSession = resolveMobileSession(store, req);
+    let authenticatedMobile: string | null = mobSession ? mobSession.mobile : null;
+    if (verifiedToken) {
+      const vHash = hashToken(verifiedToken);
+      const vRecord = store.data.otpVerifiedTokens[vHash];
+      if (!vRecord || Date.now() > vRecord.expiresAt || vRecord.mobile !== customerMobile) {
+        return res.status(403).json({ ok: false, message: 'توکن تایید شماره موبایل نامعتبر یا منقضی شده است.' });
+      }
+      authenticatedMobile = vRecord.mobile;
+      vRecord.consumedAt = new Date().toISOString();
+    }
+
+    const calc = calculateAuthoritativeCheckout(store.data.catalogState, {
+      items,
+      customerGroup: 'retail',
+      couponCode,
+      shippingMethod,
+    });
+    if (!calc.ok) {
+      return res.status(calc.status).json({ ok: false, message: calc.message });
+    }
+
+    const ALLOWED_PAYMENT_METHODS: Order['paymentMethod'][] = [
+      'online',
+      'cash_on_delivery',
+      'bank_transfer',
+      'credit_request',
+      'cheque_request',
+      'installment_request',
+    ];
+    const safePaymentMethod = ALLOWED_PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : 'online';
+    const initialStatus: Order['status'] =
+      safePaymentMethod === 'online' ? 'pending_payment' : 'awaiting_review';
+    const initialPaymentStatus: Order['paymentStatus'] =
+      safePaymentMethod === 'credit_request' ||
+      safePaymentMethod === 'cheque_request' ||
+      safePaymentMethod === 'installment_request'
+        ? 'pending_credit'
+        : 'unpaid';
+
+    const now = new Date().toISOString();
+    const orderId = `ord_${crypto.randomBytes(6).toString('hex')}`;
+    const orderNo = `DM-${new Date().getFullYear()}-${crypto.randomInt(10000, 100000)}`;
+
+    const order: Order = {
+      id: orderId,
+      orderNo,
+      userId: authenticatedMobile ? `mobile:${authenticatedMobile}` : 'guest',
+      isGuest: !authenticatedMobile,
+      customerName,
+      customerMobile,
+      customerGroup: 'retail',
+      status: initialStatus,
+      paymentStatus: initialPaymentStatus,
+      paymentMethod: safePaymentMethod,
+      subtotal: calc.subtotal,
+      discountTotal: calc.discountTotal,
+      shippingTotal: calc.shippingTotal,
+      taxTotal: calc.taxTotal,
+      grandTotal: calc.grandTotal,
+      ...(couponCode ? { couponCode } : {}),
+      shippingMethod: calc.shippingMethod,
+      shippingAddress: {
+        province: String(shippingAddress.province || 'تهران').slice(0, 60),
+        city: String(shippingAddress.city || 'تهران').slice(0, 60),
+        postalCode: String(shippingAddress.postalCode || '').slice(0, 20),
+        addressLine: String(shippingAddress.addressLine || '').slice(0, 400),
+      },
+      customerNote: typeof body.customerNote === 'string' ? body.customerNote.slice(0, 400) : undefined,
+      items: calc.items,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    store.data.guestOrders[order.orderNo] = order;
+    store.save();
+
     return res.json({ ok: true, order });
+  });
+
+  app.get('/api/orders/mobile', (req, res) => {
+    const mobSession = resolveMobileSession(store, req);
+    if (!mobSession) {
+      return res.status(401).json({ ok: false, message: 'برای مشاهده سفارش‌های موبایلی ابتدا با کد تایید وارد شوید.' });
+    }
+    const orders = Object.values(store.data.guestOrders)
+      .filter((o) => normalizeMobile(o.customerMobile) === mobSession.mobile)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return res.json({ ok: true, mobile: mobSession.mobile, orders });
   });
 
   app.get('/api/orders/track', (req, res) => {
     const orderNo = String(req.query.orderNo || '').trim();
     const mobile = normalizeMobile(String(req.query.mobile || ''));
-    const order = guestOrders.get(orderNo);
+    const order = store.data.guestOrders[orderNo];
     if (!order || normalizeMobile(order.customerMobile) !== mobile) {
       return res.status(404).json({ ok: false, message: 'سفارشی با این شماره پیگیری و موبایل یافت نشد.' });
     }
     return res.json({ ok: true, order });
   });
 
-  // --- Vite Dev Middleware / Production Static Assets ---
-  if (!isProd) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distDir = path.resolve(__dirname, 'dist');
-    const srcImagesDir = path.resolve(__dirname, 'src/assets/images');
-    if (fs.existsSync(srcImagesDir)) {
-      app.use('/src/assets/images', express.static(srcImagesDir));
+  // --- Two-Way RFQ (استعلام قیمت و چانه‌زنی) API ---
+  app.get('/api/rfq', async (req, res) => {
+    const mob = resolveMobileSession(store, req);
+    const fbUser = await verifyFirebaseUser(req);
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req) : null;
+    const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
+
+    const all = Object.values(store.data.rfqs).sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+
+    if (isAdmin) {
+      return res.json({ ok: true, rfqs: all });
     }
-    app.use(express.static(distDir));
-    app.use((_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
+    if (fbUser) {
+      return res.json({ ok: true, rfqs: all.filter((r) => r.userId === fbUser.uid) });
+    }
+    if (mob) {
+      return res.json({ ok: true, rfqs: all.filter((r) => normalizeMobile(r.customerMobile) === mob.mobile) });
+    }
+    return res.status(401).json({ ok: false, message: 'برای مشاهده درخواست‌های استعلام قیمت احراز هویت الزامی است.' });
+  });
+
+  app.post('/api/rfq', async (req, res) => {
+    const mob = resolveMobileSession(store, req);
+    const fbUser = await verifyFirebaseUser(req);
+    const body = req.body || {};
+
+    const productId = String(body.productId || '').trim();
+    const variantId = String(body.variantId || '').trim();
+    const quantity = Number(body.quantity || 0);
+    const customerName = String(body.customerName || fbUser?.displayName || mob?.displayName || '').trim().slice(0, 120);
+    const customerMobile = normalizeMobile(String(body.customerMobile || mob?.mobile || ''));
+    const clinicName = typeof body.clinicName === 'string' ? body.clinicName.trim().slice(0, 160) : undefined;
+    const note = String(body.note || '').trim().slice(0, 1000);
+    const targetUnitPrice = body.targetUnitPrice !== undefined && body.targetUnitPrice !== '' ? Number(body.targetUnitPrice) : undefined;
+
+    const product = store.data.catalogState.products.find((p) => p.id === productId);
+    const variant = product?.variants.find((v) => v.id === variantId) ?? product?.variants[0];
+    if (!product || !variant) {
+      return res.status(400).json({ ok: false, message: 'محصول انتخاب‌شده یافت نشد.' });
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return res.status(400).json({ ok: false, message: 'تعداد درخواستی معتبر نیست.' });
+    }
+    if (!customerName || !/^09\d{9}$/.test(customerMobile)) {
+      return res.status(400).json({ ok: false, message: 'نام و شماره موبایل معتبر الزامی است.' });
+    }
+
+    const now = new Date().toISOString();
+    const rfq: RfqRequest = {
+      id: `rfq_${crypto.randomBytes(6).toString('hex')}`,
+      rfqNo: `RFQ-${crypto.randomInt(10000, 100000)}`,
+      userId: fbUser?.uid || (mob ? `mobile:${mob.mobile}` : `mobile:${customerMobile}`),
+      customerMobile,
+      customerName,
+      clinicName,
+      productId: product.id,
+      productTitleFa: product.titleFa,
+      variantId: variant.id,
+      variantLabelFa: variant.labelFa,
+      quantity,
+      targetUnitPrice: targetUnitPrice && targetUnitPrice > 0 ? targetUnitPrice : undefined,
+      status: 'submitted',
+      messages: [
+        {
+          id: `rfqm_${crypto.randomBytes(5).toString('hex')}`,
+          authorName: customerName,
+          isStaff: false,
+          body: note || `درخواست استعلام قیمت برای ${quantity} عدد ${product.titleFa}`,
+          proposedUnitPrice: targetUnitPrice && targetUnitPrice > 0 ? targetUnitPrice : undefined,
+          createdAt: now,
+        },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    store.data.rfqs[rfq.id] = rfq;
+    store.save();
+
+    return res.json({ ok: true, rfq });
+  });
+
+  app.post('/api/rfq/:id/messages', async (req, res) => {
+    const rfq = store.data.rfqs[String(req.params.id || '')];
+    if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
+
+    const mob = resolveMobileSession(store, req);
+    const fbUser = await verifyFirebaseUser(req);
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req) : null;
+    const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
+    const isOwner = Boolean(
+      (fbUser && rfq.userId === fbUser.uid) || (mob && normalizeMobile(rfq.customerMobile) === mob.mobile)
+    );
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ ok: false, message: 'دسترسی به این درخواست استعلام قیمت ندارید.' });
+    }
+
+    const messageBody = String(req.body?.body || '').trim().slice(0, 1000);
+    if (!messageBody) {
+      return res.status(400).json({ ok: false, message: 'متن پیام نمی‌تواند خالی باشد.' });
+    }
+
+    const now = new Date().toISOString();
+    const proposed =
+      req.body?.proposedUnitPrice !== undefined && Number(req.body.proposedUnitPrice) > 0
+        ? Number(req.body.proposedUnitPrice)
+        : undefined;
+
+    rfq.messages.push({
+      id: `rfqm_${crypto.randomBytes(5).toString('hex')}`,
+      authorName: isAdmin ? 'کارشناس فروش کلینیکی' : rfq.customerName,
+      isStaff: isAdmin,
+      body: messageBody,
+      proposedUnitPrice: proposed,
+      createdAt: now,
     });
+    if (isAdmin && rfq.status === 'submitted') rfq.status = 'in_review';
+    rfq.updatedAt = now;
+    store.save();
+
+    return res.json({ ok: true, rfq });
+  });
+
+  app.post('/api/rfq/:id/quote', async (req, res) => {
+    const adminCheck = await verifyFirebaseAdmin(req);
+    if ('errorStatus' in adminCheck) {
+      return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
+    }
+
+    const rfq = store.data.rfqs[String(req.params.id || '')];
+    if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
+
+    const quotedUnitPrice = Number(req.body?.quotedUnitPrice || 0);
+    const validDays = Math.max(1, Math.min(90, Number(req.body?.validDays || 7)));
+    const note = String(req.body?.note || '').trim().slice(0, 500);
+    if (!Number.isFinite(quotedUnitPrice) || quotedUnitPrice <= 0) {
+      return res.status(400).json({ ok: false, message: 'قیمت پیشنهادی واحد باید بزرگ‌تر از صفر باشد.' });
+    }
+
+    const now = new Date().toISOString();
+    rfq.quotedUnitPrice = quotedUnitPrice;
+    rfq.quotedTotal = quotedUnitPrice * rfq.quantity;
+    rfq.validUntil = new Date(Date.now() + validDays * 86400000).toISOString();
+    rfq.status = 'quoted';
+    rfq.messages.push({
+      id: `rfqm_${crypto.randomBytes(5).toString('hex')}`,
+      authorName: adminCheck.user.displayName || adminCheck.user.email,
+      isStaff: true,
+      body: note || `قیمت پیشنهادی واحد ${quotedUnitPrice.toLocaleString()} تومان (جمع ${rfq.quotedTotal.toLocaleString()} تومان) ثبت شد.`,
+      proposedUnitPrice: quotedUnitPrice,
+      createdAt: now,
+    });
+    rfq.updatedAt = now;
+    store.save();
+
+    return res.json({ ok: true, rfq });
+  });
+
+  app.post('/api/rfq/:id/respond', async (req, res) => {
+    const rfq = store.data.rfqs[String(req.params.id || '')];
+    if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
+
+    const mob = resolveMobileSession(store, req);
+    const fbUser = await verifyFirebaseUser(req);
+    const isOwner = Boolean(
+      (fbUser && rfq.userId === fbUser.uid) || (mob && normalizeMobile(rfq.customerMobile) === mob.mobile)
+    );
+    if (!isOwner) {
+      return res.status(403).json({ ok: false, message: 'فقط ثبت‌کننده درخواست مجاز به تایید یا رد پیشنهاد است.' });
+    }
+    if (rfq.status !== 'quoted') {
+      return res.status(400).json({ ok: false, message: 'پیشنهاد قیمتی فعالی برای پاسخ وجود ندارد.' });
+    }
+
+    const decision = req.body?.decision === 'accepted' ? 'accepted' : req.body?.decision === 'rejected' ? 'rejected' : null;
+    if (!decision) {
+      return res.status(400).json({ ok: false, message: 'وضعیت پاسخ نامعتبر است.' });
+    }
+
+    const now = new Date().toISOString();
+    rfq.status = decision;
+    rfq.messages.push({
+      id: `rfqm_${crypto.randomBytes(5).toString('hex')}`,
+      authorName: rfq.customerName,
+      isStaff: false,
+      body: decision === 'accepted' ? 'قیمت پیشنهادی توسط مشتری تایید شد.' : 'پیشنهاد قیمت توسط مشتری رد شد.',
+      createdAt: now,
+    });
+    rfq.updatedAt = now;
+    store.save();
+
+    return res.json({ ok: true, rfq });
+  });
+
+  app.post('/api/rfq/:id/convert', async (req, res) => {
+    const adminCheck = await verifyFirebaseAdmin(req);
+    if ('errorStatus' in adminCheck) {
+      return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
+    }
+
+    const rfq = store.data.rfqs[String(req.params.id || '')];
+    if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
+
+    const unitPrice = rfq.quotedUnitPrice || rfq.targetUnitPrice || 0;
+    if (unitPrice <= 0) {
+      return res.status(400).json({ ok: false, message: 'ابتدا باید قیمت واحد پیشنهادی ثبت شود.' });
+    }
+
+    const now = new Date().toISOString();
+    const subtotal = unitPrice * rfq.quantity;
+    const taxTotal = Math.round((subtotal * store.data.catalogState.settings.taxRatePercent) / 100);
+    const proforma: ProformaInvoice = {
+      id: `pf_rfq_${crypto.randomBytes(5).toString('hex')}`,
+      proformaNo: `PF-${crypto.randomInt(10000, 100000)}`,
+      shareToken: crypto.randomBytes(16).toString('hex'),
+      userId: rfq.userId,
+      contactName: rfq.customerName,
+      contactMobile: rfq.customerMobile,
+      clinicName: rfq.clinicName,
+      status: 'sent',
+      subtotal,
+      discountTotal: 0,
+      taxTotal,
+      grandTotal: subtotal + taxTotal,
+      items: [
+        {
+          productId: rfq.productId,
+          variantId: rfq.variantId,
+          sku: store.data.catalogState.products.find((p) => p.id === rfq.productId)?.sku || 'RFQ-SKU',
+          titleFa: rfq.productTitleFa,
+          variantLabelFa: rfq.variantLabelFa,
+          quantity: rfq.quantity,
+          unitPrice,
+          discountAmount: 0,
+          lineTotal: subtotal,
+          priceSource: 'contract',
+        },
+      ],
+      termsFa: `تبدیل‌شده از استعلام قیمت ${rfq.rfqNo}.`,
+      validUntil: rfq.validUntil || new Date(Date.now() + 7 * 86400000).toISOString(),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    rfq.status = 'converted';
+    rfq.proformaId = proforma.id;
+    rfq.updatedAt = now;
+    store.save();
+
+    return res.json({ ok: true, rfq, proforma });
+  });
+
+  // --- Vite Dev Middleware / Production Static Assets ---
+  if (attachVite) {
+    if (!isProd) {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distDir = path.resolve(__dirname, 'dist');
+      const srcImagesDir = path.resolve(__dirname, 'src/assets/images');
+      if (fs.existsSync(srcImagesDir)) {
+        app.use('/src/assets/images', express.static(srcImagesDir));
+      }
+      app.use(express.static(distDir));
+      app.use((_req, res) => {
+        res.sendFile(path.join(distDir, 'index.html'));
+      });
+    }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`DentalMarket server listening on http://0.0.0.0:${PORT} (${isProd ? 'production' : 'development'})`);
-  });
+  return { app, store };
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+const isMainEntry =
+  typeof process !== 'undefined' &&
+  Array.isArray(process.argv) &&
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+
+if (isMainEntry && !process.env.VITEST) {
+  createServerApp()
+    .then(({ app }) => {
+      app.listen(DEFAULT_PORT, '0.0.0.0', () => {
+        console.log(
+          `DentalMarket server listening on http://0.0.0.0:${DEFAULT_PORT} (${
+            process.env.NODE_ENV === 'production' ? 'production' : 'development'
+          })`
+        );
+      });
+    })
+    .catch((err) => {
+      console.error('Failed to start server:', err);
+      process.exit(1);
+    });
+}

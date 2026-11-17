@@ -15,10 +15,6 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    function isSuperAdmin() {
-      return isVerified() && request.auth.token.email == 'farina.connect@gmail.com';
-    }
-
     function hasAdminDoc() {
       return isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
@@ -27,12 +23,16 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role;
     }
 
+    function isSuperAdmin() {
+      return hasAdminDoc() && adminRole() == 'super_admin';
+    }
+
     function isAdmin() {
-      return isSuperAdmin() || hasAdminDoc();
+      return hasAdminDoc();
     }
 
     function hasRole(allowedRoles) {
-      return isSuperAdmin() || (hasAdminDoc() && adminRole() in allowedRoles);
+      return hasAdminDoc() && adminRole() in allowedRoles;
     }
 
     function isOwner(uid) {
@@ -202,6 +202,29 @@ service cloud.firestore {
         && data.resolution in ['refund', 'replacement', 'credit']
         && data.status in ['requested', 'approved', 'received', 'refunded', 'rejected']
         && data.refundAmount is number && data.refundAmount >= 0;
+    }
+
+    function isValidRfqRequest(data) {
+      return data.keys().hasAll(['id', 'rfqNo', 'userId', 'customerMobile', 'customerName', 'productId', 'productTitleFa', 'variantId', 'variantLabelFa', 'quantity', 'status', 'messages', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'rfqNo', 'userId', 'customerMobile', 'customerName', 'clinicName', 'productId', 'productTitleFa', 'variantId', 'variantLabelFa', 'quantity', 'targetUnitPrice', 'quotedUnitPrice', 'quotedTotal', 'status', 'validUntil', 'proformaId', 'messages', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.rfqNo is string && data.rfqNo.size() <= 40
+        && data.userId is string && data.userId.size() <= 128
+        && data.customerMobile is string && data.customerMobile.size() <= 20
+        && data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 120
+        && isValidId(data.productId)
+        && data.productTitleFa is string && data.productTitleFa.size() <= 200
+        && isValidId(data.variantId)
+        && data.variantLabelFa is string && data.variantLabelFa.size() <= 120
+        && data.quantity is number && data.quantity >= 1 && data.quantity <= 100000
+        && (!('clinicName' in data) || (data.clinicName is string && data.clinicName.size() <= 160))
+        && (!('targetUnitPrice' in data) || (data.targetUnitPrice is number && data.targetUnitPrice >= 0))
+        && (!('quotedUnitPrice' in data) || (data.quotedUnitPrice is number && data.quotedUnitPrice >= 0))
+        && (!('quotedTotal' in data) || (data.quotedTotal is number && data.quotedTotal >= 0))
+        && (!('validUntil' in data) || (data.validUntil is string && data.validUntil.size() <= 40))
+        && (!('proformaId' in data) || (data.proformaId is string && data.proformaId.size() <= 128))
+        && data.status in ['submitted', 'in_review', 'quoted', 'accepted', 'rejected', 'converted']
+        && data.messages is list && data.messages.size() >= 1 && data.messages.size() <= 100;
     }
 
     // --- Public Catalog & Content Collections (Storefront Read, Role-Restricted Admin Write) ---
@@ -415,8 +438,9 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && existing().status == 'pending_payment'
-          && incoming().status in ['paid', 'cancelled']
-          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'updatedAt'])
+          && incoming().status == 'cancelled'
+          && incoming().paymentStatus == existing().paymentStatus
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
         )
       );
       allow delete: if false;
@@ -527,6 +551,28 @@ service cloud.firestore {
         && incoming().status == 'new'
         && incoming().createdAt == request.time;
       allow update, delete: if hasRole(['super_admin', 'admin', 'sales_mgr', 'support']) && isValidId(requestId);
+    }
+
+    match /rfqRequests/{rfqId} {
+      allow get: if isValidId(rfqId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isVerified() && isValidId(rfqId) && isValidRfqRequest(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'submitted'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(rfqId) && isValidRfqRequest(incoming()) && (
+        hasRole(['super_admin', 'admin', 'sales_mgr', 'support']) || (
+          isVerified() && existing().userId == request.auth.uid
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status in ['submitted', 'in_review', 'quoted']
+          && (incoming().status == existing().status || (existing().status == 'quoted' && incoming().status in ['accepted', 'rejected']))
+          && incoming().diff(existing()).affectedKeys().hasOnly(['messages', 'status', 'updatedAt'])
+        )
+      );
+      allow delete: if hasRole(['super_admin', 'admin']) && isValidId(rfqId);
     }
 
     match /warehouses/{warehouseId} {

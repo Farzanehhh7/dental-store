@@ -255,6 +255,25 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role", "updatedAt"]
+    },
+    "RfqRequest": {
+      "title": "RfqRequest",
+      "description": "Two-way Request for Quote and price negotiation between clinic/dentist and sales team.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "rfqNo": { "type": "string", "maxLength": 40 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "customerMobile": { "type": "string", "maxLength": 20 },
+        "customerName": { "type": "string", "maxLength": 120 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "variantId": { "type": "string", "maxLength": 128 },
+        "quantity": { "type": "number" },
+        "status": { "type": "string", "enum": ["submitted", "in_review", "quoted", "accepted", "rejected", "converted"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "rfqNo", "userId", "customerMobile", "customerName", "productId", "variantId", "quantity", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -280,6 +299,7 @@
     "/stockNotifications/{notifId}": { "schema": "StockNotification", "description": "Back-in-stock mobile alerts" },
     "/newsletterSubscribers/{subId}": { "schema": "NewsletterSubscriber", "description": "Newsletter and discount subscribers" },
     "/consultationRequests/{requestId}": { "schema": "ConsultationRequest", "description": "Capital equipment consultations" },
+    "/rfqRequests/{rfqId}": { "schema": { "$ref": "#/entities/RfqRequest" }, "description": "Two-way product RFQ negotiations" },
     "/tickets/{ticketId}": { "schema": { "$ref": "#/entities/Ticket" }, "description": "Support tickets" },
     "/users/{userId}": { "schema": { "$ref": "#/entities/UserProfile" }, "description": "User profiles and B2B verification status" },
     "/b2bVerifications/{verificationId}": { "schema": "B2BVerification", "description": "B2B upgrade verification queue" },

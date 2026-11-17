@@ -35,6 +35,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
     setCartOpen,
     compareIds,
     authUser,
+    mobileSession,
     isAdmin,
     settings,
     subscribeNewsletter,
@@ -229,23 +230,18 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
               <span className="tabular-nums text-brand dark:text-teal-300">{toPersianDigits(cartCount)}</span>
             </button>
 
-            {!isAdmin && (
-              <Link
-                to="/admin?preview=1"
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-400/80 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs font-bold hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors whitespace-nowrap shrink-0"
-              >
-                <LayoutDashboard className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">مدیریت سایت (موقت)</span>
-                <span className="sm:hidden">مدیریت</span>
-              </Link>
-            )}
-
             <Link
               to={isAdmin ? '/admin' : '/account'}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-brand text-white text-xs font-bold hover:bg-brandDark transition-colors whitespace-nowrap shrink-0"
             >
               {isAdmin ? <LayoutDashboard className="w-4 h-4" /> : <User className="w-4 h-4" />}
-              <span>{isAdmin ? t('nav.admin') : authUser ? 'حساب من' : 'ورود / حساب'}</span>
+              <span>
+                {isAdmin
+                  ? t('nav.admin')
+                  : authUser || mobileSession
+                  ? 'حساب من'
+                  : 'ورود / حساب'}
+              </span>
             </Link>
           </div>
         </div>
@@ -270,9 +266,11 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
               <Link to="/agents" onClick={() => setMobileMenuOpen(false)}>{t('nav.agents')}</Link>
               <Link to="/blog" onClick={() => setMobileMenuOpen(false)}>{t('nav.blog')}</Link>
               <Link to="/page/contact" onClick={() => setMobileMenuOpen(false)}>{t('nav.contact')}</Link>
-              <Link to={isAdmin ? '/admin' : '/admin?preview=1'} onClick={() => setMobileMenuOpen(false)} className="text-brand font-bold">
-                {isAdmin ? t('nav.admin') : 'مدیریت سایت (موقت)'}
-              </Link>
+              {isAdmin && (
+                <Link to="/admin" onClick={() => setMobileMenuOpen(false)} className="text-brand font-bold">
+                  {t('nav.admin')}
+                </Link>
+              )}
             </div>
           </div>
         )}
@@ -368,7 +366,9 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
 
         <div className="border-t border-line dark:border-slate-800 py-4 px-4 lg:px-8 text-xs text-ink/60 dark:text-slate-500 max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <span>© {toPersianDigits(new Date().getFullYear())} {settings.storeNameFa} — {t('footer.copyright')}</span>
-          <Link to="/admin" className="hover:text-brand font-medium">ورود به پنل مدیریت و عملیات انبار</Link>
+          {isAdmin && (
+            <Link to="/admin" className="hover:text-brand font-medium">ورود به پنل مدیریت و عملیات انبار</Link>
+          )}
         </div>
       </footer>
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import {
   collection,
@@ -16,7 +16,6 @@ import {
 } from 'firebase/firestore';
 import {
   OperationType,
-  SUPER_ADMIN_EMAIL,
   auth,
   db,
   googleAuthProvider,
@@ -93,7 +92,6 @@ import {
   OrderItem,
   OrderStatus,
   PaymentLedgerEntry,
-  PaymentMethod,
   PaymentPlan,
   Product,
   ProductCostRecord,
@@ -112,286 +110,37 @@ import {
   UserProfile,
   Warehouse,
 } from '../types/domain';
+import type {
+  AdminStaffRecord,
+  BulkPriceUndoSnapshot,
+  StoreContextValue,
+  ToastMessage,
+} from './storeTypes';
+import {
+  ADMIN_REQUIRED_MSG,
+  LS_CART,
+  LS_COMPARE,
+  LS_CURRENCY,
+  LS_DARK,
+  LS_DELETED_IDS,
+  LS_GUEST_ORDERS,
+  LS_RECENT,
+  LS_VERIFIED_PAYMENTS,
+  LS_WISHLIST,
+  VerifiedPaymentMark,
+  applyVerifiedPaymentOverlay,
+  commitInChunks,
+  mergeById,
+  readJsonLS,
+  resolveAuthHeaders,
+  stripCostFromProduct,
+  upsertById,
+} from './storeHelpers';
+import { useMobileSessionAndRfq } from './useMobileSessionAndRfq';
 
-export interface AdminStaffRecord {
-  uid: string;
-  email: string;
-  role: AdminRoleCode;
-  displayName?: string;
-  updatedAt: string;
-}
-
-interface ToastMessage {
-  id: string;
-  text: string;
-  tone: 'info' | 'success' | 'error';
-}
-
-interface BulkPriceUndoSnapshot {
-  scopeLabel: string;
-  previousPrices: { productId: string; variantId: string; basePrice: number | null }[];
-}
-
-interface StoreContextValue {
-  // Auth & RBAC
-  authUser: User | null;
-  authReady: boolean;
-  isAdmin: boolean;
-  actualAdminRole: AdminRoleCode | null;
-  activeAdminRole: AdminRoleCode;
-  setActiveAdminRole: (role: AdminRoleCode) => void;
-  adminsList: AdminStaffRecord[];
-  userProfile: UserProfile | null;
-  customerGroup: CustomerGroupCode;
-  signInWithGoogle: () => Promise<void>;
-  logout: () => Promise<void>;
-
-  // Theme & Currency
-  currency: CurrencyMode;
-  setCurrency: (c: CurrencyMode) => void;
-  darkMode: boolean;
-  toggleDarkMode: () => void;
-
-  // Catalog & Content
-  settings: SiteSettings;
-  categories: Category[];
-  brands: Brand[];
-  attributes: AttributeDef[];
-  products: Product[];
-  productCosts: ProductCostRecord[];
-  campaigns: Campaign[];
-  bundles: Bundle[];
-  agents: AgentBranch[];
-  blogPosts: BlogPost[];
-  coupons: Coupon[];
-  reviews: Review[];
-  questions: ProductQuestion[];
-  redirects: RedirectRule[];
-  pages: SitePage[];
-  banners: BannerItem[];
-  faqs: FaqItem[];
-  notFoundLogs: NotFoundLog[];
-
-  // Operational Data
-  orders: Order[];
-  guestOrders: Order[];
-  invoices: InvoiceRecord[];
-  paymentLedger: PaymentLedgerEntry[];
-  returns: ReturnRequest[];
-  proformas: ProformaInvoice[];
-  paymentPlans: PaymentPlan[];
-  b2bVerifications: B2BVerification[];
-  tickets: SupportTicket[];
-  stockRequests: StockRequest[];
-  stockNotifications: StockNotification[];
-  newsletterSubscribers: NewsletterSubscriber[];
-  consultationRequests: ConsultationRequest[];
-  contractPrices: ContractPrice[];
-  warehouses: Warehouse[];
-  suppliers: Supplier[];
-  stockMovements: StockMovement[];
-  usersList: UserProfile[];
-  auditLogs: AuditLogEntry[];
-
-  // Cart & Storefront State
-  cart: CartItem[];
-  cartOpen: boolean;
-  setCartOpen: (open: boolean) => void;
-  addToCart: (productId: string, variantId: string, qty?: number) => void;
-  addBundleToCart: (bundleId: string) => void;
-  updateCartQty: (variantId: string, qty: number) => void;
-  removeFromCart: (variantId: string) => void;
-  clearCart: () => void;
-  wishlistIds: string[];
-  toggleWishlist: (productId: string) => void;
-  compareIds: string[];
-  toggleCompare: (productId: string) => void;
-  recentlyViewedIds: string[];
-  markViewed: (productId: string) => void;
-
-  // Notifications
-  toasts: ToastMessage[];
-  pushToast: (text: string, tone?: 'info' | 'success' | 'error') => void;
-
-  // Storefront & Checkout Actions
-  placeOrder: (payload: {
-    customerName: string;
-    customerMobile: string;
-    shippingMethod: string;
-    shippingTotal: number;
-    address: Order['shippingAddress'];
-    paymentMethod: PaymentMethod;
-    couponCode?: string;
-    customerNote?: string;
-    installmentsCount?: number;
-    proposedTermsFa?: string;
-  }) => Promise<Order | null>;
-  verifyOnlinePayment: (orderId: string, gateway?: string) => Promise<void>;
-  lookupGuestOrder: (orderNo: string, mobile: string) => Promise<Order | null>;
-  cancelOwnOrder: (orderId: string) => Promise<void>;
-  requestProforma: (payload: {
-    contactName: string;
-    contactMobile: string;
-    clinicName?: string;
-    items: OrderItem[];
-    termsFa?: string;
-  }) => Promise<ProformaInvoice | null>;
-  respondProforma: (proformaId: string, status: 'accepted' | 'rejected') => Promise<void>;
-  submitB2BVerification: (payload: {
-    applicantName: string;
-    mobile: string;
-    requestedGroup: B2BVerification['requestedGroup'];
-    clinicName: string;
-    medicalCouncilNo: string;
-    documentSummary: string;
-    attachmentName?: string;
-    attachmentPreview?: string;
-  }) => Promise<void>;
-  submitReview: (productId: string, rating: number, title: string, body: string) => Promise<void>;
-  submitQuestion: (productId: string, body: string) => Promise<void>;
-  submitStockRequest: (payload: { contactName: string; mobile: string; titleText: string; brandText?: string; description?: string }) => Promise<void>;
-  submitStockNotification: (payload: { productId: string; variantId?: string; productTitleFa: string; mobile: string }) => Promise<void>;
-  subscribeNewsletter: (contact: string) => Promise<void>;
-  submitReturnRequest: (payload: {
-    orderId: string;
-    items: ReturnRequest['items'];
-    reasonFa: string;
-    resolution: ReturnRequest['resolution'];
-    refundAmount: number;
-  }) => Promise<void>;
-  submitConsultation: (payload: { name: string; mobile: string; clinicName?: string; productId?: string; productName?: string; budgetRange?: string; message?: string }) => Promise<void>;
-  submitTicket: (payload: { subject: string; department: SupportTicket['department']; priority: SupportTicket['priority']; body: string; orderNo?: string }) => Promise<void>;
-  replyTicket: (ticketId: string, body: string, isStaff: boolean) => Promise<void>;
-  recordNotFoundHit: (path: string) => Promise<void>;
-  incrementRedirectHit: (redirectId: string) => Promise<void>;
-
-  // Admin Actions
-  upsertProduct: (product: Product, costMap?: Record<string, number>) => Promise<void>;
-  deleteProduct: (productId: string) => Promise<void>;
-  upsertCategory: (category: Category) => Promise<void>;
-  deleteCategory: (categoryId: string) => Promise<void>;
-  upsertBrand: (brand: Brand) => Promise<void>;
-  deleteBrand: (brandId: string) => Promise<void>;
-  upsertAttribute: (attr: AttributeDef) => Promise<void>;
-  deleteAttribute: (attrId: string) => Promise<void>;
-  upsertBundle: (bundle: Bundle) => Promise<void>;
-  deleteBundle: (bundleId: string) => Promise<void>;
-  upsertCampaign: (campaign: Campaign) => Promise<void>;
-  deleteCampaign: (campaignId: string) => Promise<void>;
-  upsertContractPrice: (contract: ContractPrice) => Promise<void>;
-  deleteContractPrice: (contractId: string) => Promise<void>;
-  applyBulkPriceAdjustment: (payload: { scopeType: 'all' | 'category' | 'brand'; scopeId?: string; percent: number; roundingStep: number }) => Promise<void>;
-  undoBulkPriceAdjustment: () => Promise<void>;
-  canUndoBulkPrice: boolean;
-  adjustVariantStock: (productId: string, variantId: string, delta: number, reason: string, warehouseCode?: string, type?: StockMovement['type']) => Promise<void>;
-  applyNearExpirySpecialPrice: (productId: string, variantId: string, batchId: string, specialPrice: number) => Promise<void>;
-  markStockNotificationSent: (id: string) => Promise<void>;
-  upsertWarehouse: (warehouse: Warehouse) => Promise<void>;
-  deleteWarehouse: (id: string) => Promise<void>;
-  upsertSupplier: (supplier: Supplier) => Promise<void>;
-  deleteSupplier: (id: string) => Promise<void>;
-  updateOrderStatus: (orderId: string, status: OrderStatus, trackingCode?: string) => Promise<void>;
-  createManualOrder: (payload: {
-    customerName: string;
-    customerMobile: string;
-    customerGroup: CustomerGroupCode;
-    paymentMethod: PaymentMethod;
-    shippingMethod: string;
-    shippingTotal: number;
-    address: Order['shippingAddress'];
-    items: OrderItem[];
-    customerNote?: string;
-  }) => Promise<Order | null>;
-  issueInvoice: (orderId: string, isOfficial?: boolean) => Promise<void>;
-  voidInvoice: (invoiceId: string) => Promise<void>;
-  recordPaymentEntry: (entry: PaymentLedgerEntry) => Promise<void>;
-  updateReturnStatus: (id: string, status: ReturnRequest['status'], adminNote?: string) => Promise<void>;
-  reviewB2BVerification: (id: string, status: 'approved' | 'rejected' | 'needs_info', rejectReason?: string) => Promise<void>;
-  updateUserAdmin: (uid: string, patch: Partial<Pick<UserProfile, 'customerGroup' | 'isBlocked' | 'b2bStatus' | 'displayName' | 'clinicName' | 'medicalCouncilNo' | 'email' | 'mobile'>>) => Promise<void>;
-  upsertProformaAdmin: (proforma: ProformaInvoice) => Promise<void>;
-  convertProformaToOrder: (proformaId: string) => Promise<void>;
-  updatePaymentPlanStatus: (planId: string, status: PaymentPlan['status'], decisionNote?: string) => Promise<void>;
-  moderateReview: (reviewId: string, status: 'approved' | 'rejected') => Promise<void>;
-  answerQuestion: (questionId: string, answerBody: string) => Promise<void>;
-  updateStockRequestStatus: (id: string, status: StockRequest['status'], adminNote?: string) => Promise<void>;
-  updateConsultationStatus: (id: string, status: ConsultationRequest['status']) => Promise<void>;
-  upsertAgent: (agent: AgentBranch) => Promise<void>;
-  deleteAgent: (agentId: string) => Promise<void>;
-  upsertBlogPost: (post: BlogPost) => Promise<void>;
-  deleteBlogPost: (postId: string) => Promise<void>;
-  upsertCoupon: (coupon: Coupon) => Promise<void>;
-  deleteCoupon: (couponId: string) => Promise<void>;
-  upsertSitePage: (page: SitePage) => Promise<void>;
-  deleteSitePage: (pageId: string) => Promise<void>;
-  upsertBanner: (banner: BannerItem) => Promise<void>;
-  deleteBanner: (bannerId: string) => Promise<void>;
-  upsertFaq: (faq: FaqItem) => Promise<void>;
-  deleteFaq: (faqId: string) => Promise<void>;
-  upsertRedirect: (rule: RedirectRule) => Promise<void>;
-  deleteRedirect: (ruleId: string) => Promise<void>;
-  updateSettings: (next: SiteSettings) => Promise<void>;
-  updateOwnProfile: (patch: Partial<Pick<UserProfile, 'displayName' | 'mobile' | 'accountType' | 'clinicName' | 'medicalCouncilNo' | 'specialty' | 'legalCompanyName' | 'economicCode' | 'nationalId' | 'registrationNo' | 'addresses'>>) => Promise<void>;
-  assignAdminRole: (uid: string, email: string, role: AdminRoleCode, displayName?: string) => Promise<void>;
-  removeAdminRole: (uid: string) => Promise<void>;
-  seedDatabaseNow: () => Promise<void>;
-  dbSynced: boolean;
-}
+export type { AdminStaffRecord } from './storeTypes';
 
 const StoreContext = createContext<StoreContextValue | null>(null);
-
-const LS_CART = 'dm_cart_v1';
-const LS_WISHLIST = 'dm_wishlist_v1';
-const LS_COMPARE = 'dm_compare_v1';
-const LS_RECENT = 'dm_recent_v1';
-const LS_CURRENCY = 'dm_currency_v1';
-const LS_DARK = 'dm_dark_v1';
-const LS_GUEST_ORDERS = 'dm_guest_orders_v1';
-const LS_DELETED_IDS = 'dm_deleted_catalog_v1';
-
-function readJsonLS<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function stripCostFromProduct(p: Product): Product {
-  return {
-    ...p,
-    variants: p.variants.map((v) => {
-      const { costPrice: _c, ...rest } = v;
-      void _c;
-      return rest;
-    }),
-  };
-}
-
-function mergeById<T extends { id: string }>(baseline: T[], liveDocs: T[], deletedSet?: Set<string>): T[] {
-  const map = new Map<string, T>();
-  for (const item of baseline) {
-    if (!deletedSet?.has(item.id)) map.set(item.id, item);
-  }
-  for (const item of liveDocs) {
-    if (!deletedSet?.has(item.id)) map.set(item.id, item);
-  }
-  return Array.from(map.values());
-}
-
-function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
-  const exists = list.some((x) => x.id === item.id);
-  return exists ? list.map((x) => (x.id === item.id ? item : x)) : [item, ...list];
-}
-
-async function commitInChunks(operations: Array<(batch: ReturnType<typeof writeBatch>) => void>, chunkSize = 300) {
-  for (let i = 0; i < operations.length; i += chunkSize) {
-    const batch = writeBatch(db);
-    const slice = operations.slice(i, i + chunkSize);
-    slice.forEach((op) => op(batch));
-    await batch.commit();
-  }
-}
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -417,7 +166,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  // Baseline catalog (104 categories, 80 brands, 49 attributes, 1024 products stripped of costPrice)
   const cleanBaselineProducts = useMemo(() => EXPANDED_PRODUCTS.map(stripCostFromProduct), []);
 
   const [settings, setSettings] = useState<SiteSettings>(SEED_SETTINGS);
@@ -439,9 +187,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [faqs, setFaqs] = useState<FaqItem[]>(SEED_FAQS);
   const [notFoundLogs, setNotFoundLogs] = useState<NotFoundLog[]>(SEED_NOT_FOUND_LOGS);
 
-  // Operational datasets
-  const [orders, setOrders] = useState<Order[]>(SEED_SAMPLE_ORDERS);
-  const [guestOrders, setGuestOrders] = useState<Order[]>(() => readJsonLS<Order[]>(LS_GUEST_ORDERS, []));
+  const [rawOrders, setRawOrders] = useState<Order[]>(SEED_SAMPLE_ORDERS);
+  const [rawGuestOrders, setRawGuestOrders] = useState<Order[]>(() => readJsonLS<Order[]>(LS_GUEST_ORDERS, []));
+  const [verifiedPayments, setVerifiedPayments] = useState<Record<string, VerifiedPaymentMark>>(() =>
+    readJsonLS<Record<string, VerifiedPaymentMark>>(LS_VERIFIED_PAYMENTS, {})
+  );
   const [invoices, setInvoices] = useState<InvoiceRecord[]>(SEED_INVOICES);
   const [paymentLedger, setPaymentLedger] = useState<PaymentLedgerEntry[]>(SEED_PAYMENT_LEDGER);
   const [returns, setReturns] = useState<ReturnRequest[]>(SEED_RETURNS);
@@ -451,7 +201,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [tickets, setTickets] = useState<SupportTicket[]>(SEED_TICKETS);
   const [stockRequests, setStockRequests] = useState<StockRequest[]>(SEED_STOCK_REQUESTS);
   const [stockNotifications, setStockNotifications] = useState<StockNotification[]>(SEED_STOCK_NOTIFICATIONS);
-  const [newsletterSubscribers, setNewsletterSubscribers] = useState<NewsletterSubscriber[]>(SEED_NEWSLETTER_SUBSCRIBERS);
+  const [newsletterSubscribers, setNewsletterSubscribers] = useState<NewsletterSubscriber[]>(
+    SEED_NEWSLETTER_SUBSCRIBERS
+  );
   const [consultationRequests, setConsultationRequests] = useState<ConsultationRequest[]>(SEED_CONSULTATIONS);
   const [contractPrices, setContractPrices] = useState<ContractPrice[]>(SEED_CONTRACT_PRICES);
   const [warehouses, setWarehouses] = useState<Warehouse[]>(SEED_WAREHOUSES);
@@ -461,7 +213,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(SEED_AUDIT_LOGS);
   const [bulkPriceUndo, setBulkPriceUndo] = useState<BulkPriceUndoSnapshot | null>(null);
 
-  // Client cart/wishlist/compare/recent
   const [cart, setCart] = useState<CartItem[]>(() => readJsonLS<CartItem[]>(LS_CART, []));
   const [cartOpen, setCartOpen] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>(() => readJsonLS<string[]>(LS_WISHLIST, []));
@@ -469,20 +220,43 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [recentlyViewedIds, setRecentlyViewedIds] = useState<string[]>(() => readJsonLS<string[]>(LS_RECENT, []));
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
+  // Strict RBAC check exclusively backed by Firestore admins/{uid} document (no hardcoded email fallback)
   const isAdmin = useMemo(() => {
     if (!authUser || !authUser.emailVerified) return false;
-    return authUser.email === SUPER_ADMIN_EMAIL || isAdminDoc;
-  }, [authUser, isAdminDoc]);
+    return isAdminDoc && actualAdminRole !== null;
+  }, [authUser, isAdminDoc, actualAdminRole]);
 
   const customerGroup: CustomerGroupCode = userProfile?.customerGroup ?? 'retail';
 
-  const pushToast = (text: string, tone: 'info' | 'success' | 'error' = 'info') => {
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const pushToast = useCallback((text: string, tone: ToastMessage['tone'] = 'info') => {
+    const id = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     setToasts((prev) => [...prev, { id, text, tone }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((item) => item.id !== id));
     }, 3800);
-  };
+  }, []);
+
+  const mobileAndRfq = useMobileSessionAndRfq({
+    authUser,
+    authReady,
+    isAdmin,
+    dbSynced,
+    pushToast,
+    onProformaCreated: (pf) => setProformas((prev) => upsertById(prev, pf)),
+  });
+
+  const orders = useMemo(
+    () => applyVerifiedPaymentOverlay(rawOrders, verifiedPayments),
+    [rawOrders, verifiedPayments]
+  );
+  const guestOrders = useMemo(
+    () => applyVerifiedPaymentOverlay(rawGuestOrders, verifiedPayments),
+    [rawGuestOrders, verifiedPayments]
+  );
+  const mobileOrders = useMemo(
+    () => applyVerifiedPaymentOverlay(mobileAndRfq.mobileOrders, verifiedPayments),
+    [mobileAndRfq.mobileOrders, verifiedPayments]
+  );
 
   useEffect(() => {
     const root = document.documentElement;
@@ -508,8 +282,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [recentlyViewedIds]);
 
   useEffect(() => {
-    localStorage.setItem(LS_GUEST_ORDERS, JSON.stringify(guestOrders));
-  }, [guestOrders]);
+    localStorage.setItem(LS_GUEST_ORDERS, JSON.stringify(rawGuestOrders));
+  }, [rawGuestOrders]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_VERIFIED_PAYMENTS, JSON.stringify(verifiedPayments));
+  }, [verifiedPayments]);
 
   const setCurrency = (c: CurrencyMode) => {
     setCurrencyState(c);
@@ -520,28 +298,53 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const [connectionChecked, setConnectionChecked] = useState(false);
 
-  // Debounced SEO / Redirect / Price-Comparison sync to Express server
+  // Authenticated admin-only catalog / pricing / SEO sync to Express server
   useEffect(() => {
+    if (!isAdmin || !authUser) return;
     const timer = setTimeout(() => {
-      fetch('/api/seo/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          categories,
-          brands,
-          products,
-          campaigns,
-          bundles,
-          agents,
-          blogPosts,
-          redirects,
-        }),
-      }).catch(() => {});
+      void (async () => {
+        try {
+          const headers = await resolveAuthHeaders(authUser);
+          if (!headers.Authorization) return;
+          await fetch('/api/seo/sync', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              categories,
+              brands,
+              products,
+              campaigns,
+              bundles,
+              agents,
+              blogPosts,
+              redirects,
+              coupons,
+              contractPrices,
+              settings,
+            }),
+          });
+        } catch {
+          // Non-fatal background sync
+        }
+      })();
     }, 800);
     return () => clearTimeout(timer);
-  }, [categories, brands, products, campaigns, bundles, agents, blogPosts, redirects]);
+  }, [
+    isAdmin,
+    authUser,
+    categories,
+    brands,
+    products,
+    campaigns,
+    bundles,
+    agents,
+    blogPosts,
+    redirects,
+    coupons,
+    contractPrices,
+    settings,
+  ]);
 
-  // Startup Firestore connectivity probe
   useEffect(() => {
     let active = true;
     testFirestoreConnection()
@@ -564,7 +367,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     handleFirestoreError(error, operationType, path);
   };
 
-  // Auth listener & user profile / RBAC sync
+  // Auth listener & Firestore admins/{uid} RBAC verification
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       setAuthUser(user);
@@ -573,27 +376,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setDbSynced(online);
         setConnectionChecked(true);
 
-        if (user.email === SUPER_ADMIN_EMAIL && user.emailVerified) {
-          setActualAdminRole('super_admin');
-          setActiveAdminRole('super_admin');
-        }
-
         if (online) {
           try {
             const adminSnap = await getDoc(doc(db, 'admins', user.uid));
             if (adminSnap.exists()) {
               setIsAdminDoc(true);
               const role = (adminSnap.data()?.role as AdminRoleCode) || 'admin';
-              if (user.email !== SUPER_ADMIN_EMAIL) {
-                setActualAdminRole(role);
-                setActiveAdminRole(role);
-              }
+              setActualAdminRole(role);
+              setActiveAdminRole(role);
             } else {
               setIsAdminDoc(false);
-              if (user.email !== SUPER_ADMIN_EMAIL) setActualAdminRole(null);
+              setActualAdminRole(null);
             }
           } catch {
             setIsAdminDoc(false);
+            setActualAdminRole(null);
           }
 
           const userRef = doc(db, 'users', user.uid);
@@ -616,6 +413,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           } catch (err) {
             console.warn('User profile sync deferred:', err);
           }
+        } else {
+          setIsAdminDoc(false);
+          setActualAdminRole(null);
         }
       } else {
         setIsAdminDoc(false);
@@ -663,7 +463,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [connectionChecked, dbSynced, authReady, authUser]);
 
-  // Public catalog sync: unary getDocs for guests; real-time onSnapshot when authenticated
+  // Public catalog sync
   useEffect(() => {
     if (!connectionChecked || !dbSynced || !authReady) return;
 
@@ -851,7 +651,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       unsubs.push(unsub);
     };
 
-    bindScoped<Order>('orders', setOrders, SEED_SAMPLE_ORDERS);
+    bindScoped<Order>('orders', setRawOrders, SEED_SAMPLE_ORDERS);
     bindScoped<InvoiceRecord>('invoices', setInvoices, SEED_INVOICES);
     bindScoped<ReturnRequest>('returns', setReturns, SEED_RETURNS);
     bindScoped<ProformaInvoice>('proformas', setProformas, SEED_PROFORMAS);
@@ -884,8 +684,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           (snap) => {
             if (!snap.empty) {
               setAuditLogs(
-                mergeById(SEED_AUDIT_LOGS, snap.docs.map((d) => ({ ...(d.data() as AuditLogEntry), id: d.id })))
-                  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                mergeById(SEED_AUDIT_LOGS, snap.docs.map((d) => ({ ...(d.data() as AuditLogEntry), id: d.id }))).sort(
+                  (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                )
               );
             }
           },
@@ -912,7 +713,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         unsubs.push(
           onSnapshot(
             collection(db, 'paymentLedger'),
-            (snap) => setPaymentLedger(mergeById(SEED_PAYMENT_LEDGER, snap.docs.map((d) => ({ ...(d.data() as PaymentLedgerEntry), id: d.id })))),
+            (snap) =>
+              setPaymentLedger(
+                mergeById(SEED_PAYMENT_LEDGER, snap.docs.map((d) => ({ ...(d.data() as PaymentLedgerEntry), id: d.id })))
+              ),
             (err) => handleListenerError(err, OperationType.LIST, 'paymentLedger')
           )
         );
@@ -921,17 +725,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         unsubs.push(
           onSnapshot(
             collection(db, 'warehouses'),
-            (snap) => setWarehouses(mergeById(SEED_WAREHOUSES, snap.docs.map((d) => ({ ...(d.data() as Warehouse), id: d.id })))),
+            (snap) =>
+              setWarehouses(mergeById(SEED_WAREHOUSES, snap.docs.map((d) => ({ ...(d.data() as Warehouse), id: d.id })))),
             (err) => handleListenerError(err, OperationType.LIST, 'warehouses')
           ),
           onSnapshot(
             collection(db, 'suppliers'),
-            (snap) => setSuppliers(mergeById(SEED_SUPPLIERS, snap.docs.map((d) => ({ ...(d.data() as Supplier), id: d.id })))),
+            (snap) =>
+              setSuppliers(mergeById(SEED_SUPPLIERS, snap.docs.map((d) => ({ ...(d.data() as Supplier), id: d.id })))),
             (err) => handleListenerError(err, OperationType.LIST, 'suppliers')
           ),
           onSnapshot(
             collection(db, 'stockNotifications'),
-            (snap) => setStockNotifications(mergeById(SEED_STOCK_NOTIFICATIONS, snap.docs.map((d) => ({ ...(d.data() as StockNotification), id: d.id })))),
+            (snap) =>
+              setStockNotifications(
+                mergeById(SEED_STOCK_NOTIFICATIONS, snap.docs.map((d) => ({ ...(d.data() as StockNotification), id: d.id })))
+              ),
             (err) => handleListenerError(err, OperationType.LIST, 'stockNotifications')
           )
         );
@@ -940,7 +749,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         unsubs.push(
           onSnapshot(
             collection(db, 'stockMovements'),
-            (snap) => setStockMovements(mergeById(SEED_STOCK_MOVEMENTS, snap.docs.map((d) => ({ ...(d.data() as StockMovement), id: d.id })))),
+            (snap) =>
+              setStockMovements(
+                mergeById(SEED_STOCK_MOVEMENTS, snap.docs.map((d) => ({ ...(d.data() as StockMovement), id: d.id })))
+              ),
             (err) => handleListenerError(err, OperationType.LIST, 'stockMovements')
           )
         );
@@ -949,7 +761,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         unsubs.push(
           onSnapshot(
             collection(db, 'newsletterSubscribers'),
-            (snap) => setNewsletterSubscribers(mergeById(SEED_NEWSLETTER_SUBSCRIBERS, snap.docs.map((d) => ({ ...(d.data() as NewsletterSubscriber), id: d.id })))),
+            (snap) =>
+              setNewsletterSubscribers(
+                mergeById(
+                  SEED_NEWSLETTER_SUBSCRIBERS,
+                  snap.docs.map((d) => ({ ...(d.data() as NewsletterSubscriber), id: d.id }))
+                )
+              ),
             (err) => handleListenerError(err, OperationType.LIST, 'newsletterSubscribers')
           )
         );
@@ -957,7 +775,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       unsubs.push(
         onSnapshot(
           collection(db, 'notFoundLogs'),
-          (snap) => setNotFoundLogs(mergeById(SEED_NOT_FOUND_LOGS, snap.docs.map((d) => ({ ...(d.data() as NotFoundLog), id: d.id })))),
+          (snap) =>
+            setNotFoundLogs(
+              mergeById(SEED_NOT_FOUND_LOGS, snap.docs.map((d) => ({ ...(d.data() as NotFoundLog), id: d.id })))
+            ),
           (err) => handleListenerError(err, OperationType.LIST, 'notFoundLogs')
         )
       );
@@ -966,10 +787,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return () => unsubs.forEach((u) => u());
   }, [connectionChecked, dbSynced, authReady, authUser, isAdmin, actualAdminRole, activeAdminRole]);
 
-  // Safe chunked Firestore database seeding (<=300 ops per WriteBatch)
   const seedDatabaseNow = async () => {
     if (!isAdmin) {
-      pushToast('برای همگام‌سازی پایگاه داده با حساب مدیر وارد شوید.', 'error');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -978,7 +798,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       EXPANDED_CATEGORIES.forEach((c) => ops.push((b) => b.set(doc(db, 'categories', c.id), c)));
       EXPANDED_BRANDS.forEach((br) => ops.push((b) => b.set(doc(db, 'brands', br.id), br)));
       EXPANDED_ATTRIBUTES.forEach((a) => ops.push((b) => b.set(doc(db, 'attributes', a.id), a)));
-      // Seed curated + sample expanded products directly into Firestore cleanly stripped of costPrice
       SEED_PRODUCTS.map(stripCostFromProduct).forEach((p) => ops.push((b) => b.set(doc(db, 'products', p.id), p)));
       SEED_PRODUCT_COSTS.slice(0, 60).forEach((pc) => ops.push((b) => b.set(doc(db, 'productCosts', pc.productId), pc)));
       SEED_CAMPAIGNS.forEach((cp) => ops.push((b) => b.set(doc(db, 'campaigns', cp.id), cp)));
@@ -1025,7 +844,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     await signOut(auth);
-    pushToast('از حساب کاربری خارج شدید.', 'info');
+    pushToast('از حساب گوگل خارج شدید.', 'info');
   };
 
   // Cart & Storefront Helpers
@@ -1104,21 +923,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const writeAudit = async (action: string, entityType: string, entityId: string, summaryFa: string) => {
-    const id = `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    if (!authUser || !isAdmin) {
-      const localEntry: AuditLogEntry = {
-        id,
-        actorUid: authUser?.uid ?? 'preview_guest',
-        actorEmail: authUser?.email ?? 'preview@dentalmarket.ir',
-        action,
-        entityType,
-        entityId,
-        summaryFa: `[پیش‌نمایش] ${summaryFa}`,
-        createdAt: new Date().toISOString(),
-      };
-      setAuditLogs((prev) => [localEntry, ...prev]);
-      return;
-    }
+    if (!authUser || !isAdmin) return;
+    const id = `aud_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
     try {
       await setDoc(doc(db, 'auditLogs', id), {
         id,
@@ -1135,7 +941,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // --- Orders & Checkout (Authenticated OR Guest Checkout) ---
+  // --- Orders & Checkout (Authoritative Server Verification + Authenticated Firestore) ---
   const placeOrder: StoreContextValue['placeOrder'] = async (payload) => {
     if (cart.length === 0) return null;
     if (userProfile?.isBlocked) {
@@ -1143,69 +949,85 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
 
-    const items: OrderItem[] = [];
-    let subtotal = 0;
-    let discountTotal = 0;
+    const shippingMethodId = payload.shippingMethodId || payload.shippingMethod || 'courier_tehran';
 
-    for (const ci of cart) {
-      const product = products.find((p) => p.id === ci.productId);
-      const variant = product?.variants.find((v) => v.id === ci.variantId);
-      if (!product || !variant) continue;
-      const resolved = resolveVariantPrice(product, variant, {
-        customerGroup,
-        quantity: ci.quantity,
-        campaigns,
-        settings,
-        contractPrices,
-        userId: authUser?.uid,
-      });
-      if (resolved.state !== 'fixed' || !resolved.unitPrice) continue;
-
-      const lineTotal = resolved.unitPrice * ci.quantity;
-      const lineDisc = resolved.originalPrice ? (resolved.originalPrice - resolved.unitPrice) * ci.quantity : 0;
-      subtotal += (resolved.originalPrice ?? resolved.unitPrice) * ci.quantity;
-      discountTotal += lineDisc;
-
-      items.push({
-        productId: product.id,
-        variantId: variant.id,
-        sku: variant.sku,
-        titleFa: product.titleFa,
-        variantLabelFa: variant.labelFa,
-        quantity: ci.quantity,
-        unitPrice: resolved.unitPrice,
-        discountAmount: lineDisc,
-        lineTotal,
-        priceSource: resolved.priceSource,
-        batchNo: resolved.nearestBatchNo ?? undefined,
-      });
-    }
-
-    if (items.length === 0) {
-      pushToast('هیچ کالای قابل خریدی در سبد یافت نشد.', 'error');
-      return null;
-    }
-
-    let couponDiscount = 0;
-    let effectiveShipping = payload.shippingTotal;
-    if (payload.couponCode) {
-      const coupon = coupons.find((c) => c.code.toUpperCase() === payload.couponCode!.trim().toUpperCase() && c.isActive);
-      if (coupon && subtotal - discountTotal >= coupon.minOrderAmount) {
-        if (coupon.type === 'free_shipping') {
-          effectiveShipping = 0;
-        } else if (coupon.type === 'percent') {
-          couponDiscount = Math.round(((subtotal - discountTotal) * coupon.value) / 100);
-          if (coupon.maxDiscountAmount) couponDiscount = Math.min(couponDiscount, coupon.maxDiscountAmount);
-        } else {
-          couponDiscount = coupon.value;
+    // 1. Guest OR Mobile-OTP Authenticated Checkout -> Authoritative server calculation & creation
+    if (!authUser) {
+      try {
+        const headers = await resolveAuthHeaders(null, mobileAndRfq.mobileSessionToken);
+        const res = await fetch('/api/orders/guest', {
+          method: 'POST',
+          headers,
+          credentials: 'include',
+          body: JSON.stringify({
+            customerName: payload.customerName,
+            customerMobile: payload.customerMobile,
+            items: cart,
+            shippingMethod: shippingMethodId,
+            paymentMethod: payload.paymentMethod,
+            couponCode: payload.couponCode || '',
+            shippingAddress: payload.address,
+            customerNote: payload.customerNote,
+            verifiedToken: payload.verifiedToken,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.ok || !data.order) {
+          pushToast(data?.message || 'ثبت سفارش با خطا مواجه شد.', 'error');
+          return null;
         }
+        const serverOrder = data.order as Order;
+        setRawGuestOrders((prev) => [serverOrder, ...prev.filter((o) => o.id !== serverOrder.id)]);
+        await mobileAndRfq.refreshMobileOrders();
+        trackEcommerceEvent('begin_checkout', {
+          orderNo: serverOrder.orderNo,
+          grandTotal: serverOrder.grandTotal,
+          items: serverOrder.items.length,
+        });
+        clearCart();
+        pushToast(`سفارش ${serverOrder.orderNo} با محاسبه قطعی سرور ثبت شد.`, 'success');
+        return serverOrder;
+      } catch {
+        pushToast('ارتباط با سرور برای تایید قیمت و ثبت سفارش برقرار نشد.', 'error');
+        return null;
       }
     }
 
-    discountTotal += couponDiscount;
-    const netItems = Math.max(0, subtotal - discountTotal);
-    const taxTotal = Math.round((netItems * settings.taxRatePercent) / 100);
-    const grandTotal = netItems + effectiveShipping + taxTotal;
+    // 2. Firebase Authenticated Checkout -> Validate via authoritative /api/checkout/calculate first
+    let calcItems: OrderItem[] = [];
+    let subtotal = 0;
+    let discountTotal = 0;
+    let effectiveShipping = payload.shippingTotal;
+    let taxTotal = 0;
+    let grandTotal = 0;
+
+    try {
+      const calcRes = await fetch('/api/checkout/calculate', {
+        method: 'POST',
+        headers: await resolveAuthHeaders(authUser, mobileAndRfq.mobileSessionToken),
+        body: JSON.stringify({
+          items: cart,
+          customerGroup,
+          couponCode: payload.couponCode || '',
+          shippingMethod: shippingMethodId,
+          userId: authUser.uid,
+        }),
+      });
+      const calcJson = await calcRes.json();
+      if (!calcRes.ok || !calcJson?.ok) {
+        pushToast(calcJson?.message || 'اعتبارسنجی سبد خرید ناموفق بود.', 'error');
+        return null;
+      }
+      calcItems = calcJson.items as OrderItem[];
+      subtotal = calcJson.subtotal;
+      discountTotal = calcJson.discountTotal;
+      effectiveShipping = calcJson.shippingTotal;
+      taxTotal = calcJson.taxTotal;
+      grandTotal = calcJson.grandTotal;
+    } catch {
+      pushToast('خطا در محاسبه قطعی سفارش روی سرور.', 'error');
+      return null;
+    }
 
     const isCreditFlow =
       payload.paymentMethod === 'credit_request' ||
@@ -1219,8 +1041,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const orderBase: Order = {
       id: orderId,
       orderNo,
-      userId: authUser ? authUser.uid : `guest_${payload.customerMobile.replace(/\D/g, '')}`,
-      isGuest: !authUser,
+      userId: authUser.uid,
+      isGuest: false,
       customerName: payload.customerName,
       customerMobile: payload.customerMobile,
       customerGroup,
@@ -1236,38 +1058,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       shippingMethod: payload.shippingMethod,
       shippingAddress: payload.address,
       ...(payload.customerNote ? { customerNote: payload.customerNote } : {}),
-      items,
+      items: calcItems,
       createdAt: now,
       updatedAt: now,
     };
 
-    trackEcommerceEvent('begin_checkout', { orderNo, grandTotal, items: items.length });
-
-    // Guest checkout flow via server endpoint + local persistence
-    if (!authUser) {
-      try {
-        await fetch('/api/orders/guest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order: orderBase }),
-        });
-      } catch {
-        // Fallback already stored in localStorage below
-      }
-      setGuestOrders((prev) => [orderBase, ...prev]);
-      clearCart();
-      pushToast(`سفارش مهمان ${orderNo} با موفقیت ثبت شد.`, 'success');
-      return orderBase;
-    }
-
-    const orderDoc = {
-      ...orderBase,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
+    trackEcommerceEvent('begin_checkout', { orderNo, grandTotal, items: calcItems.length });
 
     try {
-      await setDoc(doc(db, 'orders', orderId), orderDoc);
+      await setDoc(doc(db, 'orders', orderId), {
+        ...orderBase,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
       if (isCreditFlow) {
         const planId = `pp_${Date.now()}`;
         const planType: PaymentPlan['type'] =
@@ -1300,76 +1103,108 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const verifyOnlinePayment = async (orderId: string, gateway = 'zarinpal') => {
-    const targetOrder = orders.find((o) => o.id === orderId) || guestOrders.find((o) => o.id === orderId);
-    const amount = targetOrder?.grandTotal ?? 0;
+  const verifyOnlinePayment = async (orderId: string, gateway = 'zarinpal'): Promise<boolean> => {
+    const targetOrder =
+      orders.find((o) => o.id === orderId) ||
+      guestOrders.find((o) => o.id === orderId) ||
+      mobileOrders.find((o) => o.id === orderId);
     const orderNo = targetOrder?.orderNo ?? orderId;
+
     try {
+      const headers = await resolveAuthHeaders(authUser, mobileAndRfq.mobileSessionToken);
       const initRes = await fetch('/api/payments/initiate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        credentials: 'include',
         body: JSON.stringify({
           orderId,
           orderNo,
-          amount,
           gateway,
           idempotencyKey: `IDEMP-${orderId}`,
         }),
       });
       const initJson = await initRes.json();
+      if (!initRes.ok || !initJson?.ok) {
+        pushToast(initJson?.message || 'ایجاد نشست پرداخت درگاه ناموفق بود.', 'error');
+        return false;
+      }
+
       const authority = initJson?.session?.authority;
+      const sandboxToken = initJson?.sandboxToken;
+
+      if (initJson.mode === 'live' && initJson.redirectUrl && !sandboxToken) {
+        pushToast('در حال انتقال به درگاه پرداخت بانکی...', 'info');
+        window.location.href = String(initJson.redirectUrl);
+        return false;
+      }
+
       const verRes = await fetch('/api/payments/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ authority, status: 'OK' }),
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ authority, status: 'OK', sandboxToken }),
       });
       const verJson = await verRes.json();
+      if (!verRes.ok || !verJson?.ok) {
+        pushToast(verJson?.message || 'تایید تراکنش پرداخت بانکی ناموفق بود.', 'error');
+        return false;
+      }
 
-      if (targetOrder?.isGuest) {
-        setGuestOrders((prev) =>
-          prev.map((o) => (o.id === orderId ? { ...o, status: 'paid', paymentStatus: 'paid', updatedAt: new Date().toISOString() } : o))
-        );
-      } else if (authUser) {
-        await updateDoc(doc(db, 'orders', orderId), {
-          status: 'paid',
-          paymentStatus: 'paid',
-          updatedAt: serverTimestamp(),
-        });
-        if (verJson?.ledgerEntry && isAdmin) {
-          await setDoc(doc(db, 'paymentLedger', verJson.ledgerEntry.id), verJson.ledgerEntry);
+      setVerifiedPayments((prev) => ({
+        ...prev,
+        [orderId]: {
+          refId: verJson.refId ? String(verJson.refId) : undefined,
+          paidAt: new Date().toISOString(),
+        },
+      }));
+
+      setRawGuestOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId ? { ...o, status: 'paid', paymentStatus: 'paid', updatedAt: new Date().toISOString() } : o
+        )
+      );
+
+      if (verJson?.ledgerEntry) {
+        setPaymentLedger((prev) => upsertById(prev, verJson.ledgerEntry as PaymentLedgerEntry));
+        if (isAdmin && authUser) {
+          await setDoc(doc(db, 'paymentLedger', verJson.ledgerEntry.id), verJson.ledgerEntry).catch(() => {});
         }
       }
-      if (verJson?.ledgerEntry) {
-        setPaymentLedger((prev) => [verJson.ledgerEntry as PaymentLedgerEntry, ...prev]);
-      }
-      trackEcommerceEvent('purchase', { transaction_id: orderNo, value: amount, currency: 'IRR' });
+
+      trackEcommerceEvent('purchase', {
+        transaction_id: orderNo,
+        value: targetOrder?.grandTotal ?? 0,
+        currency: 'IRR',
+      });
       pushToast(`پرداخت آنلاین با کد رهگیری ${verJson?.refId || 'تاییدشده'} ثبت شد.`, 'success');
-    } catch (error) {
-      if (authUser) {
-        handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
-      } else {
-        pushToast('خطا در تایید تراکنش بانکی.', 'error');
-      }
+      return true;
+    } catch {
+      pushToast('خطا در تایید تراکنش بانکی.', 'error');
+      return false;
     }
   };
 
   const lookupGuestOrder = async (orderNo: string, mobile: string): Promise<Order | null> => {
-    const localMatch = guestOrders.find((o) => o.orderNo === orderNo.trim());
-    if (localMatch) return localMatch;
     try {
-      const res = await fetch(`/api/orders/track?orderNo=${encodeURIComponent(orderNo.trim())}&mobile=${encodeURIComponent(mobile.trim())}`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      return (data.order as Order) ?? null;
+      const res = await fetch(
+        `/api/orders/track?orderNo=${encodeURIComponent(orderNo.trim())}&mobile=${encodeURIComponent(mobile.trim())}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.order) return data.order as Order;
+      }
     } catch {
-      return null;
+      // Fallback below
     }
+    return guestOrders.find((o) => o.orderNo === orderNo.trim()) ?? null;
   };
 
   const cancelOwnOrder = async (orderId: string) => {
-    const guestMatch = guestOrders.find((o) => o.id === orderId);
+    const guestMatch = rawGuestOrders.find((o) => o.id === orderId);
     if (guestMatch) {
-      setGuestOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'cancelled', updatedAt: new Date().toISOString() } : o)));
+      setRawGuestOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status: 'cancelled', updatedAt: new Date().toISOString() } : o))
+      );
       pushToast('سفارش لغو شد.', 'info');
       return;
     }
@@ -1387,12 +1222,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const requestProforma: StoreContextValue['requestProforma'] = async (payload) => {
     if (!authUser) {
-      pushToast('برای ثبت پیش‌فاکتور رسمی لطفاً وارد حساب کاربری شوید.', 'error');
+      pushToast('برای ثبت پیش‌فاکتور رسمی لطفاً با حساب گوگل وارد شوید.', 'error');
       return null;
     }
     const id = `prf_${Date.now()}`;
     const proformaNo = `PF-1405-${String(Date.now()).slice(-4)}`;
-    const shareToken = `pf-${Math.random().toString(36).slice(2, 10)}`;
+    const shareToken = `pf-${crypto.randomUUID().slice(0, 12)}`;
     const subtotal = payload.items.reduce((acc, i) => acc + i.lineTotal, 0);
     const taxTotal = Math.round((subtotal * settings.taxRatePercent) / 100);
     const grandTotal = subtotal + taxTotal;
@@ -1442,7 +1277,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const submitB2BVerification: StoreContextValue['submitB2BVerification'] = async (payload) => {
     if (!authUser) {
-      pushToast('ابتدا وارد حساب کاربری شوید.', 'error');
+      pushToast('ابتدا وارد حساب کاربری گوگل شوید.', 'error');
       return;
     }
     const id = `b2b_${Date.now()}`;
@@ -1660,6 +1495,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const replyTicket = async (ticketId: string, body: string, isStaff: boolean) => {
     const ticket = tickets.find((t) => t.id === ticketId);
     if (!ticket) return;
+    if (isStaff && !isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     const nextMessages = [
       ...ticket.messages,
       {
@@ -1670,15 +1509,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       },
     ];
     const nextStatus: SupportTicket['status'] = isStaff ? 'pending_customer' : 'pending_staff';
-    if (!isAdmin && isStaff) {
-      setTickets((prev) =>
-        prev.map((t) =>
-          t.id === ticketId ? { ...t, messages: nextMessages, status: nextStatus, updatedAt: new Date().toISOString() } : t
-        )
-      );
-      pushToast('پاسخ در حالت پیش‌نمایش موقت ثبت شد (برای ذخیره دائمی با حساب مدیر وارد شوید).', 'info');
-      return;
-    }
     try {
       await updateDoc(doc(db, 'tickets', ticketId), {
         messages: nextMessages,
@@ -1724,28 +1554,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // --- Admin Mutations (with safe local-only preview fallback when !isAdmin) ---
-  const PREVIEW_TOAST = 'تغییر در حالت پیش‌نمایش موقت اعمال شد (برای ذخیره دائمی با حساب مدیر وارد شوید).';
-
+  // --- Strict Admin Mutations (Fail Closed: Zero Local Fallback When !isAdmin) ---
   const upsertProduct = async (product: Product, costMap?: Record<string, number>) => {
-    const cleaned = stripCostFromProduct({ ...product, updatedAt: new Date().toISOString() });
     if (!isAdmin) {
-      setProducts((prev) => upsertById(prev, cleaned));
-      if (costMap && Object.keys(costMap).length > 0) {
-        const costRec: ProductCostRecord = {
-          productId: cleaned.id,
-          variantCosts: costMap,
-          updatedAt: new Date().toISOString(),
-        };
-        setProductCosts((prev) => {
-          const exists = prev.some((c) => c.productId === cleaned.id);
-          return exists ? prev.map((c) => (c.productId === cleaned.id ? costRec : c)) : [costRec, ...prev];
-        });
-      }
-      await writeAudit('product.upsert', 'product', cleaned.id, `ذخیره/ویرایش محصول «${cleaned.titleFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const cleaned = stripCostFromProduct({ ...product, updatedAt: new Date().toISOString() });
     try {
       await setDoc(doc(db, 'products', cleaned.id), cleaned);
       if (costMap && Object.keys(costMap).length > 0) {
@@ -1764,15 +1579,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteProduct = async (productId: string) => {
-    markIdDeleted(productId);
-    setProducts((prev) => prev.filter((p) => p.id !== productId));
     if (!isAdmin) {
-      await writeAudit('product.delete', 'product', productId, `حذف محصول ${productId}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
       await deleteDoc(doc(db, 'products', productId)).catch(() => {});
+      markIdDeleted(productId);
+      setProducts((prev) => prev.filter((p) => p.id !== productId));
       await writeAudit('product.delete', 'product', productId, `حذف محصول ${productId}`);
       pushToast('محصول حذف شد.', 'info');
     } catch (error) {
@@ -1781,13 +1595,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertCategory = async (category: Category) => {
-    const updated = { ...category, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setCategories((prev) => upsertById(prev, updated));
-      await writeAudit('category.upsert', 'category', updated.id, `ویرایش دسته‌بندی «${updated.nameFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const updated = { ...category, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'categories', updated.id), updated);
       await writeAudit('category.upsert', 'category', updated.id, `ویرایش دسته‌بندی «${updated.nameFa}»`);
@@ -1798,19 +1610,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteCategory = async (categoryId: string) => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     if (products.some((p) => p.primaryCategoryId === categoryId) || categories.some((c) => c.parentId === categoryId)) {
       pushToast('این دسته‌بندی دارای زیرمجموعه یا کالای فعال است و نمی‌توان آن را حذف کرد.', 'error');
       return;
     }
-    markIdDeleted(categoryId);
-    setCategories((prev) => prev.filter((c) => c.id !== categoryId));
-    if (!isAdmin) {
-      await writeAudit('category.delete', 'category', categoryId, `حذف دسته‌بندی ${categoryId}`);
-      pushToast(PREVIEW_TOAST, 'info');
-      return;
-    }
     try {
       await deleteDoc(doc(db, 'categories', categoryId)).catch(() => {});
+      markIdDeleted(categoryId);
+      setCategories((prev) => prev.filter((c) => c.id !== categoryId));
       await writeAudit('category.delete', 'category', categoryId, `حذف دسته‌بندی ${categoryId}`);
       pushToast('دسته‌بندی حذف شد.', 'info');
     } catch (error) {
@@ -1819,13 +1630,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertBrand = async (brand: Brand) => {
-    const updated = { ...brand, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setBrands((prev) => upsertById(prev, updated));
-      await writeAudit('brand.upsert', 'brand', updated.id, `ویرایش برند «${updated.nameFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const updated = { ...brand, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'brands', updated.id), updated);
       await writeAudit('brand.upsert', 'brand', updated.id, `ویرایش برند «${updated.nameFa}»`);
@@ -1836,15 +1645,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteBrand = async (brandId: string) => {
-    markIdDeleted(brandId);
-    setBrands((prev) => prev.filter((b) => b.id !== brandId));
     if (!isAdmin) {
-      await writeAudit('brand.delete', 'brand', brandId, `حذف برند ${brandId}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
       await deleteDoc(doc(db, 'brands', brandId)).catch(() => {});
+      markIdDeleted(brandId);
+      setBrands((prev) => prev.filter((b) => b.id !== brandId));
       await writeAudit('brand.delete', 'brand', brandId, `حذف برند ${brandId}`);
       pushToast('برند حذف شد.', 'info');
     } catch (error) {
@@ -1853,13 +1661,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertAttribute = async (attr: AttributeDef) => {
-    const updated = { ...attr, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setAttributes((prev) => upsertById(prev, updated));
-      await writeAudit('attribute.upsert', 'attribute', updated.id, `ویرایش ویژگی «${updated.labelFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const updated = { ...attr, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'attributes', updated.id), updated);
       await writeAudit('attribute.upsert', 'attribute', updated.id, `ویرایش ویژگی «${updated.labelFa}»`);
@@ -1870,14 +1676,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteAttribute = async (attrId: string) => {
-    markIdDeleted(attrId);
-    setAttributes((prev) => prev.filter((a) => a.id !== attrId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
       await deleteDoc(doc(db, 'attributes', attrId)).catch(() => {});
+      markIdDeleted(attrId);
+      setAttributes((prev) => prev.filter((a) => a.id !== attrId));
       pushToast('ویژگی حذف شد.', 'info');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `attributes/${attrId}`);
@@ -1885,13 +1691,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertBundle = async (bundle: Bundle) => {
-    const updated = { ...bundle, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setBundles((prev) => upsertById(prev, updated));
-      await writeAudit('bundle.upsert', 'bundle', updated.id, `بروزرسانی پکیج «${updated.nameFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const updated = { ...bundle, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'bundles', updated.id), updated);
       await writeAudit('bundle.upsert', 'bundle', updated.id, `بروزرسانی پکیج «${updated.nameFa}»`);
@@ -1902,14 +1706,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteBundle = async (bundleId: string) => {
-    markIdDeleted(bundleId);
-    setBundles((prev) => prev.filter((b) => b.id !== bundleId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
       await deleteDoc(doc(db, 'bundles', bundleId)).catch(() => {});
+      markIdDeleted(bundleId);
+      setBundles((prev) => prev.filter((b) => b.id !== bundleId));
       pushToast('پکیج حذف شد.', 'info');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `bundles/${bundleId}`);
@@ -1917,13 +1721,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertCampaign = async (campaign: Campaign) => {
-    const updated = { ...campaign, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setCampaigns((prev) => upsertById(prev, updated));
-      await writeAudit('campaign.upsert', 'campaign', updated.id, `بروزرسانی کمپین «${updated.nameFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const updated = { ...campaign, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'campaigns', updated.id), updated);
       await writeAudit('campaign.upsert', 'campaign', updated.id, `بروزرسانی کمپین «${updated.nameFa}»`);
@@ -1934,15 +1736,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteCampaign = async (campaignId: string) => {
-    markIdDeleted(campaignId);
-    setCampaigns((prev) => prev.filter((c) => c.id !== campaignId));
     if (!isAdmin) {
-      await writeAudit('campaign.delete', 'campaign', campaignId, `حذف کمپین ${campaignId}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
       await deleteDoc(doc(db, 'campaigns', campaignId)).catch(() => {});
+      markIdDeleted(campaignId);
+      setCampaigns((prev) => prev.filter((c) => c.id !== campaignId));
       await writeAudit('campaign.delete', 'campaign', campaignId, `حذف کمپین ${campaignId}`);
       pushToast('کمپین حذف شد.', 'info');
     } catch (error) {
@@ -1952,9 +1753,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const upsertContractPrice = async (contract: ContractPrice) => {
     if (!isAdmin) {
-      setContractPrices((prev) => upsertById(prev, contract));
-      await writeAudit('contract.upsert', 'contractPrice', contract.id, `تنظیم قرارداد قیمت ${contract.customerName}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -1968,8 +1767,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const deleteContractPrice = async (contractId: string) => {
     if (!isAdmin) {
-      setContractPrices((prev) => prev.filter((c) => c.id !== contractId));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -1986,6 +1784,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     percent,
     roundingStep,
   }) => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     const targets = products.filter((p) => {
       if (scopeType === 'category' && scopeId) return p.primaryCategoryId === scopeId || p.categoryIds.includes(scopeId);
       if (scopeType === 'brand' && scopeId) return p.brandId === scopeId;
@@ -2019,12 +1821,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
     setBulkPriceUndo({ scopeLabel: `${scopeType}:${scopeId || 'all'} (${percent}%)`, previousPrices });
     setProducts((prev) => prev.map((p) => updatedMap.get(p.id) ?? p));
-    if (isAdmin && ops.length > 0) await commitInChunks(ops, 250);
+    if (ops.length > 0) await commitInChunks(ops, 250);
     await writeAudit('pricing.bulk_adjust', 'products', scopeId || 'all', `اصلاح گروهی قیمت ${percent}٪ (${targets.length} کالا)`);
-    pushToast(isAdmin ? `قیمت ${targets.length} محصول بروزرسانی شد (امکان بازگشت وجود دارد).` : PREVIEW_TOAST, isAdmin ? 'success' : 'info');
+    pushToast(`قیمت ${targets.length} محصول بروزرسانی شد (امکان بازگشت وجود دارد).`, 'success');
   };
 
   const undoBulkPriceAdjustment = async () => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     if (!bulkPriceUndo) return;
     const mapByProd = new Map<string, Map<string, number | null>>();
     bulkPriceUndo.previousPrices.forEach((rec) => {
@@ -2046,9 +1852,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return nextP;
       })
     );
-    if (isAdmin && ops.length > 0) await commitInChunks(ops, 250);
+    if (ops.length > 0) await commitInChunks(ops, 250);
     setBulkPriceUndo(null);
-    pushToast(isAdmin ? 'تغییرات قیمت گروهی به حالت قبل بازگردانده شد.' : PREVIEW_TOAST, 'info');
+    pushToast('تغییرات قیمت گروهی به حالت قبل بازگردانده شد.', 'info');
   };
 
   const adjustVariantStock = async (
@@ -2059,6 +1865,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     warehouseCode = 'TEH-CENTRAL',
     type: StockMovement['type'] = 'adjust'
   ) => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     const product = products.find((p) => p.id === productId);
     if (!product) return;
     const variant = product.variants.find((v) => v.id === variantId);
@@ -2078,16 +1888,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       delta,
       type,
       reason,
-      actorEmail: authUser?.email ?? 'preview@dentalmarket.ir',
+      actorEmail: authUser?.email ?? 'admin@dentalmarket.ir',
       createdAt: now,
     };
-    if (!isAdmin) {
-      setProducts((prev) => prev.map((p) => (p.id === productId ? updatedProd : p)));
-      setStockMovements((prev) => [movement, ...prev]);
-      await writeAudit('inventory.adjust', 'product', productId, `تعدیل موجودی (${delta > 0 ? `+${delta}` : delta}): ${reason}`);
-      pushToast(PREVIEW_TOAST, 'info');
-      return;
-    }
     try {
       await setDoc(doc(db, 'products', productId), updatedProd);
       await setDoc(doc(db, 'stockMovements', mvId), movement);
@@ -2104,6 +1907,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     batchId: string,
     specialPrice: number
   ) => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     const product = products.find((p) => p.id === productId);
     if (!product) return;
     const nextVariants = product.variants.map((v) => {
@@ -2114,12 +1921,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       };
     });
     const updated = stripCostFromProduct({ ...product, variants: nextVariants, updatedAt: new Date().toISOString() });
-    if (!isAdmin) {
-      setProducts((prev) => prev.map((p) => (p.id === productId ? updated : p)));
-      await writeAudit('inventory.near_expiry_price', 'product', productId, `تنظیم قیمت ویژه انقضای نزدیک: ${specialPrice} تومان`);
-      pushToast(PREVIEW_TOAST, 'info');
-      return;
-    }
     try {
       await setDoc(doc(db, 'products', productId), updated);
       await writeAudit('inventory.near_expiry_price', 'product', productId, `تنظیم قیمت ویژه انقضای نزدیک: ${specialPrice} تومان`);
@@ -2131,8 +1932,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const markStockNotificationSent = async (id: string) => {
     if (!isAdmin) {
-      setStockNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, status: 'notified' } : n)));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2145,8 +1945,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const upsertWarehouse = async (warehouse: Warehouse) => {
     if (!isAdmin) {
-      setWarehouses((prev) => upsertById(prev, warehouse));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2159,8 +1958,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const deleteWarehouse = async (id: string) => {
     if (!isAdmin) {
-      setWarehouses((prev) => prev.filter((w) => w.id !== id));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2173,8 +1971,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const upsertSupplier = async (supplier: Supplier) => {
     if (!isAdmin) {
-      setSuppliers((prev) => upsertById(prev, supplier));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2187,8 +1984,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const deleteSupplier = async (id: string) => {
     if (!isAdmin) {
-      setSuppliers((prev) => prev.filter((s) => s.id !== id));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2201,22 +1997,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateOrderStatus = async (orderId: string, status: OrderStatus, trackingCode?: string) => {
     if (!isAdmin) {
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === orderId
-            ? {
-                ...o,
-                status,
-                ...(status === 'paid' ? { paymentStatus: 'paid' as const } : {}),
-                ...(status === 'returned' ? { paymentStatus: 'refunded' as const } : {}),
-                ...(trackingCode ? { trackingCode } : {}),
-                updatedAt: new Date().toISOString(),
-              }
-            : o
-        )
-      );
-      await writeAudit('order.status_change', 'order', orderId, `تغییر وضعیت سفارش به ${status}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2236,6 +2017,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const createManualOrder: StoreContextValue['createManualOrder'] = async (payload) => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return null;
+    }
     const subtotal = payload.items.reduce((s, i) => s + i.lineTotal, 0);
     const taxTotal = Math.round((subtotal * settings.taxRatePercent) / 100);
     const grandTotal = subtotal + payload.shippingTotal + taxTotal;
@@ -2264,12 +2049,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       createdAt: now,
       updatedAt: now,
     };
-    if (!isAdmin) {
-      setOrders((prev) => [orderObj, ...prev]);
-      await writeAudit('order.manual_create', 'order', orderId, `ثبت سفارش تلفنی/دستی ${orderNo}`);
-      pushToast(PREVIEW_TOAST, 'info');
-      return orderObj;
-    }
     try {
       await setDoc(doc(db, 'orders', orderId), {
         ...orderObj,
@@ -2286,6 +2065,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const issueInvoice = async (orderId: string, isOfficial = true) => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     const ord = orders.find((o) => o.id === orderId);
     if (!ord) return;
     const customer = usersList.find((u) => u.uid === ord.userId);
@@ -2307,12 +2090,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       status: 'issued',
       issuedAt: new Date().toISOString(),
     };
-    if (!isAdmin) {
-      setInvoices((prev) => [rec, ...prev]);
-      await writeAudit('invoice.issue', 'invoice', id, `صدور فاکتور ${rec.invoiceNo} برای سفارش ${ord.orderNo}`);
-      pushToast(PREVIEW_TOAST, 'info');
-      return;
-    }
     try {
       await setDoc(doc(db, 'invoices', id), rec);
       await writeAudit('invoice.issue', 'invoice', id, `صدور فاکتور ${rec.invoiceNo} برای سفارش ${ord.orderNo}`);
@@ -2324,9 +2101,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const voidInvoice = async (invoiceId: string) => {
     if (!isAdmin) {
-      setInvoices((prev) => prev.map((inv) => (inv.id === invoiceId ? { ...inv, status: 'voided' } : inv)));
-      await writeAudit('invoice.void', 'invoice', invoiceId, `ابطال فاکتور ${invoiceId}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2340,21 +2115,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const recordPaymentEntry = async (entry: PaymentLedgerEntry) => {
     if (!isAdmin) {
-      setPaymentLedger((prev) => upsertById(prev, entry));
-      if (entry.status === 'verified') {
-        setOrders((prev) => prev.map((o) => (o.id === entry.orderId ? { ...o, paymentStatus: 'paid', status: 'paid' } : o)));
-      } else if (entry.status === 'refunded') {
-        setOrders((prev) => prev.map((o) => (o.id === entry.orderId ? { ...o, paymentStatus: 'refunded' } : o)));
-      }
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
       await setDoc(doc(db, 'paymentLedger', entry.id), entry);
       if (entry.status === 'verified') {
-        await updateDoc(doc(db, 'orders', entry.orderId), { paymentStatus: 'paid', status: 'paid', updatedAt: serverTimestamp() }).catch(() => {});
+        await updateDoc(doc(db, 'orders', entry.orderId), {
+          paymentStatus: 'paid',
+          status: 'paid',
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
       } else if (entry.status === 'refunded') {
-        await updateDoc(doc(db, 'orders', entry.orderId), { paymentStatus: 'refunded', updatedAt: serverTimestamp() }).catch(() => {});
+        await updateDoc(doc(db, 'orders', entry.orderId), {
+          paymentStatus: 'refunded',
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
       }
       pushToast('سند پرداخت در دفترکل مالی ثبت شد.', 'success');
     } catch (error) {
@@ -2364,11 +2140,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateReturnStatus = async (id: string, status: ReturnRequest['status'], adminNote?: string) => {
     if (!isAdmin) {
-      setReturns((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status, ...(adminNote ? { adminNote } : {}), updatedAt: new Date().toISOString() } : r))
-      );
-      await writeAudit('return.update', 'return', id, `تغییر وضعیت مرجوعی به ${status}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2389,20 +2161,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     status: 'approved' | 'rejected' | 'needs_info',
     rejectReason?: string
   ) => {
-    const item = b2bVerifications.find((b) => b.id === id);
-    if (!item) return;
     if (!isAdmin) {
-      setB2BVerifications((prev) =>
-        prev.map((b) =>
-          b.id === id
-            ? { ...b, status, ...(rejectReason ? { rejectReason } : {}), reviewedBy: 'preview', updatedAt: new Date().toISOString() }
-            : b
-        )
-      );
-      await writeAudit('b2b.review', 'b2bVerification', id, `بررسی حساب B2B (${item.applicantName}): ${status}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const item = b2bVerifications.find((b) => b.id === id);
+    if (!item) return;
     try {
       await updateDoc(doc(db, 'b2bVerifications', id), {
         status,
@@ -2428,7 +2192,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateUserAdmin: StoreContextValue['updateUserAdmin'] = async (uid, patch) => {
     if (!isAdmin) {
-      pushToast('برای تغییر دسترسی پرسنل یا اطلاعات کاربران، ورود واقعی با حساب مدیر الزامی است.', 'error');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2444,13 +2208,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertProformaAdmin = async (proforma: ProformaInvoice) => {
-    const next = { ...proforma, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setProformas((prev) => upsertById(prev, next));
-      await writeAudit('proforma.upsert', 'proforma', proforma.id, `بروزرسانی پیش‌فاکتور ${proforma.proformaNo}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const next = { ...proforma, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'proformas', proforma.id), next);
       await writeAudit('proforma.upsert', 'proforma', proforma.id, `بروزرسانی پیش‌فاکتور ${proforma.proformaNo}`);
@@ -2461,6 +2223,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const convertProformaToOrder = async (proformaId: string) => {
+    if (!isAdmin) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return;
+    }
     const pf = proformas.find((p) => p.id === proformaId);
     if (!pf) return;
     const orderId = `ord_${Date.now()}`;
@@ -2488,13 +2254,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       createdAt: now,
       updatedAt: now,
     };
-    if (!isAdmin) {
-      setOrders((prev) => [orderObj, ...prev]);
-      setProformas((prev) => prev.map((p) => (p.id === proformaId ? { ...p, status: 'converted', orderId, updatedAt: now } : p)));
-      await writeAudit('proforma.convert', 'proforma', proformaId, `تبدیل پیش‌فاکتور ${pf.proformaNo} به سفارش ${orderNo}`);
-      pushToast(PREVIEW_TOAST, 'info');
-      return;
-    }
     try {
       await setDoc(doc(db, 'orders', orderId), {
         ...orderObj,
@@ -2515,13 +2274,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const updatePaymentPlanStatus = async (planId: string, status: PaymentPlan['status'], decisionNote?: string) => {
     if (!isAdmin) {
-      setPaymentPlans((prev) =>
-        prev.map((pp) =>
-          pp.id === planId ? { ...pp, status, ...(decisionNote ? { decisionNote } : {}), updatedAt: new Date().toISOString() } : pp
-        )
-      );
-      await writeAudit('payment_plan.update', 'paymentPlan', planId, `تغییر وضعیت پرونده اعتبار/چک به ${status}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2539,9 +2292,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const moderateReview = async (reviewId: string, status: 'approved' | 'rejected') => {
     if (!isAdmin) {
-      setReviews((prev) => prev.map((r) => (r.id === reviewId ? { ...r, status } : r)));
-      await writeAudit('review.moderate', 'review', reviewId, `تغییر وضعیت دیدگاه به ${status}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2555,13 +2306,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const answerQuestion = async (questionId: string, answerBody: string) => {
     if (!isAdmin) {
-      setQuestions((prev) =>
-        prev.map((q) =>
-          q.id === questionId ? { ...q, answerBody, answeredBy: 'کارشناس تخصصی دنتال‌مارکت', status: 'approved' } : q
-        )
-      );
-      await writeAudit('question.answer', 'question', questionId, 'پاسخ و انتشار پرسش محصول');
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2579,10 +2324,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateStockRequestStatus = async (id: string, status: StockRequest['status'], adminNote?: string) => {
     if (!isAdmin) {
-      setStockRequests((prev) =>
-        prev.map((sr) => (sr.id === id ? { ...sr, status, ...(adminNote ? { adminNote } : {}) } : sr))
-      );
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2598,8 +2340,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateConsultationStatus = async (id: string, status: ConsultationRequest['status']) => {
     if (!isAdmin) {
-      setConsultationRequests((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2611,13 +2352,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertAgent = async (agent: AgentBranch) => {
-    const next = { ...agent, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setAgents((prev) => upsertById(prev, next));
-      await writeAudit('agent.upsert', 'agent', next.id, `ثبت/ویرایش نمایندگی «${next.nameFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const next = { ...agent, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'agents', next.id), next);
       await writeAudit('agent.upsert', 'agent', next.id, `ثبت/ویرایش نمایندگی «${next.nameFa}»`);
@@ -2628,24 +2367,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteAgent = async (agentId: string) => {
-    markIdDeleted(agentId);
-    setAgents((prev) => prev.filter((a) => a.id !== agentId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    markIdDeleted(agentId);
+    setAgents((prev) => prev.filter((a) => a.id !== agentId));
     await deleteDoc(doc(db, 'agents', agentId)).catch(() => {});
     pushToast('نمایندگی حذف شد.', 'info');
   };
 
   const upsertBlogPost = async (post: BlogPost) => {
-    const next = { ...post, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setBlogPosts((prev) => upsertById(prev, next));
-      await writeAudit('blog.upsert', 'blogPost', next.id, `ویرایش مقاله «${next.titleFa}»`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const next = { ...post, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'blogPosts', next.id), next);
       await writeAudit('blog.upsert', 'blogPost', next.id, `ویرایش مقاله «${next.titleFa}»`);
@@ -2656,21 +2393,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteBlogPost = async (postId: string) => {
-    markIdDeleted(postId);
-    setBlogPosts((prev) => prev.filter((p) => p.id !== postId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    markIdDeleted(postId);
+    setBlogPosts((prev) => prev.filter((p) => p.id !== postId));
     await deleteDoc(doc(db, 'blogPosts', postId)).catch(() => {});
     pushToast('مقاله حذف شد.', 'info');
   };
 
   const upsertCoupon = async (coupon: Coupon) => {
     if (!isAdmin) {
-      setCoupons((prev) => upsertById(prev, coupon));
-      await writeAudit('coupon.upsert', 'coupon', coupon.id, `ثبت/ویرایش کد تخفیف ${coupon.code}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2683,23 +2418,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteCoupon = async (couponId: string) => {
-    markIdDeleted(couponId);
-    setCoupons((prev) => prev.filter((c) => c.id !== couponId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    markIdDeleted(couponId);
+    setCoupons((prev) => prev.filter((c) => c.id !== couponId));
     await deleteDoc(doc(db, 'coupons', couponId)).catch(() => {});
     pushToast('کد تخفیف حذف شد.', 'info');
   };
 
   const upsertSitePage = async (page: SitePage) => {
-    const next = { ...page, updatedAt: new Date().toISOString() };
     if (!isAdmin) {
-      setPages((prev) => upsertById(prev, next));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const next = { ...page, updatedAt: new Date().toISOString() };
     try {
       await setDoc(doc(db, 'pages', next.id), next);
       pushToast('صفحه اطلاع‌رسانی ذخیره شد.', 'success');
@@ -2709,20 +2443,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteSitePage = async (pageId: string) => {
-    markIdDeleted(pageId);
-    setPages((prev) => prev.filter((p) => p.id !== pageId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    markIdDeleted(pageId);
+    setPages((prev) => prev.filter((p) => p.id !== pageId));
     await deleteDoc(doc(db, 'pages', pageId)).catch(() => {});
     pushToast('صفحه حذف شد.', 'info');
   };
 
   const upsertBanner = async (banner: BannerItem) => {
     if (!isAdmin) {
-      setBanners((prev) => upsertById(prev, banner));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2734,20 +2467,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteBanner = async (bannerId: string) => {
-    markIdDeleted(bannerId);
-    setBanners((prev) => prev.filter((b) => b.id !== bannerId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    markIdDeleted(bannerId);
+    setBanners((prev) => prev.filter((b) => b.id !== bannerId));
     await deleteDoc(doc(db, 'banners', bannerId)).catch(() => {});
     pushToast('بنر حذف شد.', 'info');
   };
 
   const upsertFaq = async (faq: FaqItem) => {
     if (!isAdmin) {
-      setFaqs((prev) => upsertById(prev, faq));
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2759,21 +2491,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteFaq = async (faqId: string) => {
-    markIdDeleted(faqId);
-    setFaqs((prev) => prev.filter((f) => f.id !== faqId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    markIdDeleted(faqId);
+    setFaqs((prev) => prev.filter((f) => f.id !== faqId));
     await deleteDoc(doc(db, 'faqs', faqId)).catch(() => {});
     pushToast('سوال حذف شد.', 'info');
   };
 
   const upsertRedirect = async (rule: RedirectRule) => {
     if (!isAdmin) {
-      setRedirects((prev) => upsertById(prev, rule));
-      await writeAudit('redirect.upsert', 'redirect', rule.id, `ثبت ریدایرکت ${rule.fromPath} -> ${rule.toPath}`);
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2786,21 +2516,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteRedirect = async (ruleId: string) => {
-    markIdDeleted(ruleId);
-    setRedirects((prev) => prev.filter((r) => r.id !== ruleId));
     if (!isAdmin) {
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    markIdDeleted(ruleId);
+    setRedirects((prev) => prev.filter((r) => r.id !== ruleId));
     await deleteDoc(doc(db, 'redirects', ruleId)).catch(() => {});
     pushToast('ریدایرکت حذف شد.', 'info');
   };
 
   const updateSettings = async (next: SiteSettings) => {
     if (!isAdmin) {
-      setSettings(next);
-      await writeAudit('settings.update', 'settings', 'site_main', 'بروزرسانی تنظیمات کلان فروشگاه');
-      pushToast(PREVIEW_TOAST, 'info');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2830,7 +2558,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const assignAdminRole = async (uid: string, email: string, role: AdminRoleCode, displayName?: string) => {
     if (!isAdmin) {
-      pushToast('برای تغییر دسترسی پرسنل یا اطلاعات کاربران، ورود واقعی با حساب مدیر الزامی است.', 'error');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     const rec: AdminStaffRecord = {
@@ -2851,7 +2579,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const removeAdminRole = async (uid: string) => {
     if (!isAdmin) {
-      pushToast('برای تغییر دسترسی پرسنل یا اطلاعات کاربران، ورود واقعی با حساب مدیر الزامی است.', 'error');
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
@@ -2877,6 +2605,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         customerGroup,
         signInWithGoogle,
         logout,
+        mobileSession: mobileAndRfq.mobileSession,
+        mobileSessionToken: mobileAndRfq.mobileSessionToken,
+        mobileOrders,
+        sendMobileOtp: mobileAndRfq.sendMobileOtp,
+        verifyMobileOtp: mobileAndRfq.verifyMobileOtp,
+        logoutMobile: mobileAndRfq.logoutMobile,
+        refreshMobileOrders: mobileAndRfq.refreshMobileOrders,
         currency,
         setCurrency,
         darkMode,
@@ -2918,6 +2653,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         stockMovements,
         usersList,
         auditLogs,
+        rfqs: mobileAndRfq.rfqs,
+        refreshRfqs: mobileAndRfq.refreshRfqs,
+        submitRfq: mobileAndRfq.submitRfq,
+        sendRfqMessage: mobileAndRfq.sendRfqMessage,
+        quoteRfq: mobileAndRfq.quoteRfq,
+        respondRfq: mobileAndRfq.respondRfq,
+        convertRfqToProforma: mobileAndRfq.convertRfqToProforma,
         cart,
         cartOpen,
         setCartOpen,

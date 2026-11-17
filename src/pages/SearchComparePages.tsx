@@ -9,12 +9,26 @@ import { scoreSearchMatch } from '../lib/persian-search';
 import { getProductPriceSummary } from '../lib/pricing';
 import { applySeoHead } from '../lib/seo';
 
+import { Product, VerticalType } from '../types/domain';
+
+const VERTICAL_OPTIONS: { id: '' | VerticalType; label: string }[] = [
+  { id: '', label: 'همه حوزه‌ها' },
+  { id: 'dental', label: 'دندانپزشکی' },
+  { id: 'medical', label: 'پزشکی عمومی' },
+  { id: 'lab', label: 'آزمایشگاهی' },
+];
+
 export function SearchPage() {
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
+  const verticalParam = (params.get('vertical') ?? '') as '' | VerticalType;
+  const pageParam = Math.max(1, Number(params.get('page') || 1) || 1);
+
   const [input, setInput] = useState(q);
-  const { products, brands, categories, settings, submitStockRequest } = useStore();
+  const { products, brands, categories, customerGroup, settings, submitStockRequest } = useStore();
   const [reqForm, setReqForm] = useState({ contactName: '', mobile: '', titleText: q, brandText: '', description: '' });
+  const [serverData, setServerData] = useState<{ items: Product[]; total: number; totalPages: number } | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     setInput(q);
@@ -23,16 +37,46 @@ export function SearchPage() {
     }
     applySeoHead({
       title: `جستجو: ${q || 'کاتالوگ'} | ${settings.storeNameFa}`,
-      description: 'جستجوی تخصصی در محصولات دندانپزشکی',
+      description: 'جستجوی تخصصی در محصولات تجهیزات پزشکی و دندانپزشکی',
       canonicalPath: '/search',
       robots: 'noindex, follow',
     });
   }, [q, settings.storeNameFa]);
 
-  const results = useMemo(() => {
-    if (!q.trim()) return products.filter((p) => p.status === 'active');
-    return products
-      .filter((p) => p.status === 'active')
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setLoading(true);
+    const qs = new URLSearchParams({
+      ...(q.trim() ? { q: q.trim() } : {}),
+      ...(verticalParam ? { vertical: verticalParam } : {}),
+      group: customerGroup,
+      page: String(pageParam),
+      limit: '24',
+    });
+    fetch(`/api/catalog/products?${qs.toString()}`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.ok && Array.isArray(data.items)) {
+          setServerData({
+            items: data.items as Product[],
+            total: Number(data.total ?? data.items.length),
+            totalPages: Number(data.totalPages ?? 1),
+          });
+        }
+      })
+      .catch(() => {
+        // Offline / client fallback handled below
+      })
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [q, verticalParam, pageParam, customerGroup]);
+
+  const localResults = useMemo(() => {
+    const filtered = products.filter(
+      (p) => p.status === 'active' && (!verticalParam || p.vertical === verticalParam)
+    );
+    if (!q.trim()) return filtered;
+    return filtered
       .map((p) => {
         const brand = brands.find((b) => b.id === p.brandId);
         const cat = categories.find((c) => c.id === p.primaryCategoryId);
@@ -45,11 +89,23 @@ export function SearchPage() {
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.product);
-  }, [q, products, brands, categories]);
+  }, [q, verticalParam, products, brands, categories]);
+
+  const displayItems = serverData ? serverData.items : localResults.slice((pageParam - 1) * 24, pageParam * 24);
+  const totalCount = serverData ? serverData.total : localResults.length;
+  const totalPages = serverData ? serverData.totalPages : Math.max(1, Math.ceil(localResults.length / 24));
+
+  const updateQuery = (nextQ: string, nextVertical: '' | VerticalType, nextPage = 1) => {
+    const next: Record<string, string> = {};
+    if (nextQ.trim()) next.q = nextQ.trim();
+    if (nextVertical) next.vertical = nextVertical;
+    if (nextPage > 1) next.page = String(nextPage);
+    setParams(next);
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    setParams(input.trim() ? { q: input.trim() } : {});
+    updateQuery(input, verticalParam, 1);
   };
 
   const handleRequestSubmit = async (e: React.FormEvent) => {
@@ -61,30 +117,66 @@ export function SearchPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
-        <h1 className="text-2xl font-extrabold">جستجو در کاتالوگ تجهیزات و مواد دندانپزشکی</h1>
-        <form onSubmit={handleSearch} className="flex gap-2 max-w-2xl">
+        <h1 className="text-2xl font-extrabold">جستجو در کاتالوگ تجهیزات و مواد</h1>
+        <form onSubmit={handleSearch} className="flex flex-wrap gap-2 max-w-3xl">
           <input
             type="search"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="نام محصول، کد SKU، کد IMED یا برند..."
-            className="flex-1 px-4 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+            className="flex-1 min-w-[220px] px-4 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
           />
+          <select
+            value={verticalParam}
+            onChange={(e) => updateQuery(input, e.target.value as '' | VerticalType, 1)}
+            aria-label="فیلتر حوزه تخصصی"
+            className="px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
+          >
+            {VERTICAL_OPTIONS.map((v) => (
+              <option key={v.id || 'all'} value={v.id}>{v.label}</option>
+            ))}
+          </select>
           <button type="submit" className="px-5 py-2.5 rounded-lg bg-brand text-white text-sm font-bold inline-flex items-center gap-2">
             <Search className="w-4 h-4" />
             <span>جستجو</span>
           </button>
         </form>
         <p className="text-xs text-ink/60 dark:text-slate-400 tabular-nums">
-          {toPersianDigits(results.length)} نتیجه یافت شد
+          {loading ? 'در حال جستجو روی سرور...' : `${toPersianDigits(totalCount)} نتیجه یافت شد`}
+          {totalPages > 1 ? ` · صفحه ${toPersianDigits(pageParam)} از ${toPersianDigits(totalPages)}` : ''}
         </p>
       </div>
 
-      {results.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {results.map((p) => (
-            <ProductCard key={p.id} product={p} />
-          ))}
+      {displayItems.length > 0 ? (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {displayItems.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-3 text-xs font-bold">
+              <button
+                type="button"
+                disabled={pageParam <= 1}
+                onClick={() => updateQuery(q, verticalParam, pageParam - 1)}
+                className="px-4 py-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+              >
+                صفحه قبل
+              </button>
+              <span className="tabular-nums">
+                {toPersianDigits(pageParam)} / {toPersianDigits(totalPages)}
+              </span>
+              <button
+                type="button"
+                disabled={pageParam >= totalPages}
+                onClick={() => updateQuery(q, verticalParam, pageParam + 1)}
+                className="px-4 py-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+              >
+                صفحه بعد
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 max-w-2xl mx-auto space-y-4">

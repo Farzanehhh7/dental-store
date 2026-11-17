@@ -1579,7 +1579,7 @@ export const SEED_AUDIT_LOGS: AuditLogEntry[] = [
   {
     id: 'aud_1',
     actorUid: 'system_seed',
-    actorEmail: 'farina.connect@gmail.com',
+    actorEmail: 'admin@dentalmarket.ir',
     action: 'campaign.activate',
     entityType: 'campaign',
     entityId: 'camp_spring_restorative',
@@ -1589,7 +1589,7 @@ export const SEED_AUDIT_LOGS: AuditLogEntry[] = [
   {
     id: 'aud_2',
     actorUid: 'system_seed',
-    actorEmail: 'farina.connect@gmail.com',
+    actorEmail: 'admin@dentalmarket.ir',
     action: 'product.price_update',
     entityType: 'product',
     entityId: 'prod_composite_3m',

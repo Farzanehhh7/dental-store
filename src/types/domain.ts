@@ -151,6 +151,10 @@ export interface ProductFile {
   titleFa: string;
   fileSizeLabel: string;
   code?: string;
+  fileUrl?: string;
+  isVerified?: boolean;
+  issuer?: string;
+  verifiedUntil?: string;
 }
 
 export interface PriceHistoryEntry {
@@ -692,4 +696,45 @@ export interface CartItem {
   productId: string;
   variantId: string;
   quantity: number;
+}
+
+export type RfqStatus = 'submitted' | 'in_review' | 'quoted' | 'accepted' | 'rejected' | 'converted';
+
+export interface RfqMessage {
+  id: string;
+  authorName: string;
+  isStaff: boolean;
+  body: string;
+  proposedUnitPrice?: number;
+  createdAt: string;
+}
+
+export interface RfqRequest {
+  id: string;
+  rfqNo: string;
+  userId: string;
+  customerMobile: string;
+  customerName: string;
+  clinicName?: string;
+  productId: string;
+  productTitleFa: string;
+  variantId: string;
+  variantLabelFa: string;
+  quantity: number;
+  targetUnitPrice?: number;
+  quotedUnitPrice?: number;
+  quotedTotal?: number;
+  status: RfqStatus;
+  validUntil?: string;
+  proformaId?: string;
+  messages: RfqMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MobileSessionUser {
+  mobile: string;
+  displayName?: string;
+  token: string;
+  expiresAt: string;
 }

@@ -167,5 +167,3 @@ export async function testFirestoreConnection(force = false): Promise<boolean> {
 
   return inFlightProbe;
 }
-
-export const SUPER_ADMIN_EMAIL = 'farina.connect@gmail.com';
