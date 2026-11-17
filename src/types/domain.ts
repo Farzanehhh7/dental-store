@@ -81,6 +81,7 @@ export interface Brand {
   countryCode: string;
   countryFa: string;
   descriptionFa: string;
+  websiteUrl?: string;
   isAuthorizedDealer: boolean;
   warrantyProvider?: string;
   isActive: boolean;

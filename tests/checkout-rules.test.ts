@@ -91,5 +91,17 @@ describe('Firestore Security Rules & Hardcoded Credential Hygiene', () => {
     const validVerticals = new Set(['dental', 'medical', 'lab']);
     expect(SEED_PRODUCTS.every((p) => validVerticals.has(p.vertical))).toBe(true);
     expect(EXPANDED_PRODUCTS.length).toBeGreaterThanOrEqual(50);
+
+    const localAssetPaths = new Set(
+      EXPANDED_PRODUCTS.flatMap((p) => [p.imageUrl, ...(p.galleryUrls ?? [])]).filter((url) =>
+        url.startsWith('/assets/products/')
+      )
+    );
+    expect(localAssetPaths.size).toBeGreaterThanOrEqual(30);
+    for (const relPath of localAssetPaths) {
+      const diskPath = path.resolve(process.cwd(), 'public', relPath.replace(/^\//, ''));
+      expect(fs.existsSync(diskPath)).toBe(true);
+      expect(fs.statSync(diskPath).size).toBeGreaterThan(3000);
+    }
   });
 });

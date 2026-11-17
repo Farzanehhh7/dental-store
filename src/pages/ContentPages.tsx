@@ -28,6 +28,16 @@ export function BrandsListPage() {
     });
   }, [settings.storeNameFa]);
 
+  const sortedBrands = brands
+    .filter((b) => b.isActive)
+    .sort((a, b) => {
+      const aHasCurated = products.some((p) => p.brandId === a.id && !p.id.startsWith('prod_cat_') && p.imageUrl.startsWith('/assets/products/'));
+      const bHasCurated = products.some((p) => p.brandId === b.id && !p.id.startsWith('prod_cat_') && p.imageUrl.startsWith('/assets/products/'));
+      if (aHasCurated !== bHasCurated) return aHasCurated ? -1 : 1;
+      if (a.isAuthorizedDealer !== b.isAuthorizedDealer) return a.isAuthorizedDealer ? -1 : 1;
+      return 0;
+    });
+
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-2">
@@ -38,35 +48,56 @@ export function BrandsListPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-        {brands
-          .filter((b) => b.isActive)
-          .map((brand) => {
-            const count = products.filter((p) => p.brandId === brand.id && p.status === 'active').length;
-            return (
-              <Link
-                key={brand.id}
-                to={`/brand/${brand.slug}`}
-                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 hover:border-brand transition-colors space-y-3"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h2 className="text-lg font-extrabold">{brand.nameFa}</h2>
-                    <p className="text-xs text-ink/50 dark:text-slate-400">{brand.nameEn} · {brand.countryFa}</p>
-                  </div>
-                  {brand.isAuthorizedDealer && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                      <Award className="w-3.5 h-3.5" />
-                      نماینده رسمی
-                    </span>
-                  )}
+        {sortedBrands.map((brand) => {
+          const brandProds = products.filter((p) => p.brandId === brand.id && p.status === 'active');
+          const previewImgs = Array.from(
+            new Set(
+              brandProds
+                .filter((p) => !p.id.startsWith('prod_cat_') && p.imageUrl.startsWith('/assets/products/'))
+                .map((p) => p.imageUrl)
+            )
+          ).slice(0, 3);
+          return (
+            <Link
+              key={brand.id}
+              to={`/brand/${brand.slug}`}
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 hover:border-brand transition-colors space-y-3 flex flex-col"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h2 className="text-lg font-extrabold">{brand.nameFa}</h2>
+                  <p className="text-xs text-ink/50 dark:text-slate-400">{brand.nameEn} · {brand.countryFa}</p>
                 </div>
-                <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed line-clamp-2">{brand.descriptionFa}</p>
-                <p className="text-xs font-bold text-brand dark:text-teal-300 tabular-nums">
-                  {toPersianDigits(count)} محصول فعال در کاتالوگ
-                </p>
-              </Link>
-            );
-          })}
+                {brand.isAuthorizedDealer && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 shrink-0">
+                    <Award className="w-3.5 h-3.5" />
+                    نماینده رسمی
+                  </span>
+                )}
+              </div>
+              {previewImgs.length > 0 && (
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  {previewImgs.map((imgUrl, idx) => (
+                    <div key={idx} className="aspect-[4/3] rounded-lg bg-white border border-line/70 dark:border-slate-700 overflow-hidden p-1.5">
+                      <img src={imgUrl} alt={brand.nameEn} loading="lazy" className="w-full h-full object-contain" />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed line-clamp-2">{brand.descriptionFa}</p>
+              <div className="mt-auto pt-2 flex items-center justify-between gap-2 text-xs">
+                <span className="font-bold text-brand dark:text-teal-300 tabular-nums">
+                  {toPersianDigits(brandProds.length)} محصول فعال در کاتالوگ
+                </span>
+                {brand.websiteUrl && (
+                  <span className="text-[11px] text-ink/50 dark:text-slate-400 truncate max-w-[140px]" dir="ltr">
+                    {brand.websiteUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+                  </span>
+                )}
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </div>
   );
@@ -104,7 +135,13 @@ export function BrandDetailPage() {
     );
   }
 
-  const brandProducts = products.filter((p) => p.brandId === brand.id && p.status !== 'archived');
+  const brandProducts = products
+    .filter((p) => p.brandId === brand.id && p.status !== 'archived')
+    .sort((a, b) => {
+      const aCurated = !a.id.startsWith('prod_cat_') ? 1 : 0;
+      const bCurated = !b.id.startsWith('prod_cat_') ? 1 : 0;
+      return bCurated - aCurated;
+    });
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
@@ -116,12 +153,25 @@ export function BrandDetailPage() {
               کشور سازنده: {brand.countryFa} {brand.warrantyProvider ? `· پشتیبانی گارانتی: ${brand.warrantyProvider}` : ''}
             </p>
           </div>
-          {brand.isAuthorizedDealer && (
-            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-              <ShieldCheck className="w-4 h-4" />
-              تامین مستقیم و گارانتی اصالت
-            </span>
-          )}
+          <div className="flex flex-wrap items-center gap-3">
+            {brand.websiteUrl && (
+              <a
+                href={brand.websiteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 text-xs font-bold text-ink/80 dark:text-slate-200 hover:border-brand"
+                dir="ltr"
+              >
+                <span>{brand.websiteUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}</span>
+              </a>
+            )}
+            {brand.isAuthorizedDealer && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                <ShieldCheck className="w-4 h-4" />
+                تامین مستقیم و گارانتی اصالت
+              </span>
+            )}
+          </div>
         </div>
         <p className="text-sm text-ink/75 dark:text-slate-300 leading-relaxed">{brand.descriptionFa}</p>
       </div>

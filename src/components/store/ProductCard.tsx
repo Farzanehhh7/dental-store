@@ -43,7 +43,9 @@ export default function ProductCard({ product }: { product: Product }) {
     <article className="group bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl overflow-hidden flex flex-col transition-transform duration-200 hover:-translate-y-0.5">
       <Link
         to={`/product/${product.slug}`}
-        className="relative block aspect-[4/3] bg-surface dark:bg-slate-800 overflow-hidden"
+        className={`relative block aspect-[4/3] overflow-hidden ${
+          product.imageUrl?.startsWith('/assets/products/') ? 'bg-white' : 'bg-surface dark:bg-slate-800'
+        }`}
       >
         {!imgFailed && product.imageUrl ? (
           <img
@@ -54,7 +56,9 @@ export default function ProductCard({ product }: { product: Product }) {
             loading="lazy"
             referrerPolicy="no-referrer"
             onError={() => setImgFailed(true)}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            className={`w-full h-full transition-transform duration-300 group-hover:scale-[1.03] ${
+              product.imageUrl.startsWith('/assets/products/') ? 'object-contain p-3' : 'object-cover'
+            }`}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-gradient-to-br from-surface to-paper dark:from-slate-800 dark:to-slate-900">

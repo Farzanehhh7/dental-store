@@ -330,7 +330,11 @@ export default function Home() {
               <Link to="/brands" className="text-xs font-bold text-brand hover:underline">فهرست همه ({toPersianDigits(brands.length)})</Link>
             </div>
             <div className="divide-y divide-line dark:divide-slate-800">
-              {brands.slice(0, 7).map((b) => (
+              {brands
+                .filter((b) => b.isActive)
+                .sort((a, b) => (b.websiteUrl ? 1 : 0) - (a.websiteUrl ? 1 : 0))
+                .slice(0, 8)
+                .map((b) => (
                 <Link
                   key={b.id}
                   to={`/brand/${b.slug}`}

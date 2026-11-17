@@ -262,7 +262,7 @@ export default function ProductPage() {
       <section className="grid lg:grid-cols-12 gap-8 items-start">
         {/* Left: Zoomable Gallery + Optional Video Slot */}
         <div className="lg:col-span-5 space-y-3 lg:sticky lg:top-24">
-          <div className="relative aspect-[4/3] bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
+          <div className="relative aspect-[4/3] bg-white border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
             {showVideo && product.videoUrl ? (
               <video src={product.videoUrl} controls autoPlay className="w-full h-full object-cover" />
             ) : (
@@ -272,7 +272,11 @@ export default function ProductPage() {
                   alt={product.titleFa}
                   width={640}
                   height={480}
-                  className="w-full h-full object-cover"
+                  className={`w-full h-full ${
+                    (activeImage || product.imageUrl).startsWith('/assets/products/')
+                      ? 'object-contain p-4 bg-white'
+                      : 'object-cover'
+                  }`}
                 />
                 <button
                   type="button"
@@ -292,11 +296,15 @@ export default function ProductPage() {
                   key={idx}
                   type="button"
                   onClick={() => { setShowVideo(false); setActiveImage(url); }}
-                  className={`w-20 h-16 rounded-lg overflow-hidden border ${
+                  className={`w-20 h-16 rounded-lg overflow-hidden border bg-white ${
                     !showVideo && activeImage === url ? 'border-brand ring-2 ring-brand/30' : 'border-line dark:border-slate-800'
                   }`}
                 >
-                  <img src={url} alt={`${product.titleFa} - ${idx + 1}`} className="w-full h-full object-cover" />
+                  <img
+                    src={url}
+                    alt={`${product.titleFa} - ${idx + 1}`}
+                    className={`w-full h-full ${url.startsWith('/assets/products/') ? 'object-contain p-1' : 'object-cover'}`}
+                  />
                 </button>
               ))}
               {product.videoUrl && (

@@ -29,6 +29,11 @@ import {
   SEED_CATEGORIES,
   SEED_PRODUCTS,
 } from './seed';
+import {
+  BRAND_CATALOG_PRODUCTS,
+  BRAND_OFFICIAL_IMAGES,
+  BRAND_OFFICIAL_URLS,
+} from './brandProducts';
 
 const nowIso = new Date().toISOString();
 const plusDaysIso = (d: number) => new Date(Date.now() + d * 86400000).toISOString();
@@ -496,6 +501,7 @@ const EXTRA_BRAND_TUPLES: [string, string, string, string, string, string, boole
   ['brand_parsunit', 'پارس یونیت', 'Pars Unit', 'pars-unit', 'IR', 'ایران', true],
   ['brand_tebiran', 'طب ایران', 'Teb Iran', 'teb-iran', 'IR', 'ایران', false],
   ['brand_azma', 'آزما دنتال', 'Azma Dental', 'azma-dental', 'IR', 'ایران', false],
+  ['brand_cranberry', 'کرنبری (Cranberry)', 'Cranberry USA', 'cranberry', 'US', 'آمریکا', true],
 ].map((row) => row) as [string, string, string, string, string, string, boolean][];
 
 export const EXPANDED_BRANDS: Brand[] = [
@@ -508,6 +514,7 @@ export const EXPANDED_BRANDS: Brand[] = [
     countryCode,
     countryFa,
     descriptionFa: `تولیدکننده تخصصی تجهیزات و مواد دندانپزشکی ${nameFa} (${countryFa}) با استانداردهای بین‌المللی CE و ISO 13485.`,
+    websiteUrl: BRAND_OFFICIAL_URLS[id],
     isAuthorizedDealer,
     warrantyProvider: isAuthorizedDealer ? 'نمایندگی رسمی دنتال‌مارکت' : undefined,
     isActive: true,
@@ -562,8 +569,9 @@ export function generateCatalogProducts(totalTarget = 1024): {
   publicProducts: Product[];
   costRecords: ProductCostRecord[];
 } {
-  const costRecords: ProductCostRecord[] = SEED_PRODUCTS.map(extractProductCostRecord);
-  const publicProducts: Product[] = SEED_PRODUCTS.map(stripCostPriceFromProduct);
+  const curatedBase = [...SEED_PRODUCTS, ...BRAND_CATALOG_PRODUCTS];
+  const costRecords: ProductCostRecord[] = curatedBase.map(extractProductCostRecord);
+  const publicProducts: Product[] = curatedBase.map(stripCostPriceFromProduct);
 
   const extraNeeded = Math.max(0, totalTarget - publicProducts.length);
   for (let i = 0; i < extraNeeded; i++) {
@@ -579,6 +587,8 @@ export function generateCatalogProducts(totalTarget = 1024): {
     const isCall = arch.kind === 'capital_equipment' && i % 15 === 0;
     const expiresDays = 60 + ((i * 19) % 540);
     const slug = `dental-item-${code}-${brand.slug}`;
+    const brandImages = BRAND_OFFICIAL_IMAGES[brand.id];
+    const resolvedImg = brandImages ? brandImages[i % brandImages.length] : arch.img;
 
     const prod: Product = {
       id,
@@ -598,8 +608,8 @@ export function generateCatalogProducts(totalTarget = 1024): {
       pricingMode: isCall ? 'call_for_price' : 'fixed',
       shortDescriptionFa: `${arch.prefix} تولید برند ${brand.nameFa} (${brand.countryFa}) با استاندارد بین‌المللی و کد ردیابی وزارت بهداشت.`,
       descriptionFa: `محصول تخصصی ${arch.prefix} از برند ${brand.nameFa} ویژه مطب‌ها، کلینیک‌ها و مراکز درمانی دندانپزشکی. دارای تاییدیه CE/ISO، کنترل بچ تولید و گارانتی اصالت کالا.`,
-      imageUrl: arch.img,
-      galleryUrls: [arch.img],
+      imageUrl: resolvedImg,
+      galleryUrls: [resolvedImg],
       warrantyMonths: arch.kind === 'capital_equipment' ? 12 : undefined,
       warrantyProvider: arch.kind === 'capital_equipment' ? 'خدمات پس از فروش دنتال‌مارکت' : undefined,
       installationAvailable: arch.kind === 'capital_equipment',
