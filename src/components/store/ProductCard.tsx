@@ -40,7 +40,10 @@ export default function ProductCard({ product }: { product: Product }) {
   const hasMultipleVariants = activeVariants.length > 1;
 
   return (
-    <article className="group bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl overflow-hidden flex flex-col transition-transform duration-200 hover:-translate-y-0.5">
+    <article
+      data-testid={`product-card-${product.id}`}
+      className="group bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl overflow-hidden flex flex-col transition-transform duration-200 hover:-translate-y-0.5"
+    >
       <Link
         to={`/product/${product.slug}`}
         className={`relative block aspect-[4/3] overflow-hidden ${
@@ -83,7 +86,7 @@ export default function ProductCard({ product }: { product: Product }) {
           )}
         </div>
 
-        <Link to={`/product/${product.slug}`} className="block">
+        <Link to={`/product/${product.slug}`} data-testid="product-card-link" className="block">
           <h3 className="font-bold text-[15px] leading-snug text-ink dark:text-slate-100 line-clamp-2 hover:text-brand dark:hover:text-teal-300 transition-colors">
             {product.titleFa}
           </h3>

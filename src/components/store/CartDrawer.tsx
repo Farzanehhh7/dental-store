@@ -165,6 +165,7 @@ export default function CartDrawer() {
                 </Link>
                 <Link
                   to="/checkout"
+                  data-testid="cart-drawer-checkout-link"
                   onClick={() => setCartOpen(false)}
                   className="py-2.5 px-4 rounded-lg bg-brand text-white text-center text-sm font-bold hover:bg-brandDark"
                 >

@@ -523,6 +523,7 @@ export default function ProductPage() {
                 </div>
                 <button
                   type="button"
+                  data-testid="add-to-cart-button"
                   onClick={() => addToCart(product.id, variant.id, qty)}
                   className="flex-1 min-w-[200px] py-3 px-6 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors inline-flex items-center justify-center gap-2"
                 >
@@ -541,6 +542,7 @@ export default function ProductPage() {
                 )}
                 <button
                   type="button"
+                  data-testid="open-rfq-modal-button"
                   onClick={openRfqModal}
                   className="py-3 px-4 rounded-lg border border-line dark:border-slate-700 text-xs font-bold hover:border-brand transition-colors"
                 >
@@ -558,6 +560,7 @@ export default function ProductPage() {
                 </button>
                 <button
                   type="button"
+                  data-testid="open-rfq-modal-button"
                   onClick={openRfqModal}
                   className="py-3 px-5 rounded-lg border border-brand text-brand dark:text-teal-300 text-sm font-bold"
                 >
@@ -876,6 +879,7 @@ export default function ProductPage() {
               <div className="grid grid-cols-2 gap-2">
                 <input
                   required
+                  data-testid="rfq-name-input"
                   placeholder="نام و نام خانوادگی *"
                   value={rfqForm.customerName}
                   onChange={(e) => setRfqForm((f) => ({ ...f, customerName: e.target.value }))}
@@ -884,6 +888,7 @@ export default function ProductPage() {
                 <input
                   required
                   type="tel"
+                  data-testid="rfq-mobile-input"
                   placeholder="موبایل * (0912...)"
                   value={rfqForm.customerMobile}
                   onChange={(e) => setRfqForm((f) => ({ ...f, customerMobile: e.target.value }))}
@@ -897,6 +902,7 @@ export default function ProductPage() {
                     required
                     type="number"
                     min={1}
+                    data-testid="rfq-quantity-input"
                     value={rfqForm.quantity}
                     onChange={(e) => setRfqForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
                     className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
@@ -907,6 +913,7 @@ export default function ProductPage() {
                   <input
                     type="number"
                     min={0}
+                    data-testid="rfq-target-price-input"
                     value={rfqForm.targetUnitPrice}
                     onChange={(e) => setRfqForm((f) => ({ ...f, targetUnitPrice: e.target.value }))}
                     className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
@@ -921,12 +928,13 @@ export default function ProductPage() {
               />
               <textarea
                 rows={3}
+                data-testid="rfq-note-input"
                 placeholder="توضیحات تعداد بسته، شرایط تحویل یا درخواست تخفیف همکاری..."
                 value={rfqForm.note}
                 onChange={(e) => setRfqForm((f) => ({ ...f, note: e.target.value }))}
                 className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
               />
-              <button type="submit" className="w-full py-2.5 rounded-lg bg-brand text-white font-bold">
+              <button type="submit" data-testid="rfq-submit-button" className="w-full py-2.5 rounded-lg bg-brand text-white font-bold">
                 ثبت و ارسال استعلام قیمت
               </button>
             </form>

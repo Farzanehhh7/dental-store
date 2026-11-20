@@ -7,11 +7,19 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
-          recharts: ['recharts'],
-          xlsx: ['xlsx'],
-          router: ['react-router-dom'],
+        manualChunks(id) {
+          if (id.includes('node_modules/firebase/') || id.includes('node_modules/@firebase/')) {
+            return 'firebase';
+          }
+          if (id.includes('node_modules/recharts/')) {
+            return 'recharts';
+          }
+          if (id.includes('node_modules/exceljs/')) {
+            return 'exceljs';
+          }
+          if (id.includes('node_modules/react-router-dom/') || id.includes('node_modules/react-router/')) {
+            return 'router';
+          }
         },
       },
     },

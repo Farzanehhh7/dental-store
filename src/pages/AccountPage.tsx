@@ -264,6 +264,7 @@ export default function AccountPage() {
             <div className="flex gap-2">
               <input
                 type="tel"
+                data-testid="otp-mobile-input"
                 value={otpMobile}
                 onChange={(e) => setOtpMobile(e.target.value)}
                 placeholder="0912..."
@@ -272,6 +273,7 @@ export default function AccountPage() {
               <button
                 type="button"
                 disabled={otpBusy}
+                data-testid="otp-send-button"
                 onClick={handleGuestOtpSend}
                 className="px-3.5 py-2 rounded-lg border border-brand text-brand font-bold disabled:opacity-50"
               >
@@ -282,6 +284,7 @@ export default function AccountPage() {
               <div className="space-y-2">
                 <div className="flex gap-2">
                   <input
+                    data-testid="otp-code-input"
                     value={otpCode}
                     onChange={(e) => setOtpCode(e.target.value)}
                     placeholder="کد پیامکی ۶ رقمی"
@@ -290,6 +293,7 @@ export default function AccountPage() {
                   <button
                     type="button"
                     disabled={otpBusy}
+                    data-testid="otp-verify-button"
                     onClick={handleGuestOtpVerify}
                     className="px-3.5 py-2 rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-50"
                   >
@@ -297,7 +301,7 @@ export default function AccountPage() {
                   </button>
                 </div>
                 {otpHint && (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold bg-amber-50 dark:bg-amber-950/30 px-2.5 py-1.5 rounded-lg">
+                  <p data-testid="otp-sandbox-hint" className="text-[11px] text-amber-700 dark:text-amber-300 font-bold bg-amber-50 dark:bg-amber-950/30 px-2.5 py-1.5 rounded-lg">
                     {otpHint}
                   </p>
                 )}
@@ -475,7 +479,7 @@ export default function AccountPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
       {/* Header Summary Card */}
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
+      <div data-testid="account-authenticated-header" className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-brand/10 text-brand flex items-center justify-center font-extrabold text-xl">
             {(displayTitle || 'ک')[0]}
@@ -546,6 +550,7 @@ export default function AccountPage() {
             <button
               key={item.id}
               type="button"
+              data-testid={`account-tab-${item.id}`}
               onClick={() => setTab(item.id as AccountTab)}
               className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
                 tab === item.id
@@ -685,6 +690,7 @@ export default function AccountPage() {
             myRfqs.map((rfq) => (
               <article
                 key={rfq.id}
+                data-testid={`rfq-card-${rfq.id}`}
                 className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 text-xs"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line dark:border-slate-800 pb-3">

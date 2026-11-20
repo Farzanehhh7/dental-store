@@ -1,3 +1,5 @@
+[![CI](https://github.com/Farzanehhh7/dental-store/actions/workflows/ci.yml/badge.svg)](https://github.com/Farzanehhh7/dental-store/actions/workflows/ci.yml)
+
 # DentalMarket (دنتال‌مارکت)
 
 فروشگاه تخصصی تجهیزات و مواد مصرفی دندانپزشکی، پزشکی و آزمایشگاهی با رابط فارسی/RTL، پنل مدیریت ۱۴بخشی و موتور قیمت‌گذاری B2B/B2C.
@@ -26,10 +28,31 @@ npm run dev
 
 ## دستورهای بررسی و تست
 ```bash
-npm test      # اجرای تست‌های واحد و یکپارچه سرور (tests/*.test.ts)
-npm run lint  # بررسی TypeScript و قوانین امنیتی Firestore
-npm run build # ساخت نسخه نهایی Vite با تقسیم‌بندی کدها
+npm run typecheck # بررسی تایپ‌های TypeScript
+npm test          # اجرای تست‌های واحد و یکپارچه سرور (tests/*.test.ts)
+npm run lint      # بررسی TypeScript و قوانین امنیتی Firestore
+npm run build     # ساخت نسخه نهایی Vite با تقسیم‌بندی کدها
 ```
+
+## اجرا با Docker
+```bash
+# ۱. ساخت ایمیج تولیدی (Multi-stage)
+docker build -t dental-store .
+
+# ۲. اجرای مستقیم ایمیج تولیدی (نیازمند SESSION_SECRET حداقل ۳۲ کاراکتری و متغیرهای درگاه/پیامک)
+docker run -d -p 3000:3000 \
+  -e SESSION_SECRET="replace-with-at-least-32-random-characters" \
+  -e SMS_PROVIDER=live \
+  -e SMS_API_KEY="your-kavenegar-key" \
+  -e PAYMENT_MODE=live \
+  -e ZARINPAL_MERCHANT_ID="your-merchant-id" \
+  -v dental_data:/app/.data \
+  dental-store
+
+# ۳. یا اجرای آزمایشی با Docker Compose (فایل .env را ابتدا از .env.example کپی و SESSION_SECRET را تنظیم کنید)
+docker compose up --build
+```
+بررسی سلامت کانتینر از طریق مسیر `GET /api/health` (`{"ok":true}`) انجام می‌شود.
 
 ## نقشه مسیر مقیاس‌پذیری آینده (Production Scale)
 در فایل `ASSUMPTIONS.md` جزئیات انتقال دیتابیس از Firestore/JSON به PostgreSQL و موتور جستجو به Meilisearch/Elasticsearch و مهاجرت SSR به Next.js (برای سئوی پیشرفته ۵۰٬۰۰۰+ کالا) مستند شده است.

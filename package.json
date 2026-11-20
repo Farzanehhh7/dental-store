@@ -3,38 +3,53 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "start": "NODE_ENV=production tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit && eslint firestore.rules",
-    "test": "vitest run"
+    "test": "vitest run --exclude \"tests/rules/**\" --exclude \"tests/e2e/**\"",
+    "test:watch": "vitest --exclude \"tests/rules/**\" --exclude \"tests/e2e/**\"",
+    "test:rules": "firebase emulators:exec --only firestore \"vitest run tests/rules\"",
+    "e2e": "playwright test"
   },
   "dependencies": {
-    "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@tanstack/react-table": "^9.3.1",
-    "@types/express": "^5.0.6",
-    "eslint": "^10.15.0",
+    "cors": "^2.8.6",
+    "exceljs": "^4.4.0",
     "express": "^5.3.0",
+    "express-rate-limit": "^8.7.5",
     "firebase": "^13.4.0",
+    "helmet": "^8.3.0",
     "lucide-react": "^1.74.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "recharts": "^3.10.1",
     "tsx": "^4.23.15",
-    "vitest": "^2.1.8",
-    "xlsx": "^0.18.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "@playwright/test": "^1.65.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^6.3.0",
     "autoprefixer": "^10.4.20",
+    "eslint": "^10.15.0",
+    "firebase-tools": "^15.37.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.5.4",
-    "vite": "^5.4.8"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
   }
 }

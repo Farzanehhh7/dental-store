@@ -7,6 +7,7 @@ import { getProductPriceSummary, isDiscountGenuineByHistory, resolveVariantPrice
 import { auditSeoHealth, buildFaqJsonLd, buildProductJsonLd, findOrphanProducts } from '../src/lib/seo';
 import { SEED_CAMPAIGNS, SEED_CATEGORIES, SEED_PRODUCTS, SEED_SETTINGS, SEED_BRANDS } from '../src/data/seed';
 import { SEED_BANNERS } from '../src/data/expandedCatalog';
+import { parseCsvToMatrix, parseXlsxBufferToMatrix, rowsToXlsxBuffer } from '../src/lib/excel';
 import { ContractPrice, Product } from '../src/types/domain';
 
 describe('Currency, Persian Digits & Jalali Calendar', () => {
@@ -165,5 +166,26 @@ describe('Configurable Hero Slider Banners', () => {
         expect(fs.existsSync(diskPath)).toBe(true);
       }
     }
+  });
+});
+
+describe('ExcelJS Spreadsheet Import / Export Helpers', () => {
+  it('writes and reads back XLSX rows with Persian headers/values and parses CSV matrices cleanly', async () => {
+    const sampleRows = [
+      { sku: 'DM-COMP-01', title_fa: 'کامپوزیت نانو فیلتک', title_en: 'Filtek Z350', base_price: 2450000 },
+      { sku: 'DM-BOND-02', title_fa: 'باندینگ نسل پنج', title_en: 'Single Bond 2', base_price: 1850000 },
+    ];
+    const buffer = await rowsToXlsxBuffer(sampleRows, 'products');
+    const matrix = await parseXlsxBufferToMatrix(buffer);
+
+    expect(matrix[0]).toEqual(['sku', 'title_fa', 'title_en', 'base_price']);
+    expect(matrix[1]).toEqual(['DM-COMP-01', 'کامپوزیت نانو فیلتک', 'Filtek Z350', '2450000']);
+    expect(matrix[2]).toEqual(['DM-BOND-02', 'باندینگ نسل پنج', 'Single Bond 2', '1850000']);
+
+    const csvMatrix = parseCsvToMatrix('\uFEFFsku,title_fa,base_price\n"DM-01","ماده قالب‌گیری",480000');
+    expect(csvMatrix).toEqual([
+      ['sku', 'title_fa', 'base_price'],
+      ['DM-01', 'ماده قالب‌گیری', '480000'],
+    ]);
   });
 });

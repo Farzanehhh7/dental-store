@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import * as XLSX from 'xlsx';
 import { Download, FileSpreadsheet, FileUp } from 'lucide-react';
+import { exportRowsToXlsx, parseCsvToMatrix, readSpreadsheetToMatrix } from '../../lib/excel';
 import { useStore } from '../../context/StoreContext';
 import { formatJalaliDateTime, toPersianDigits } from '../../lib/jalali';
 import { normalizePersian } from '../../lib/persian-search';
@@ -23,12 +23,9 @@ export function AdminImportExportPage() {
   const [dryRunRows, setDryRunRows] = useState<{ row: number; sku: string; titleFa: string; price: number; status: 'ok' | 'error'; msg: string }[]>([]);
   const [importJobs, setImportJobs] = useState<{ id: string; count: number; errors: number; createdAt: string }[]>([]);
 
-  const handleDownloadXlsxTemplate = () => {
+  const handleDownloadXlsxTemplate = async () => {
     const tpl = IMPORT_TEMPLATES[templateKey];
-    const ws = XLSX.utils.json_to_sheet(tpl.sample);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, templateKey);
-    XLSX.writeFile(wb, `template-${templateKey}.xlsx`);
+    await exportRowsToXlsx(tpl.sample, templateKey, `template-${templateKey}.xlsx`);
   };
 
   const runValidationFromMatrix = (rows: string[][]) => {
@@ -52,24 +49,22 @@ export function AdminImportExportPage() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf);
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const matrix = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
-    runValidationFromMatrix(matrix);
+    try {
+      const matrix = await readSpreadsheetToMatrix(file);
+      runValidationFromMatrix(matrix);
+    } catch {
+      pushToast('امکان خواندن فایل وجود ندارد. لطفاً فایل معتبر .xlsx یا .csv انتخاب کنید.', 'error');
+    }
   };
 
   const handleDryRunText = () => {
-    const lines = csvText.trim().split(/\r?\n/).filter(Boolean).map((l) => l.split(',').map((s) => s.trim()));
+    const lines = parseCsvToMatrix(csvText);
     runValidationFromMatrix(lines);
   };
 
-  const handleDownloadErrorXlsx = () => {
+  const handleDownloadErrorXlsx = async () => {
     const errs = dryRunRows.filter((r) => r.status === 'error');
-    const ws = XLSX.utils.json_to_sheet(errs);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Errors');
-    XLSX.writeFile(wb, 'import-errors.xlsx');
+    await exportRowsToXlsx(errs, 'Errors', 'import-errors.xlsx');
   };
 
   const handleCommitImport = async () => {
@@ -162,7 +157,7 @@ export function AdminImportExportPage() {
           <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-brand text-brand font-bold cursor-pointer">
             <FileSpreadsheet className="w-4 h-4" />
             <span>آپلود مستقیم فایل Excel (.xlsx) یا CSV</span>
-            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
+            <input type="file" accept=".xlsx,.csv" onChange={handleFileUpload} className="hidden" />
           </label>
           <span className="text-ink/60">یا متن CSV زیر را وارد کنید (ارقام فارسی و حروف عربی خودکار نرمال‌سازی می‌شوند):</span>
         </div>

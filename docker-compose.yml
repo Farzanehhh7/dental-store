@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '${PORT:-3000}:3000'
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATA_DIR: /app/.data
+      # DEMO ONLY: defaults to sandbox for local evaluation; never use sandbox in production.
+      # For local sandbox OTP/payment demo under NODE_ENV=production, set SESSION_SECRET (>=32 chars)
+      # and ALLOW_SANDBOX_IN_PROD=true in .env.
+      # For production deployments, set SMS_PROVIDER=live, PAYMENT_MODE=live, and provider keys in .env.
+      SMS_PROVIDER: ${SMS_PROVIDER:-sandbox}
+      PAYMENT_MODE: ${PAYMENT_MODE:-sandbox}
+    volumes:
+      - dental_data:/app/.data
+    restart: unless-stopped
+
+volumes:
+  dental_data:

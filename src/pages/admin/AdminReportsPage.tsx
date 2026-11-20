@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { FileSpreadsheet } from 'lucide-react';
+import { exportRowsToXlsx } from '../../lib/excel';
 import { useStore } from '../../context/StoreContext';
 import { formatJalaliDate, formatJalaliDateTime, formatMoney, toPersianDigits } from '../../lib/jalali';
 import { auditSeoHealth } from '../../lib/seo';
@@ -162,11 +162,8 @@ export function AdminReportsPage() {
     }
   }, [selectedReportId, orders, invoices, proformas, returns, paymentPlans, products, productCosts, categories, brands, b2bVerifications, notFoundLogs]);
 
-  const exportXlsx = () => {
-    const ws = XLSX.utils.json_to_sheet(reportRows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Report');
-    XLSX.writeFile(wb, `dentalmarket-${selectedReportId}.xlsx`);
+  const exportXlsx = async () => {
+    await exportRowsToXlsx(reportRows, 'Report', `dentalmarket-${selectedReportId}.xlsx`);
   };
 
   const salesByCategory = useMemo(() => {

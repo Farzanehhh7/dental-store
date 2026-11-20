@@ -77,7 +77,8 @@ describe('Firestore Security Rules & Hardcoded Credential Hygiene', () => {
   const rulesText = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
 
   it('removes hardcoded superadmin emails and enforces RBAC admins collection', () => {
-    expect(rulesText).not.toContain('farina.connect');
+    expect(rulesText).not.toContain('admin@example.com');
+    expect(rulesText).not.toContain('request.auth.token.email ==');
     expect(rulesText).toContain('admins/$(request.auth.uid)');
     expect(rulesText).toContain('match /rfqRequests/{rfqId}');
   });

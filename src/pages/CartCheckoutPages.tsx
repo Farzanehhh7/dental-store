@@ -599,13 +599,13 @@ export function CheckoutPage() {
 
   if (createdOrder) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-12 space-y-6">
+      <div data-testid="order-success-card" className="max-w-3xl mx-auto px-4 py-12 space-y-6">
         <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
           <div className="flex items-center gap-3">
             <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
             <div>
               <h1 className="text-xl font-extrabold">
-                سفارش با شماره <span className="tabular-nums text-brand">{createdOrder.orderNo}</span> ثبت شد
+                سفارش با شماره <span data-testid="order-success-number" className="tabular-nums text-brand">{createdOrder.orderNo}</span> ثبت شد
               </h1>
               <p className="text-xs text-ink/60 dark:text-slate-400 mt-1">
                 تاریخ ثبت: {formatJalaliDateTime(createdOrder.createdAt)}
@@ -616,7 +616,7 @@ export function CheckoutPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs p-4 rounded-xl bg-surface/60 dark:bg-slate-800/60">
             <div>
               <span className="text-ink/50 block">وضعیت سفارش</span>
-              <strong className="mt-1 block">
+              <strong data-testid="order-success-status" className="mt-1 block">
                 {createdOrder.status === 'paid'
                   ? 'پرداخت‌شده و آماده پردازش'
                   : createdOrder.status === 'awaiting_review'
@@ -683,6 +683,7 @@ export function CheckoutPage() {
                 <button
                   type="button"
                   disabled={verifying}
+                  data-testid="sandbox-verify-payment-button"
                   onClick={handleVerifyPayment}
                   className="py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50"
                 >
@@ -746,6 +747,7 @@ export function CheckoutPage() {
                   <input
                     required
                     type="text"
+                    data-testid="checkout-name-input"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
@@ -757,6 +759,7 @@ export function CheckoutPage() {
                     <input
                       required
                       type="tel"
+                      data-testid="checkout-mobile-input"
                       value={customerMobile}
                       onChange={(e) => {
                         setCustomerMobile(e.target.value);
@@ -829,6 +832,7 @@ export function CheckoutPage() {
                   <textarea
                     required
                     rows={2}
+                    data-testid="checkout-address-input"
                     value={addressLine}
                     onChange={(e) => setAddressLine(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
@@ -1022,6 +1026,7 @@ export function CheckoutPage() {
             <button
               type="submit"
               disabled={submitting}
+              data-testid="checkout-submit-button"
               className="w-full py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark disabled:opacity-50 transition-colors"
             >
               {submitting ? 'در حال ثبت سفارش...' : 'تایید و ثبت نهایی سفارش'}

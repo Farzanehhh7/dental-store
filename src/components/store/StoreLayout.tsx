@@ -203,6 +203,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
               type="button"
               onClick={() => setSearchOpen(true)}
               aria-label={t('nav.search')}
+              data-testid="header-search-button"
               className="p-2 rounded-lg border border-line dark:border-slate-700 text-ink/70 dark:text-slate-300 hover:border-brand transition-colors"
             >
               <Search className="w-4 h-4" />
@@ -413,6 +414,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
               <input
                 autoFocus
                 type="search"
+                data-testid="header-search-input"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="جستجو بر اساس نام فارسی/انگلیسی، کد SKU، کد IMED یا برند (مثلاً کامپوزیت، وودپیکر، DM-RST)..."
