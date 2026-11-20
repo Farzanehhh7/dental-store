@@ -125,12 +125,14 @@ export interface TierPrice {
   unitPrice: number;
 }
 
+export type VariantOptionType = 'shade' | 'size' | 'pack' | 'model' | 'unit';
+
 export interface ProductVariant {
   id: string;
   sku: string;
   barcode?: string;
   labelFa: string;
-  optionType: 'shade' | 'size' | 'pack' | 'model' | 'unit';
+  optionType: VariantOptionType;
   optionValueFa: string;
   colorHex?: string;
   basePrice: number | null;
