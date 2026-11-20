@@ -1,8 +1,92 @@
-import React, { useState } from 'react';
-import { MessageSquare } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, Eye, EyeOff, ImagePlus, MessageSquare, Pencil, Sparkles, Trash2 } from 'lucide-react';
+import { HeroSlideView } from '../../components/store/HeroBannerSlider';
 import { useStore } from '../../context/StoreContext';
+import { BRAND_OFFICIAL_IMAGES } from '../../data/brandProducts';
+import { IMG_COMPOSITE, IMG_EQUIPMENT, IMG_HERO_CLINIC, IMG_ROTARY } from '../../data/seed';
 import { formatJalaliDate, toPersianDigits } from '../../lib/jalali';
 import { AgentBranch, BannerItem, BlogPost, FaqItem, SitePage } from '../../types/domain';
+
+const PRESET_BANNER_IMAGES: { label: string; url: string }[] = [
+  { label: 'کلینیک دندانپزشکی', url: IMG_HERO_CLINIC },
+  { label: 'کامپوزیت و ترمیمی', url: IMG_COMPOSITE },
+  { label: 'یونیت و تجهیزات', url: IMG_EQUIPMENT },
+  { label: 'فایل روتاری و اندو', url: IMG_ROTARY },
+  { label: 'یونیت KaVo آلمان', url: '/assets/products/kavo-estetica-unit.jpg' },
+  { label: 'اتوکلاو MELAG آلمان', url: '/assets/products/melag-vacuklav.jpg' },
+  { label: 'اتوکلاو W&H Lisa', url: '/assets/products/wh-lisa-autoclave.jpg' },
+  { label: 'کامپوزیت 3M Filtek', url: '/assets/products/3m-filtek-universal.jpg' },
+  { label: 'فایل ProTaper Dentsply', url: '/assets/products/dentsply-protaper-gold.jpg' },
+  { label: 'لایت‌کیور Ivoclar', url: '/assets/products/ivoclar-bluephase-powercure.png' },
+  { label: 'ایمپلنت Straumann', url: '/assets/products/straumann-implant-system.webp' },
+  { label: 'رادیوگرافی Vatech', url: '/assets/products/vatech-greenx.jpg' },
+];
+
+interface BannerFormState {
+  id: string;
+  slot: BannerItem['slot'];
+  layout: 'split' | 'overlay';
+  accentTone: 'brand' | 'rose' | 'amber' | 'slate';
+  badgeTextFa: string;
+  titleFa: string;
+  subtitleFa: string;
+  ctaTextFa: string;
+  linkPath: string;
+  secondaryCtaTextFa: string;
+  secondaryLinkPath: string;
+  imageUrl: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+function createEmptyBannerForm(nextSortOrder: number): BannerFormState {
+  return {
+    id: '',
+    slot: 'hero',
+    layout: 'split',
+    accentTone: 'brand',
+    badgeTextFa: 'تأمین تخصصی کلینیک‌ها و مطب‌ها',
+    titleFa: '',
+    subtitleFa: '',
+    ctaTextFa: 'مشاهده محصولات',
+    linkPath: '/category/consumables',
+    secondaryCtaTextFa: '',
+    secondaryLinkPath: '',
+    imageUrl: IMG_HERO_CLINIC,
+    isActive: true,
+    sortOrder: nextSortOrder,
+  };
+}
+
+function compressBannerImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('خطا در خواندن فایل تصویر'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('فرمت تصویر معتبر نیست'));
+      img.onload = () => {
+        const maxWidth = 1280;
+        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('عدم پشتیبانی مرورگر از پردازش تصویر'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        resolve(dataUrl);
+      };
+      img.src = String(reader.result || '');
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export function AdminContentPage() {
   const {
@@ -11,6 +95,8 @@ export function AdminContentPage() {
     banners,
     faqs,
     agents,
+    brands,
+    categories,
     newsletterSubscribers,
     upsertBlogPost,
     deleteBlogPost,
@@ -28,10 +114,176 @@ export function AdminContentPage() {
   const [tab, setTab] = useState<'blog' | 'pages' | 'banners' | 'faqs' | 'agents' | 'marketing'>('blog');
   const [postForm, setPostForm] = useState({ id: '', titleFa: '', categoryFa: 'اندودانتیکس', excerptFa: '', bodyFa: '' });
   const [pageForm, setPageForm] = useState({ id: '', slug: '', titleFa: '', bodyFa: '' });
-  const [bannerForm, setBannerForm] = useState({ titleFa: '', subtitleFa: '', linkPath: '/category/consumables', slot: 'mid_promo' as BannerItem['slot'] });
+  const [bannerForm, setBannerForm] = useState<BannerFormState>(() => createEmptyBannerForm(banners.length + 1));
   const [faqForm, setFaqForm] = useState({ categoryFa: 'ارسال و اصالت', questionFa: '', answerFa: '' });
   const [agentForm, setAgentForm] = useState({ nameFa: '', province: 'فارس', provinceSlug: 'fars', city: 'شیراز', phone: '071-32300000', address: '' });
   const [smsBody, setSmsBody] = useState('کلینیک گرامی، جشنواره تجهیزات اندو دنتال‌مارکت با ۱۵٪ تخفیف همکار آغاز شد.');
+
+  const sortedBanners = useMemo(
+    () => [...banners].sort((a, b) => a.sortOrder - b.sortOrder),
+    [banners]
+  );
+
+  const activeBrandsList = useMemo(
+    () =>
+      brands
+        .filter((b) => b.isActive)
+        .sort((a, b) => (BRAND_OFFICIAL_IMAGES[b.id] ? 1 : 0) - (BRAND_OFFICIAL_IMAGES[a.id] ? 1 : 0)),
+    [brands]
+  );
+
+  const activeCategoriesList = useMemo(
+    () => categories.filter((c) => c.isActive).sort((a, b) => a.depth - b.depth || a.sortOrder - b.sortOrder),
+    [categories]
+  );
+
+  const previewBanner: BannerItem = {
+    id: bannerForm.id || 'preview_slide',
+    slot: bannerForm.slot,
+    layout: bannerForm.layout,
+    accentTone: bannerForm.accentTone,
+    badgeTextFa: bannerForm.badgeTextFa.trim() || undefined,
+    titleFa: bannerForm.titleFa.trim() || 'تیتر نمونه اسلاید تبلیغاتی یا معرفی برند',
+    subtitleFa: bannerForm.subtitleFa.trim() || 'توضیح تکمیلی درباره تخفیف، جشنواره یا برند منتخب برای نمایش در ویترین صفحه اول.',
+    ctaTextFa: bannerForm.ctaTextFa.trim() || 'مشاهده محصولات',
+    linkPath: bannerForm.linkPath.trim() || '/',
+    secondaryCtaTextFa: bannerForm.secondaryCtaTextFa.trim() || undefined,
+    secondaryLinkPath: bannerForm.secondaryLinkPath.trim() || undefined,
+    imageUrl: bannerForm.imageUrl.trim() || IMG_HERO_CLINIC,
+    isActive: bannerForm.isActive,
+    sortOrder: bannerForm.sortOrder,
+  };
+
+  const applyDiscountPreset = () => {
+    setBannerForm((prev) => ({
+      ...prev,
+      slot: 'hero',
+      layout: 'overlay',
+      accentTone: 'rose',
+      badgeTextFa: 'جشنواره تخفیف ویژه مطب‌ها',
+      titleFa: 'تخفیف‌های دوره‌ای تجهیزات و مواد مصرفی دندانپزشکی',
+      subtitleFa: 'خرید مستقیم کالاهای دارای تخفیف واقعی و شرایط ارسال فوری ویژه کلینیک‌ها و مطب‌ها.',
+      ctaTextFa: 'مشاهده کالاهای تخفیف‌دار',
+      linkPath: '/search?discount=1',
+      secondaryCtaTextFa: 'پک‌های اقتصادی کلینیک',
+      secondaryLinkPath: '/pack/new-clinic-starter-pack',
+      imageUrl: IMG_COMPOSITE,
+    }));
+  };
+
+  const applyBrandPreset = (brandId: string) => {
+    const brand = brands.find((b) => b.id === brandId);
+    if (!brand) return;
+    const officialImg = BRAND_OFFICIAL_IMAGES[brand.id]?.[0];
+    setBannerForm((prev) => ({
+      ...prev,
+      slot: 'hero',
+      accentTone: 'brand',
+      badgeTextFa: `موجود شد · برند رسمی ${brand.countryFa}`,
+      titleFa: `محصولات تخصصی برند ${brand.nameFa} (${brand.nameEn})`,
+      subtitleFa: `تأمین مستقیم تجهیزات و مواد مصرفی ${brand.nameFa} با کد اصالت IMED، گارانتی شرکتی و ارسال سراسری.`,
+      ctaTextFa: `مشاهده محصولات ${brand.nameFa}`,
+      linkPath: `/brand/${brand.slug}`,
+      secondaryCtaTextFa: 'همه برندهای رسمی',
+      secondaryLinkPath: '/brands',
+      imageUrl: officialImg || prev.imageUrl || IMG_EQUIPMENT,
+    }));
+  };
+
+  const applyCategoryPreset = (catId: string) => {
+    const cat = categories.find((c) => c.id === catId);
+    if (!cat) return;
+    setBannerForm((prev) => ({
+      ...prev,
+      slot: 'hero',
+      accentTone: 'brand',
+      badgeTextFa: 'گروه تخصصی کالا',
+      titleFa: `تامین کامل محصولات دسته ${cat.nameFa}`,
+      subtitleFa: cat.descriptionFa || `مشاهده و مقایسه قیمت انواع ${cat.nameFa} از برندهای معتبر جهانی با اصالت IMED.`,
+      ctaTextFa: `مشاهده ${cat.nameFa}`,
+      linkPath: `/category/${cat.slug}`,
+    }));
+  };
+
+  const handleSaveBanner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bannerForm.titleFa.trim()) {
+      pushToast('لطفاً تیتر بنر را وارد کنید.', 'error');
+      return;
+    }
+    if (bannerForm.imageUrl.length > 420000) {
+      pushToast('حجم تصویر آپلودی بیش از حد مجاز است. لطفاً تصویر کم‌حجم‌تری انتخاب کنید.', 'error');
+      return;
+    }
+    const nextBanner: BannerItem = {
+      id: bannerForm.id || `bn_${Date.now()}`,
+      slot: bannerForm.slot,
+      layout: bannerForm.layout,
+      accentTone: bannerForm.accentTone,
+      badgeTextFa: bannerForm.badgeTextFa.trim() || undefined,
+      titleFa: bannerForm.titleFa.trim(),
+      subtitleFa: bannerForm.subtitleFa.trim(),
+      ctaTextFa: bannerForm.ctaTextFa.trim() || 'مشاهده',
+      linkPath: bannerForm.linkPath.trim() || '/',
+      secondaryCtaTextFa: bannerForm.secondaryCtaTextFa.trim() || undefined,
+      secondaryLinkPath: bannerForm.secondaryLinkPath.trim() || undefined,
+      imageUrl: bannerForm.imageUrl.trim() || IMG_HERO_CLINIC,
+      isActive: bannerForm.isActive,
+      sortOrder: Number(bannerForm.sortOrder) || sortedBanners.length + 1,
+    };
+    await upsertBanner(nextBanner);
+    setBannerForm(createEmptyBannerForm(sortedBanners.length + 2));
+  };
+
+  const handleEditBanner = (b: BannerItem) => {
+    setBannerForm({
+      id: b.id,
+      slot: b.slot,
+      layout: b.layout === 'overlay' ? 'overlay' : 'split',
+      accentTone: b.accentTone ?? 'brand',
+      badgeTextFa: b.badgeTextFa ?? '',
+      titleFa: b.titleFa,
+      subtitleFa: b.subtitleFa,
+      ctaTextFa: b.ctaTextFa,
+      linkPath: b.linkPath,
+      secondaryCtaTextFa: b.secondaryCtaTextFa ?? '',
+      secondaryLinkPath: b.secondaryLinkPath ?? '',
+      imageUrl: b.imageUrl || IMG_HERO_CLINIC,
+      isActive: b.isActive,
+      sortOrder: b.sortOrder,
+    });
+  };
+
+  const handleMoveBanner = async (index: number, direction: -1 | 1) => {
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= sortedBanners.length) return;
+    const current = sortedBanners[index];
+    const swapWith = sortedBanners[targetIdx];
+    const orderA = current.sortOrder;
+    const orderB = swapWith.sortOrder === orderA ? orderA + direction : swapWith.sortOrder;
+    await Promise.all([
+      upsertBanner({ ...current, sortOrder: orderB }),
+      upsertBanner({ ...swapWith, sortOrder: orderA }),
+    ]);
+  };
+
+  const handleBannerFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressBannerImageFile(file);
+      if (compressed.length > 420000) {
+        pushToast('حجم تصویر پس از فشرده‌سازی همچنان زیاد است. تصویر سبک‌تری انتخاب کنید.', 'error');
+        return;
+      }
+      setBannerForm((prev) => ({ ...prev, imageUrl: compressed }));
+      pushToast('تصویر بنر بارگذاری و آماده پیش‌نمایش شد.', 'success');
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : 'خطا در پردازش تصویر', 'error');
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   const handlePublishPost = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,39 +399,372 @@ export function AdminContentPage() {
       )}
 
       {tab === 'banners' && (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4 text-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-            <input value={bannerForm.titleFa} onChange={(e) => setBannerForm({ ...bannerForm, titleFa: e.target.value })} placeholder="تیتر بنر" className="px-3 py-2 rounded-lg border border-line bg-paper dark:bg-slate-800" />
-            <input value={bannerForm.subtitleFa} onChange={(e) => setBannerForm({ ...bannerForm, subtitleFa: e.target.value })} placeholder="زیرتیتر" className="px-3 py-2 rounded-lg border border-line bg-paper dark:bg-slate-800" />
-            <input value={bannerForm.linkPath} onChange={(e) => setBannerForm({ ...bannerForm, linkPath: e.target.value })} placeholder="مسیر لینک" className="px-3 py-2 rounded-lg border border-line bg-paper dark:bg-slate-800" />
-            <button
-              type="button"
-              onClick={async () => {
-                if (!bannerForm.titleFa) return;
-                await upsertBanner({
-                  id: `bn_${Date.now()}`,
-                  slot: bannerForm.slot,
-                  titleFa: bannerForm.titleFa,
-                  subtitleFa: bannerForm.subtitleFa,
-                  ctaTextFa: 'مشاهده',
-                  linkPath: bannerForm.linkPath,
-                  imageUrl: '/src/assets/images/hero_dental_clinic_1794921818923.jpg',
-                  isActive: true,
-                  sortOrder: banners.length + 1,
-                });
-                setBannerForm({ titleFa: '', subtitleFa: '', linkPath: '/category/consumables', slot: 'mid_promo' });
-              }}
-              className="px-4 py-2 rounded-xl bg-brand text-white font-bold"
-            >
-              افزودن بنر
-            </button>
-          </div>
-          {banners.map((b) => (
-            <div key={b.id} className="p-3 rounded-xl border border-line flex justify-between items-center">
-              <span>{b.titleFa} ({b.slot}) → {b.linkPath}</span>
-              <button type="button" onClick={() => deleteBanner(b.id)} className="text-rose-600 font-bold">حذف</button>
+        <div className="space-y-6 text-xs">
+          {/* Quick Presets Bar */}
+          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-brand" />
+                <h2 className="text-sm font-extrabold">الگوهای آماده ساخت سریع اسلاید</h2>
+              </div>
+              <span className="text-ink/60 dark:text-slate-400">
+                می‌توانید برای تخفیف‌ها، معرفی برند یا دسته‌بندی با یک کلیک فیلدها را پر کنید و سپس ویرایش کنید.
+              </span>
             </div>
-          ))}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={applyDiscountPreset}
+                className="px-4 py-2.5 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold text-right hover:border-rose-500 transition-colors"
+              >
+                + تنظیم سریع بنر جشنواره و تخفیف
+              </button>
+
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) applyBrandPreset(e.target.value);
+                  e.target.value = '';
+                }}
+                aria-label="الگوی پیشنهاد برند خاص"
+                className="px-3 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+              >
+                <option value="">+ پیشنهاد و معرفی یک برند خاص...</option>
+                {activeBrandsList.map((br) => (
+                  <option key={br.id} value={br.id}>
+                    {br.nameFa} ({br.nameEn}) {BRAND_OFFICIAL_IMAGES[br.id] ? '★ تصویر رسمی' : ''}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) applyCategoryPreset(e.target.value);
+                  e.target.value = '';
+                }}
+                aria-label="الگوی معرفی دسته‌بندی"
+                className="px-3 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+              >
+                <option value="">+ بنر معرفی یک دسته‌بندی...</option>
+                {activeCategoriesList.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.depth > 0 ? '— ' : ''}{cat.nameFa}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            {/* Banner Editor Form */}
+            <form
+              onSubmit={handleSaveBanner}
+              className="xl:col-span-6 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-extrabold">
+                  {bannerForm.id ? 'ویرایش اسلاید / بنر انتخاب‌شده' : 'افزودن اسلاید یا بنر جدید'}
+                </h2>
+                {bannerForm.id && (
+                  <button
+                    type="button"
+                    onClick={() => setBannerForm(createEmptyBannerForm(sortedBanners.length + 1))}
+                    className="text-rose-600 font-bold hover:underline"
+                  >
+                    انصراف از ویرایش
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">جایگاه نمایش</span>
+                  <select
+                    value={bannerForm.slot}
+                    onChange={(e) => setBannerForm({ ...bannerForm, slot: e.target.value as BannerItem['slot'] })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+                  >
+                    <option value="hero">اسلایدر اصلی بالای صفحه (Hero)</option>
+                    <option value="top_strip">نوار اطلاع‌رسانی بالای صفحه (Top Strip)</option>
+                    <option value="mid_promo">بنر تبلیغاتی میانی صفحه (Mid Promo)</option>
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">نحوه قرارگیری نوشته و عکس</span>
+                  <select
+                    value={bannerForm.layout}
+                    onChange={(e) => setBannerForm({ ...bannerForm, layout: e.target.value as 'split' | 'overlay' })}
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+                  >
+                    <option value="split">نوشته کنار تصویر (حالت پیش‌فرض)</option>
+                    <option value="overlay">نوشته روی تصویر (با سایه تیره خوانایی)</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="sm:col-span-2 space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">برچسب بالای تیتر (اختیاری)</span>
+                  <input
+                    value={bannerForm.badgeTextFa}
+                    onChange={(e) => setBannerForm({ ...bannerForm, badgeTextFa: e.target.value })}
+                    placeholder="مثلاً: جشنواره تخفیف ویژه یا برند رسمی KaVo"
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">رنگ برچسب</span>
+                  <select
+                    value={bannerForm.accentTone}
+                    onChange={(e) =>
+                      setBannerForm({
+                        ...bannerForm,
+                        accentTone: e.target.value as BannerFormState['accentTone'],
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+                  >
+                    <option value="brand">فیروزه‌ای برند</option>
+                    <option value="rose">قرمز تخفیف</option>
+                    <option value="amber">کهربایی تجهیزات</option>
+                    <option value="slate">خنثی رسمی</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="font-bold text-ink/70 dark:text-slate-300">تیتر اصلی بنر *</span>
+                <input
+                  required
+                  value={bannerForm.titleFa}
+                  onChange={(e) => setBannerForm({ ...bannerForm, titleFa: e.target.value })}
+                  placeholder="تیتر جذاب بنر..."
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+                />
+              </label>
+
+              <label className="block space-y-1">
+                <span className="font-bold text-ink/70 dark:text-slate-300">زیرتیتر / توضیح بنر</span>
+                <textarea
+                  rows={2}
+                  value={bannerForm.subtitleFa}
+                  onChange={(e) => setBannerForm({ ...bannerForm, subtitleFa: e.target.value })}
+                  placeholder="توضیح کوتاه درباره تخفیف، ویژگی کالا یا شرایط فروش..."
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">متن دکمه اصلی</span>
+                  <input
+                    value={bannerForm.ctaTextFa}
+                    onChange={(e) => setBannerForm({ ...bannerForm, ctaTextFa: e.target.value })}
+                    placeholder="مثلاً: مشاهده محصولات"
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">لینک مقصد دکمه اصلی</span>
+                  <input
+                    dir="ltr"
+                    value={bannerForm.linkPath}
+                    onChange={(e) => setBannerForm({ ...bannerForm, linkPath: e.target.value })}
+                    placeholder="/brand/kavo یا /search?discount=1"
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-left"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">متن دکمه دوم (اختیاری)</span>
+                  <input
+                    value={bannerForm.secondaryCtaTextFa}
+                    onChange={(e) => setBannerForm({ ...bannerForm, secondaryCtaTextFa: e.target.value })}
+                    placeholder="مثلاً: همه برندها"
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">لینک دکمه دوم</span>
+                  <input
+                    dir="ltr"
+                    value={bannerForm.secondaryLinkPath}
+                    onChange={(e) => setBannerForm({ ...bannerForm, secondaryLinkPath: e.target.value })}
+                    placeholder="/brands یا /account"
+                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-left"
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-ink/70 dark:text-slate-300">آدرس تصویر یا انتخاب از گالری</span>
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 hover:border-brand cursor-pointer font-bold">
+                    <ImagePlus className="w-3.5 h-3.5 text-brand" />
+                    <span>آپلود تصویر از سیستم</span>
+                    <input type="file" accept="image/*" onChange={handleBannerFileChange} className="hidden" />
+                  </label>
+                </div>
+                <input
+                  dir="ltr"
+                  value={bannerForm.imageUrl}
+                  onChange={(e) => setBannerForm({ ...bannerForm, imageUrl: e.target.value })}
+                  placeholder="/assets/products/... یا https://..."
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-left"
+                />
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 pt-1">
+                  {PRESET_BANNER_IMAGES.map((img) => (
+                    <button
+                      key={img.url}
+                      type="button"
+                      onClick={() => setBannerForm({ ...bannerForm, imageUrl: img.url })}
+                      title={img.label}
+                      className={`group rounded-lg overflow-hidden border text-right transition-colors ${
+                        bannerForm.imageUrl === img.url
+                          ? 'border-brand ring-2 ring-brand/30'
+                          : 'border-line dark:border-slate-700 hover:border-brand'
+                      }`}
+                    >
+                      <img src={img.url} alt={img.label} className="w-full h-11 object-cover bg-surface" />
+                      <span className="block px-1 py-0.5 text-[10px] truncate text-ink/75 dark:text-slate-300">
+                        {img.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-line dark:border-slate-800">
+                <div className="flex items-center gap-4">
+                  <label className="inline-flex items-center gap-2 font-bold">
+                    <span>ترتیب:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={bannerForm.sortOrder}
+                      onChange={(e) => setBannerForm({ ...bannerForm, sortOrder: Number(e.target.value) || 1 })}
+                      className="w-16 px-2 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 tabular-nums"
+                    />
+                  </label>
+                  <label className="inline-flex items-center gap-2 font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={bannerForm.isActive}
+                      onChange={(e) => setBannerForm({ ...bannerForm, isActive: e.target.checked })}
+                      className="accent-brand"
+                    />
+                    <span>انتشار فعال</span>
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-brand text-white font-bold hover:bg-brandDark transition-colors"
+                >
+                  {bannerForm.id ? 'ذخیره تغییرات بنر' : 'افزودن به اسلایدر'}
+                </button>
+              </div>
+            </form>
+
+            {/* Live Preview + Banner Slides List */}
+            <div className="xl:col-span-6 space-y-5">
+              <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-extrabold">پیش‌نمایش زنده بنر</h2>
+                  <span className="text-[11px] font-bold text-ink/60 dark:text-slate-400">
+                    چیدمان: {bannerForm.layout === 'overlay' ? 'نوشته روی تصویر' : 'نوشته کنار تصویر'}
+                  </span>
+                </div>
+                <HeroSlideView banner={previewBanner} headingTag="h2" disableLinks compact />
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
+                <h2 className="text-sm font-extrabold">فهرست اسلایدها و بنرها ({toPersianDigits(sortedBanners.length)})</h2>
+                <div className="space-y-2.5">
+                  {sortedBanners.map((b, idx) => (
+                    <div
+                      key={b.id}
+                      className={`p-3 rounded-xl border flex flex-wrap sm:flex-nowrap items-center gap-3 ${
+                        b.isActive
+                          ? 'border-line dark:border-slate-800'
+                          : 'border-dashed border-slate-300 dark:border-slate-700 opacity-65'
+                      }`}
+                    >
+                      <img
+                        src={b.imageUrl || IMG_HERO_CLINIC}
+                        alt={b.titleFa}
+                        className="w-20 h-14 object-cover rounded-lg bg-surface shrink-0"
+                      />
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink/60 dark:text-slate-400">
+                          <span className="font-bold text-brand dark:text-teal-300">
+                            {b.slot === 'hero' ? 'اسلایدر اصلی' : b.slot === 'top_strip' ? 'نوار بالا' : 'بنر میانی'}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>{b.layout === 'overlay' ? 'روی عکس' : 'کنار عکس'}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="tabular-nums">ترتیب {toPersianDigits(b.sortOrder)}</span>
+                        </div>
+                        <p className="font-extrabold text-ink dark:text-slate-100 truncate">{b.titleFa}</p>
+                        <p dir="ltr" className="text-[11px] text-ink/55 dark:text-slate-400 truncate text-right">
+                          {b.linkPath}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleMoveBanner(idx, -1)}
+                          disabled={idx === 0}
+                          title="انتقال به بالا"
+                          className="p-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-30 hover:border-brand"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveBanner(idx, 1)}
+                          disabled={idx === sortedBanners.length - 1}
+                          title="انتقال به پایین"
+                          className="p-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-30 hover:border-brand"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => upsertBanner({ ...b, isActive: !b.isActive })}
+                          title={b.isActive ? 'غیرفعال کردن' : 'فعال کردن'}
+                          className="p-2 rounded-lg border border-line dark:border-slate-700 hover:border-brand"
+                        >
+                          {b.isActive ? <Eye className="w-3.5 h-3.5 text-emerald-600" /> : <EyeOff className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleEditBanner(b)}
+                          title="ویرایش"
+                          className="p-2 rounded-lg border border-line dark:border-slate-700 text-brand hover:border-brand"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteBanner(b.id)}
+                          title="حذف"
+                          className="p-2 rounded-lg border border-line dark:border-slate-700 text-rose-600 hover:border-rose-500"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

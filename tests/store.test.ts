@@ -1,9 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { formatMoney, gregorianToJalali, toPersianDigits } from '../src/lib/jalali';
 import { normalizePersian, scoreSearchMatch } from '../src/lib/persian-search';
 import { getProductPriceSummary, isDiscountGenuineByHistory, resolveVariantPrice } from '../src/lib/pricing';
 import { auditSeoHealth, buildFaqJsonLd, buildProductJsonLd, findOrphanProducts } from '../src/lib/seo';
 import { SEED_CAMPAIGNS, SEED_CATEGORIES, SEED_PRODUCTS, SEED_SETTINGS, SEED_BRANDS } from '../src/data/seed';
+import { SEED_BANNERS } from '../src/data/expandedCatalog';
 import { ContractPrice, Product } from '../src/types/domain';
 
 describe('Currency, Persian Digits & Jalali Calendar', () => {
@@ -141,5 +144,26 @@ describe('SEO JSON-LD, Orphan Detector & Automated Health Audit', () => {
     const kashidaFinding = findings.find((f) => f.id === 'kashida');
     expect(kashidaFinding?.severity).toBe('error');
     expect(kashidaFinding?.affectedCount).toBe(1);
+  });
+});
+
+describe('Configurable Hero Slider Banners', () => {
+  it('provides multiple active hero slides covering both split and overlay layouts with existing local assets', () => {
+    const activeHeroSlides = SEED_BANNERS.filter((b) => b.slot === 'hero' && b.isActive);
+    expect(activeHeroSlides.length).toBeGreaterThanOrEqual(3);
+    expect(activeHeroSlides.some((b) => b.layout === 'split')).toBe(true);
+    expect(activeHeroSlides.some((b) => b.layout === 'overlay')).toBe(true);
+
+    for (const slide of activeHeroSlides) {
+      expect(slide.titleFa.length).toBeGreaterThan(5);
+      expect(slide.linkPath.startsWith('/')).toBe(true);
+      if (slide.imageUrl.startsWith('/assets/')) {
+        const diskPath = path.join(process.cwd(), 'public', slide.imageUrl);
+        expect(fs.existsSync(diskPath)).toBe(true);
+      } else if (slide.imageUrl.startsWith('/src/')) {
+        const diskPath = path.join(process.cwd(), slide.imageUrl.slice(1));
+        expect(fs.existsSync(diskPath)).toBe(true);
+      }
+    }
   });
 });

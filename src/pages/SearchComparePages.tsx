@@ -22,10 +22,11 @@ export function SearchPage() {
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
   const verticalParam = (params.get('vertical') ?? '') as '' | VerticalType;
+  const discountParam = params.get('discount') === '1' || params.get('discount') === 'true';
   const pageParam = Math.max(1, Number(params.get('page') || 1) || 1);
 
   const [input, setInput] = useState(q);
-  const { products, brands, categories, customerGroup, settings, submitStockRequest } = useStore();
+  const { products, brands, categories, campaigns, currency, contractPrices, authUser, customerGroup, settings, submitStockRequest } = useStore();
   const [reqForm, setReqForm] = useState({ contactName: '', mobile: '', titleText: q, brandText: '', description: '' });
   const [serverData, setServerData] = useState<{ items: Product[]; total: number; totalPages: number } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -49,6 +50,7 @@ export function SearchPage() {
     const qs = new URLSearchParams({
       ...(q.trim() ? { q: q.trim() } : {}),
       ...(verticalParam ? { vertical: verticalParam } : {}),
+      ...(discountParam ? { discount: '1', sort: 'discount' } : {}),
       group: customerGroup,
       page: String(pageParam),
       limit: '24',
@@ -69,12 +71,25 @@ export function SearchPage() {
       })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [q, verticalParam, pageParam, customerGroup]);
+  }, [q, verticalParam, discountParam, pageParam, customerGroup]);
 
   const localResults = useMemo(() => {
-    const filtered = products.filter(
-      (p) => p.status === 'active' && (!verticalParam || p.vertical === verticalParam)
-    );
+    const filtered = products.filter((p) => {
+      if (p.status !== 'active') return false;
+      if (verticalParam && p.vertical !== verticalParam) return false;
+      if (discountParam) {
+        const summary = getProductPriceSummary(p, {
+          customerGroup,
+          campaigns,
+          currency,
+          settings,
+          contractPrices,
+          userId: authUser?.uid,
+        });
+        if (summary.discountPercent <= 0) return false;
+      }
+      return true;
+    });
     if (!q.trim()) return filtered;
     return filtered
       .map((p) => {
@@ -89,23 +104,24 @@ export function SearchPage() {
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.product);
-  }, [q, verticalParam, products, brands, categories]);
+  }, [q, verticalParam, discountParam, products, brands, categories, customerGroup, campaigns, currency, settings, contractPrices, authUser?.uid]);
 
   const displayItems = serverData ? serverData.items : localResults.slice((pageParam - 1) * 24, pageParam * 24);
   const totalCount = serverData ? serverData.total : localResults.length;
   const totalPages = serverData ? serverData.totalPages : Math.max(1, Math.ceil(localResults.length / 24));
 
-  const updateQuery = (nextQ: string, nextVertical: '' | VerticalType, nextPage = 1) => {
+  const updateQuery = (nextQ: string, nextVertical: '' | VerticalType, nextPage = 1, nextDiscount = discountParam) => {
     const next: Record<string, string> = {};
     if (nextQ.trim()) next.q = nextQ.trim();
     if (nextVertical) next.vertical = nextVertical;
+    if (nextDiscount) next.discount = '1';
     if (nextPage > 1) next.page = String(nextPage);
     setParams(next);
   };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    updateQuery(input, verticalParam, 1);
+    updateQuery(input, verticalParam, 1, discountParam);
   };
 
   const handleRequestSubmit = async (e: React.FormEvent) => {
@@ -128,7 +144,7 @@ export function SearchPage() {
           />
           <select
             value={verticalParam}
-            onChange={(e) => updateQuery(input, e.target.value as '' | VerticalType, 1)}
+            onChange={(e) => updateQuery(input, e.target.value as '' | VerticalType, 1, discountParam)}
             aria-label="فیلتر حوزه تخصصی"
             className="px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
           >
@@ -136,6 +152,15 @@ export function SearchPage() {
               <option key={v.id || 'all'} value={v.id}>{v.label}</option>
             ))}
           </select>
+          <label className="inline-flex items-center gap-2 px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold cursor-pointer">
+            <input
+              type="checkbox"
+              checked={discountParam}
+              onChange={(e) => updateQuery(input, verticalParam, 1, e.target.checked)}
+              className="accent-brand"
+            />
+            <span>فقط تخفیف‌دارها</span>
+          </label>
           <button type="submit" className="px-5 py-2.5 rounded-lg bg-brand text-white text-sm font-bold inline-flex items-center gap-2">
             <Search className="w-4 h-4" />
             <span>جستجو</span>

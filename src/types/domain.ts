@@ -630,10 +630,15 @@ export interface SitePage {
 export interface BannerItem {
   id: string;
   slot: 'hero' | 'top_strip' | 'mid_promo';
+  layout?: 'split' | 'overlay';
+  badgeTextFa?: string;
   titleFa: string;
   subtitleFa: string;
   ctaTextFa: string;
   linkPath: string;
+  secondaryCtaTextFa?: string;
+  secondaryLinkPath?: string;
+  accentTone?: 'brand' | 'rose' | 'amber' | 'slate';
   imageUrl: string;
   isActive: boolean;
   sortOrder: number;

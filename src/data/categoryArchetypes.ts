@@ -1,4 +1,4 @@
-import { VariantOptionType } from '../types/domain';
+import { ProductVariant } from '../types/domain';
 
 export interface CategoryArchetype {
   catId: string;
@@ -8,7 +8,7 @@ export interface CategoryArchetype {
   enPrefix: string;
   kind: 'consumable' | 'capital_equipment';
   basePrice: number;
-  optType: VariantOptionType;
+  optType: ProductVariant['optionType'];
   optLabel: string;
   brands: string[];
   clinicalBullets: string[];

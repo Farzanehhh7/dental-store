@@ -2458,11 +2458,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
+    const cleanBanner = Object.fromEntries(
+      Object.entries(banner).filter(([, value]) => value !== undefined)
+    ) as BannerItem;
     try {
-      await setDoc(doc(db, 'banners', banner.id), banner);
+      await setDoc(doc(db, 'banners', cleanBanner.id), cleanBanner);
+      setBanners((prev) => {
+        const exists = prev.some((item) => item.id === cleanBanner.id);
+        return exists
+          ? prev.map((item) => (item.id === cleanBanner.id ? cleanBanner : item))
+          : [...prev, cleanBanner];
+      });
       pushToast('بنر تبلیغاتی ذخیره شد.', 'success');
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `banners/${banner.id}`);
+      handleFirestoreError(error, OperationType.WRITE, `banners/${cleanBanner.id}`);
     }
   };
 

@@ -34,6 +34,9 @@ import {
   BRAND_OFFICIAL_IMAGES,
   BRAND_OFFICIAL_URLS,
 } from './brandProducts';
+import { CATEGORY_ARCHETYPES, CategoryArchetype } from './categoryArchetypes';
+import { buildSeoProductFields, enrichProductWithSeo } from './seoCopyHelper';
+import { stripKashida } from '../lib/persian-search';
 
 const nowIso = new Date().toISOString();
 const plusDaysIso = (d: number) => new Date(Date.now() + d * 86400000).toISOString();
@@ -542,72 +545,120 @@ export function extractProductCostRecord(product: Product): ProductCostRecord {
   return { productId: product.id, variantCosts, updatedAt: nowIso };
 }
 
-const PRODUCT_ARCHETYPES = [
-  { prefix: 'فایل روتاری اندودانتیکس', cat: 'cat_endo_files', parentCat: 'cat_endodontics', kind: 'consumable' as const, img: IMG_ROTARY, base: 1850000, optType: 'size' as const, optLabel: 'طول ۲۵ میلی‌متر - بسته ۶ عددی' },
-  { prefix: 'کن گوتاپرکا استریل با کد رنگ ISO', cat: 'cat_gutta_paper', parentCat: 'cat_endodontics', kind: 'consumable' as const, img: IMG_ROTARY, base: 420000, optType: 'pack' as const, optLabel: 'بسته ۶۰ عددی تیپر ۴٪' },
-  { prefix: 'کامپوزیت نانوهیبرید ترمیمی قدامی و خلفی', cat: 'cat_composites', parentCat: 'cat_restorative', kind: 'consumable' as const, img: IMG_COMPOSITE, base: 2450000, optType: 'shade' as const, optLabel: 'شید A2 سرنگ ۴ گرمی' },
-  { prefix: 'باندینگ یونیورسال تک‌مرحله‌ای نسل هشتم', cat: 'cat_bonding', parentCat: 'cat_restorative', kind: 'consumable' as const, img: IMG_COMPOSITE, base: 2900000, optType: 'unit' as const, optLabel: 'بطری ۵ میلی‌لیتری' },
-  { prefix: 'دستکش معاینه نیتریل بدون پودر کلینیکال', cat: 'cat_gloves_masks', parentCat: 'cat_consumables', kind: 'consumable' as const, img: IMG_GLOVES, base: 295000, optType: 'size' as const, optLabel: 'سایز M بسته ۱۰۰ عددی' },
-  { prefix: 'سرسوزن تزریق دندانپزشکی سیلیکونی استریل', cat: 'cat_anesthesia_needles', parentCat: 'cat_consumables', kind: 'consumable' as const, img: IMG_GLOVES, base: 480000, optType: 'size' as const, optLabel: 'گیج 30G کوتاه - بسته ۱۰۰ تایی' },
-  { prefix: 'توربین پوش‌باتن سرامیکی فایبر اپتیک', cat: 'cat_turbines', parentCat: 'cat_burs_handpieces', kind: 'capital_equipment' as const, img: IMG_EQUIPMENT, base: 16500000, optType: 'model' as const, optLabel: 'اتصال ۴ سوراخ میدوست' },
-  { prefix: 'آنگل ایمپلنت کاهنده ۲۰ به ۱ پوش‌باتن', cat: 'cat_contra_angles', parentCat: 'cat_burs_handpieces', kind: 'capital_equipment' as const, img: IMG_EQUIPMENT, base: 24500000, optType: 'model' as const, optLabel: 'نسخه جراحی E-Type' },
-  { prefix: 'فرز الماسی توربین کلینیکال بسته ۵ عددی', cat: 'cat_diamond_burs', parentCat: 'cat_burs_handpieces', kind: 'consumable' as const, img: IMG_ROTARY, base: 340000, optType: 'pack' as const, optLabel: 'کد آبی متوسط' },
-  { prefix: 'لایت‌کیور بی‌سیم با باتری لیتیومی پهن‌طیف', cat: 'cat_curing_lights', parentCat: 'cat_clinic_equipment', kind: 'capital_equipment' as const, img: IMG_EQUIPMENT, base: 11800000, optType: 'model' as const, optLabel: 'شدت ۲۰۰۰ mW/cm²' },
-  { prefix: 'سیلیکون قالب‌گیری افزایشی پوتی و واش', cat: 'cat_alginate_silicone', parentCat: 'cat_prosthodontics', kind: 'consumable' as const, img: IMG_COMPOSITE, base: 3850000, optType: 'pack' as const, optLabel: 'ست پوتی ۲×۴۵۰ گرمی' },
-  { prefix: 'سمان رزینی دوآل‌کیور سلف‌ادهزیو پروتز', cat: 'cat_luting_cements', parentCat: 'cat_prosthodontics', kind: 'consumable' as const, img: IMG_COMPOSITE, base: 4200000, optType: 'shade' as const, optLabel: 'سرنگ اتومیکس ترنسلوسنت' },
-  { prefix: 'رول اتوکلاو لمینت‌شده با نشانگر بخار و اتیلن اکساید', cat: 'cat_autoclave_pouches', parentCat: 'cat_sterilization', kind: 'consumable' as const, img: IMG_GLOVES, base: 650000, optType: 'size' as const, optLabel: 'عرض ۱۰ سانتی‌متر طول ۲۰۰ متر' },
-  { prefix: 'براکت ارتودنسی فلزی MBT اسلات ۰.۰۲۲', cat: 'cat_brackets', parentCat: 'cat_orthodontics', kind: 'consumable' as const, img: IMG_ROTARY, base: 1950000, optType: 'pack' as const, optLabel: 'ست کامل فک بالا و پایین' },
-  { prefix: 'پودر استخوان آلوگرافت مینرالیزه جراحی ایمپلنت', cat: 'cat_bone_graft', parentCat: 'cat_implantology', kind: 'consumable' as const, img: IMG_COMPOSITE, base: 5400000, optType: 'pack' as const, optLabel: 'ویال ۰.۵ سی‌سی' },
-  { prefix: 'فورسپس جراحی و کشیدن دندان استیل ضدزنگ', cat: 'cat_forceps', parentCat: 'cat_surgery', kind: 'consumable' as const, img: IMG_ROTARY, base: 2300000, optType: 'model' as const, optLabel: 'شماره ۱۵۰ قدامی بالا' },
-  { prefix: 'سرقلم جرم‌گیر اولتراسونیک سازگار با ساطلک و EMS', cat: 'cat_scaler_tips', parentCat: 'cat_periodontics', kind: 'consumable' as const, img: IMG_ROTARY, base: 690000, optType: 'model' as const, optLabel: 'سری G1 سوپراجینجیوال' },
-  { prefix: 'روکش پیش‌ساخته استیل اطفال (SSC)', cat: 'cat_ssc_crowns', parentCat: 'cat_pediatrics', kind: 'consumable' as const, img: IMG_ROTARY, base: 580000, optType: 'size' as const, optLabel: 'بسته ۵ عددی مولر اول' },
-  { prefix: 'بلانک زیرکونیا مولتی‌لایر CAD/CAM قطر ۹۸ میلی‌متر', cat: 'cat_zirconia_cadcam', parentCat: 'cat_lab', kind: 'consumable' as const, img: IMG_EQUIPMENT, base: 6800000, optType: 'shade' as const, optLabel: 'شید A2 ضخامت ۱۴ میلی‌متر' },
-  { prefix: 'سنسور رادیوگرافی دیجیتال RVG با کابل تقویت‌شده', cat: 'cat_rvg_sensors', parentCat: 'cat_imaging', kind: 'capital_equipment' as const, img: IMG_EQUIPMENT, base: 89000000, optType: 'size' as const, optLabel: 'سایز ۱.۵ با نرم‌افزار فارسی' },
-];
+function resolveFallbackImg(arch: CategoryArchetype): string {
+  if (arch.kind === 'capital_equipment') return IMG_EQUIPMENT;
+  if (
+    arch.categoryIds.includes('cat_consumables') ||
+    arch.categoryIds.includes('cat_sterilization') ||
+    arch.categoryIds.includes('cat_nitrile_exam') ||
+    arch.categoryIds.includes('cat_surgical_gloves')
+  ) {
+    return IMG_GLOVES;
+  }
+  if (
+    arch.categoryIds.includes('cat_endodontics') ||
+    arch.categoryIds.includes('cat_burs_handpieces') ||
+    arch.categoryIds.includes('cat_orthodontics') ||
+    arch.categoryIds.includes('cat_surgery')
+  ) {
+    return IMG_ROTARY;
+  }
+  return IMG_COMPOSITE;
+}
 
-export function generateCatalogProducts(totalTarget = 1024): {
+export function generateCatalogProducts(totalTarget = 1720): {
   publicProducts: Product[];
   costRecords: ProductCostRecord[];
 } {
-  const curatedBase = [...SEED_PRODUCTS, ...BRAND_CATALOG_PRODUCTS];
+  const brandById = new Map(EXPANDED_BRANDS.map((b) => [b.id, b]));
+  const catById = new Map(EXPANDED_CATEGORIES.map((c) => [c.id, c]));
+
+  const curatedBase = [...SEED_PRODUCTS, ...BRAND_CATALOG_PRODUCTS].map((p) =>
+    enrichProductWithSeo(p, brandById.get(p.brandId), catById.get(p.primaryCategoryId)?.nameFa ?? 'تجهیزات و مواد دندانپزشکی')
+  );
   const costRecords: ProductCostRecord[] = curatedBase.map(extractProductCostRecord);
   const publicProducts: Product[] = curatedBase.map(stripCostPriceFromProduct);
 
+  const brandCounts = new Map<string, number>();
+  for (const p of publicProducts) {
+    brandCounts.set(p.brandId, (brandCounts.get(p.brandId) ?? 0) + 1);
+  }
+
+  // Reserve tail slots for unscraped / underrepresented brands so zero brand page is empty
+  const missingBrands = EXPANDED_BRANDS.filter((b) => !BRAND_OFFICIAL_IMAGES[b.id]);
   const extraNeeded = Math.max(0, totalTarget - publicProducts.length);
+  const tailReserve = Math.min(extraNeeded, missingBrands.length * 2);
+  const primaryCount = extraNeeded - tailReserve;
+
+  const seenTitles = new Set(publicProducts.map((p) => p.titleFa.trim()));
+
   for (let i = 0; i < extraNeeded; i++) {
-    const arch = PRODUCT_ARCHETYPES[i % PRODUCT_ARCHETYPES.length];
-    const brand = EXPANDED_BRANDS[(i * 7 + 3) % EXPANDED_BRANDS.length];
-    const seriesNum = Math.floor(i / PRODUCT_ARCHETYPES.length) + 1;
+    const isPrimary = i < primaryCount;
+    const archIdx = isPrimary
+      ? i % CATEGORY_ARCHETYPES.length
+      : (i * 5) % CATEGORY_ARCHETYPES.length;
+    const arch = CATEGORY_ARCHETYPES[archIdx];
+
+    let brand = EXPANDED_BRANDS[0];
+    if (isPrimary) {
+      const preferredId = arch.brands[Math.floor(i / CATEGORY_ARCHETYPES.length) % arch.brands.length];
+      brand = brandById.get(preferredId) ?? EXPANDED_BRANDS[i % EXPANDED_BRANDS.length];
+    } else {
+      const mbIdx = (i - primaryCount) % missingBrands.length;
+      brand = missingBrands[mbIdx];
+    }
+
     const code = 2000 + i;
     const id = `prod_cat_${code}`;
+    const seriesNum = Math.floor(i / CATEGORY_ARCHETYPES.length) + 1;
+    const modelCode = `${brand.nameEn.split(/[^A-Za-z0-9]/)[0].toUpperCase() || 'DM'}-${code}`;
+    let titleFa = stripKashida(`${arch.prefix} ${brand.nameFa} مدل ${modelCode}`).slice(0, 195);
+    if (seenTitles.has(titleFa)) {
+      titleFa = stripKashida(`${arch.prefix} ${brand.nameFa} سری ${seriesNum}-${code}`).slice(0, 195);
+    }
+    seenTitles.add(titleFa);
+
+    const imedCode = `IMED-${410000 + i}`;
     const priceMultiplier = 1 + ((i % 7) * 0.08);
-    const basePrice = Math.round((arch.base * priceMultiplier) / 10000) * 10000;
+    const basePrice = Math.round((arch.basePrice * priceMultiplier) / 10000) * 10000;
     const stock = i % 29 === 0 ? 0 : 12 + (i % 45);
     const isOut = stock === 0;
     const isCall = arch.kind === 'capital_equipment' && i % 15 === 0;
     const expiresDays = 60 + ((i * 19) % 540);
     const slug = `dental-item-${code}-${brand.slug}`;
     const brandImages = BRAND_OFFICIAL_IMAGES[brand.id];
-    const resolvedImg = brandImages ? brandImages[i % brandImages.length] : arch.img;
+    const resolvedImg = brandImages ? brandImages[i % brandImages.length] : resolveFallbackImg(arch);
+    const seoFields = buildSeoProductFields({
+      titleFa,
+      brand,
+      categoryNameFa: arch.categoryNameFa,
+      imedCode,
+      kind: arch.kind,
+      clinicalBullets: arch.clinicalBullets,
+      faqPair: { q: arch.faqQ, a: arch.faqA },
+    });
 
     const prod: Product = {
       id,
       vertical: 'dental',
       sku: `DM-${code}`,
-      imedCode: `IMED-${410000 + i}`,
-      titleFa: `${arch.prefix} ${brand.nameFa} مدل سری ${seriesNum}`,
-      titleEn: `${brand.nameEn} Dental Supply Series ${code}`,
+      imedCode,
+      titleFa,
+      titleEn: `${brand.nameEn} ${arch.enPrefix} (${modelCode})`,
       slug,
+      metaTitle: seoFields.metaTitle,
+      metaDescription: seoFields.metaDescription,
       brandId: brand.id,
       originCountryCode: brand.countryCode,
       originCountryFa: brand.countryFa,
-      primaryCategoryId: arch.cat,
-      categoryIds: [arch.cat, arch.parentCat],
+      primaryCategoryId: arch.catId,
+      categoryIds: arch.categoryIds,
       kind: arch.kind,
       status: isOut ? 'out_of_stock' : 'active',
       pricingMode: isCall ? 'call_for_price' : 'fixed',
-      shortDescriptionFa: `${arch.prefix} تولید برند ${brand.nameFa} (${brand.countryFa}) با استاندارد بین‌المللی و کد ردیابی وزارت بهداشت.`,
-      descriptionFa: `محصول تخصصی ${arch.prefix} از برند ${brand.nameFa} ویژه مطب‌ها، کلینیک‌ها و مراکز درمانی دندانپزشکی. دارای تاییدیه CE/ISO، کنترل بچ تولید و گارانتی اصالت کالا.`,
+      shortDescriptionFa: seoFields.shortDescriptionFa,
+      descriptionFa: seoFields.descriptionFa,
+      faqs: seoFields.faqs,
       imageUrl: resolvedImg,
       galleryUrls: [resolvedImg],
       warrantyMonths: arch.kind === 'capital_equipment' ? 12 : undefined,
@@ -619,7 +670,7 @@ export function generateCatalogProducts(totalTarget = 1024): {
       ratingCount: 3 + (i % 18),
       viewCount: 80 + (i % 600),
       soldCount: 15 + (i % 240),
-      tags: [brand.slug, arch.kind, arch.parentCat],
+      tags: [brand.slug, arch.kind, ...arch.categoryIds],
       attributes: {
         origin_standard: ['CE', 'ISO13485'],
         pack_count: arch.kind === 'consumable' ? 10 : 1,
@@ -678,6 +729,7 @@ export function generateCatalogProducts(totalTarget = 1024): {
     };
 
     publicProducts.push(prod);
+    brandCounts.set(brand.id, (brandCounts.get(brand.id) ?? 0) + 1);
     costRecords.push({
       productId: id,
       variantCosts: { [`var_${code}_1`]: Math.round(basePrice * 0.76) },
@@ -688,9 +740,9 @@ export function generateCatalogProducts(totalTarget = 1024): {
   return { publicProducts, costRecords };
 }
 
-const GENERATED_1024 = generateCatalogProducts(1024);
-export const EXPANDED_PRODUCTS: Product[] = GENERATED_1024.publicProducts;
-export const SEED_PRODUCT_COSTS: ProductCostRecord[] = GENERATED_1024.costRecords;
+const GENERATED_CATALOG = generateCatalogProducts(1720);
+export const EXPANDED_PRODUCTS: Product[] = GENERATED_CATALOG.publicProducts;
+export const SEED_PRODUCT_COSTS: ProductCostRecord[] = GENERATED_CATALOG.costRecords;
 
 export const SEED_WAREHOUSES: Warehouse[] = [
   { id: 'wh_teh', code: 'TEH-CENTRAL', nameFa: 'انبار مرکزی تهران (آزادی)', city: 'تهران', address: 'تهران، بزرگراه فتح، مرکز لجستیک تجهیزات پزشکی', isActive: true, isDefault: true },
@@ -745,8 +797,84 @@ export const SEED_PAGES: SitePage[] = [
 ];
 
 export const SEED_BANNERS: BannerItem[] = [
-  { id: 'ban_hero', slot: 'hero', titleFa: 'تجهیزات و مواد دندانپزشکی با قیمت شفاف و اصالت IMED', subtitleFa: 'تامین مستقیم کلینیک‌ها با پیش‌فاکتور رسمی، کنترل FEFO و ارسال سراسری', ctaTextFa: 'مشاهده کاتالوگ محصولات', linkPath: '/category/consumables', imageUrl: IMG_HERO_CLINIC, isActive: true, sortOrder: 1 },
-  { id: 'ban_strip', slot: 'top_strip', titleFa: 'جشنواره تجهیزات ترمیمی و مصرفی مطب', subtitleFa: 'ارسال رایگان سفارش‌های بالای ۱۵ میلیون تومان در تهران', ctaTextFa: 'مشاهده پیشنهادها', linkPath: '/category/restorative', imageUrl: IMG_COMPOSITE, isActive: true, sortOrder: 2 },
+  {
+    id: 'ban_hero',
+    slot: 'hero',
+    layout: 'split',
+    badgeTextFa: 'تأمین تخصصی کلینیک‌ها، مطب‌ها و لابراتوارهای دندانپزشکی',
+    titleFa: 'تجهیزات و مواد دندانپزشکی با قیمت شفاف و اصالت IMED',
+    subtitleFa: 'از مواد مصرفی روزانه و کامپوزیت‌های ترمیمی با کنترل دقیق تاریخ انقضا تا تجهیزات سرمایه‌ای مطب همراه با پیش‌فاکتور رسمی، نصب در محل و گارانتی شرکتی.',
+    ctaTextFa: 'مشاهده کاتالوگ محصولات',
+    linkPath: '/category/consumables',
+    secondaryCtaTextFa: 'حساب همکاری B2B کلینیک‌ها',
+    secondaryLinkPath: '/account',
+    accentTone: 'brand',
+    imageUrl: IMG_HERO_CLINIC,
+    isActive: true,
+    sortOrder: 1,
+  },
+  {
+    id: 'ban_hero_discount',
+    slot: 'hero',
+    layout: 'overlay',
+    badgeTextFa: 'جشنواره تخفیف ویژه مطب‌ها و کلینیک‌ها',
+    titleFa: 'تخفیف‌های دوره‌ای ترمیمی، اندودانتیکس و مواد قالب‌گیری',
+    subtitleFa: 'خرید مستقیم کالاهای دارای تخفیف واقعی ۱۴ روزه با تاریخ مصرف معتبر FEFO و ارسال سریع برای سراسر کشور.',
+    ctaTextFa: 'مشاهده کالاهای تخفیف‌دار',
+    linkPath: '/search?discount=1',
+    secondaryCtaTextFa: 'پک‌های اقتصادی کلینیک',
+    secondaryLinkPath: '/pack/new-clinic-starter-pack',
+    accentTone: 'rose',
+    imageUrl: IMG_COMPOSITE,
+    isActive: true,
+    sortOrder: 2,
+  },
+  {
+    id: 'ban_hero_kavo',
+    slot: 'hero',
+    layout: 'split',
+    badgeTextFa: 'برند رسمی · تجهیزات اروپایی و آلمانی',
+    titleFa: 'یونیت‌ها و توربین‌های KaVo آلمان موجود و آماده تأمین',
+    subtitleFa: 'مجموعه کامل تجهیزات سرمایه‌ای و هندپیس‌های اورجینال کاوو به همراه گارانتی شرکتی، نصب توسط تکنسین مجاز و پیش‌فاکتور رسمی.',
+    ctaTextFa: 'مشاهده محصولات برند KaVo',
+    linkPath: '/brand/kavo',
+    secondaryCtaTextFa: 'فهرست همه برندها',
+    secondaryLinkPath: '/brands',
+    accentTone: 'brand',
+    imageUrl: '/assets/products/kavo-estetica-unit.jpg',
+    isActive: true,
+    sortOrder: 3,
+  },
+  {
+    id: 'ban_hero_melag',
+    slot: 'hero',
+    layout: 'overlay',
+    badgeTextFa: 'تجهیز استاندارد اتاق استریلیزاسیون',
+    titleFa: 'اتوکلاوهای کلاس B مِلاگ (MELAG) آلمان با نصب در محل',
+    subtitleFa: 'مشاوره فنی رایگان برای انتخاب ظرفیت اتوکلاو، خرید اقساطی کلینیک‌ها و پشتیبانی قطعات تا ۵ سال.',
+    ctaTextFa: 'مشاهده اتوکلاوهای MELAG',
+    linkPath: '/brand/melag',
+    secondaryCtaTextFa: 'نمایندگی‌های استانی',
+    secondaryLinkPath: '/agents',
+    accentTone: 'amber',
+    imageUrl: '/assets/products/melag-vacuklav.jpg',
+    isActive: true,
+    sortOrder: 4,
+  },
+  {
+    id: 'ban_strip',
+    slot: 'top_strip',
+    layout: 'split',
+    badgeTextFa: 'پیشنهاد ویژه',
+    titleFa: 'جشنواره تجهیزات ترمیمی و مصرفی مطب — ارسال رایگان سفارش‌های بالای ۱۵ میلیون تومان در تهران',
+    subtitleFa: 'ارسال رایگان سفارش‌های بالای ۱۵ میلیون تومان در تهران',
+    ctaTextFa: 'مشاهده پیشنهادها',
+    linkPath: '/category/restorative',
+    accentTone: 'brand',
+    imageUrl: IMG_COMPOSITE,
+    isActive: true,
+    sortOrder: 5,
+  },
 ];
 
 export const SEED_FAQS: FaqItem[] = [

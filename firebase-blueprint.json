@@ -274,6 +274,28 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "rfqNo", "userId", "customerMobile", "customerName", "productId", "variantId", "quantity", "status", "createdAt", "updatedAt"]
+    },
+    "BannerItem": {
+      "title": "BannerItem",
+      "description": "Configurable storefront hero slider, top strip, and mid-page promotional banner.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "slot": { "type": "string", "enum": ["hero", "top_strip", "mid_promo"] },
+        "layout": { "type": "string", "enum": ["split", "overlay"] },
+        "badgeTextFa": { "type": "string", "maxLength": 120 },
+        "titleFa": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "subtitleFa": { "type": "string", "maxLength": 500 },
+        "ctaTextFa": { "type": "string", "maxLength": 80 },
+        "linkPath": { "type": "string", "maxLength": 240 },
+        "secondaryCtaTextFa": { "type": "string", "maxLength": 80 },
+        "secondaryLinkPath": { "type": "string", "maxLength": 240 },
+        "accentTone": { "type": "string", "enum": ["brand", "rose", "amber", "slate"] },
+        "imageUrl": { "type": "string", "maxLength": 450000 },
+        "isActive": { "type": "boolean" },
+        "sortOrder": { "type": "number" }
+      },
+      "required": ["id", "slot", "titleFa", "linkPath", "imageUrl", "isActive", "sortOrder"]
     }
   },
   "firestore": {
@@ -308,7 +330,7 @@
     "/stockMovements/{movementId}": { "schema": "StockMovement", "description": "Inventory movement ledger" },
     "/contractPrices/{contractId}": { "schema": "ContractPrice", "description": "Customer-specific contract price agreements" },
     "/pages/{pageId}": { "schema": "SitePage", "description": "Static CMS informational pages" },
-    "/banners/{bannerId}": { "schema": "BannerItem", "description": "Storefront hero and promo banners" },
+    "/banners/{bannerId}": { "schema": { "$ref": "#/entities/BannerItem" }, "description": "Storefront hero and promo banners" },
     "/faqs/{faqId}": { "schema": "FaqItem", "description": "Global FAQ knowledge base" },
     "/notFoundLogs/{logId}": { "schema": "NotFoundLog", "description": "404 path hits log" },
     "/redirects/{redirectId}": { "schema": "Redirect", "description": "301/302/410 URL redirects" },

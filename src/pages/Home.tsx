@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Building2, CheckCircle2, FileText, MapPin, PackageCheck, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Building2, CheckCircle2, FileText, MapPin, PackageCheck, ShieldCheck, X } from 'lucide-react';
+import HeroBannerSlider, { HeroSlideView } from '../components/store/HeroBannerSlider';
 import ProductCard from '../components/store/ProductCard';
 import CountdownTimer from '../components/store/CountdownTimer';
 import { useStore } from '../context/StoreContext';
@@ -32,9 +33,29 @@ export default function Home() {
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<CollectionTab>('bestsellers');
+  const [stripDismissed, setStripDismissed] = useState(false);
 
   const heroBanner = useMemo(
-    () => banners.find((b) => b.slot === 'hero' && b.isActive),
+    () =>
+      banners
+        .filter((b) => b.slot === 'hero' && b.isActive)
+        .sort((a, b) => a.sortOrder - b.sortOrder)[0],
+    [banners]
+  );
+
+  const topStripBanner = useMemo(
+    () =>
+      banners
+        .filter((b) => b.slot === 'top_strip' && b.isActive)
+        .sort((a, b) => a.sortOrder - b.sortOrder)[0],
+    [banners]
+  );
+
+  const midPromoBanner = useMemo(
+    () =>
+      banners
+        .filter((b) => b.slot === 'mid_promo' && b.isActive)
+        .sort((a, b) => a.sortOrder - b.sortOrder)[0],
     [banners]
   );
 
@@ -118,49 +139,41 @@ export default function Home() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-16">
-      {/* 1. Hero Split Section */}
-      <section className="space-y-6">
-        <div className="grid lg:grid-cols-12 gap-8 items-stretch bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
-          <div className="lg:col-span-6 p-8 lg:p-12 flex flex-col justify-center gap-5">
-            <p className="text-xs font-bold text-brand dark:text-teal-300">
-              تأمین تخصصی کلینیک‌ها، مطب‌ها و لابراتوارهای دندانپزشکی ({t('counts.products', { count: products.length })})
-            </p>
-            <h1 className="text-3xl lg:text-4xl font-extrabold leading-snug text-ink dark:text-slate-100 [text-wrap:balance]">
-              {heroBanner?.titleFa || 'تجهیزات و مواد دندانپزشکی با قیمت شفاف و اصالت IMED'}
-            </h1>
-            <p className="text-sm lg:text-base text-ink/75 dark:text-slate-300 leading-relaxed max-w-xl">
-              {heroBanner?.subtitleFa ||
-                'از مواد مصرفی روزانه و کامپوزیت‌های ترمیمی با کنترل دقیق تاریخ انقضا تا تجهیزات سرمایه‌ای مطب همراه با پیش‌فاکتور رسمی، نصب در محل و گارانتی شرکتی.'}
-            </p>
-            <div className="flex flex-wrap items-center gap-3 pt-2">
+    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-6 lg:py-8 space-y-14">
+      {/* Optional Slim Top Strip Announcement */}
+      {topStripBanner && !stripDismissed && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2 rounded-xl bg-brand/10 dark:bg-teal-950/60 border border-brand/20 dark:border-teal-800/60 text-xs">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            {topStripBanner.badgeTextFa && (
+              <span className="font-extrabold text-brand dark:text-teal-300 shrink-0">
+                {topStripBanner.badgeTextFa}:
+              </span>
+            )}
+            <span className="font-bold text-ink dark:text-slate-100 truncate">{topStripBanner.titleFa}</span>
+            {topStripBanner.ctaTextFa && topStripBanner.linkPath && (
               <Link
-                to={heroBanner?.linkPath || '/category/consumables'}
-                className="px-6 py-3 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors inline-flex items-center gap-2"
+                to={topStripBanner.linkPath}
+                className="inline-flex items-center gap-1 font-extrabold text-brand dark:text-teal-300 hover:underline shrink-0"
               >
-                <span>{heroBanner?.ctaTextFa || 'مشاهده کاتالوگ محصولات'}</span>
-                <ArrowLeft className="w-4 h-4" />
+                <span>{topStripBanner.ctaTextFa}</span>
+                <ArrowLeft className="w-3.5 h-3.5" />
               </Link>
-              <Link
-                to="/account"
-                className="px-5 py-3 rounded-lg border border-line dark:border-slate-700 text-sm font-bold text-ink dark:text-slate-200 hover:border-brand transition-colors"
-              >
-                حساب همکاری B2B کلینیک‌ها
-              </Link>
-            </div>
+            )}
           </div>
-
-          <div className="lg:col-span-6 min-h-[260px] lg:min-h-[380px] bg-surface dark:bg-slate-800">
-            <img
-              src={heroBanner?.imageUrl || IMG_HERO_CLINIC}
-              alt="اتاق درمان کلینیک دندانپزشکی مجهز به یونیت و تجهیزات استریل"
-              width={960}
-              height={540}
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-            />
-          </div>
+          <button
+            type="button"
+            onClick={() => setStripDismissed(true)}
+            aria-label="بستن اعلان"
+            className="p-1 rounded-lg text-ink/60 dark:text-slate-400 hover:text-ink dark:hover:text-white shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
+      )}
+
+      {/* 1. Hero Multi-Slide Banner + Proof Strip */}
+      <section className="space-y-6">
+        <HeroBannerSlider banners={banners} productCount={products.length} />
 
         {/* 4-column Proof Strip */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -266,6 +279,13 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Optional Mid-Page Promotional Banner */}
+      {midPromoBanner && (
+        <section>
+          <HeroSlideView banner={midPromoBanner} headingTag="h2" compact />
+        </section>
+      )}
 
       {/* 3. Clinic Starter Packs */}
       <section className="space-y-8">

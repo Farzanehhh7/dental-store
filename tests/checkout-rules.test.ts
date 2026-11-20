@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { calculateAuthoritativeCheckout, SHIPPING_FEES } from '../server/pricing';
-import { EXPANDED_PRODUCTS } from '../src/data/expandedCatalog';
+import { EXPANDED_BRANDS, EXPANDED_CATEGORIES, EXPANDED_PRODUCTS } from '../src/data/expandedCatalog';
+import { auditSeoHealth } from '../src/lib/seo';
 import {
   SEED_BRANDS,
   SEED_CAMPAIGNS,
@@ -87,17 +88,39 @@ describe('Firestore Security Rules & Hardcoded Credential Hygiene', () => {
     expect(rulesText).toContain('allow delete: if false;');
   });
 
-  it('keeps expanded catalog multi-vertical compatible with valid product schema', () => {
+  it('keeps expanded catalog multi-vertical compatible with valid product schema, 100% category coverage, and clean SEO', () => {
     const validVerticals = new Set(['dental', 'medical', 'lab']);
     expect(SEED_PRODUCTS.every((p) => validVerticals.has(p.vertical))).toBe(true);
-    expect(EXPANDED_PRODUCTS.length).toBeGreaterThanOrEqual(50);
+    expect(EXPANDED_PRODUCTS.length).toBeGreaterThanOrEqual(1600);
+    expect(EXPANDED_PRODUCTS.every((p) => p.titleFa.length <= 200)).toBe(true);
+
+    const emptyCategories = EXPANDED_CATEGORIES.filter((cat) => {
+      const descendants = EXPANDED_CATEGORIES.filter(
+        (c) => c.parentId === cat.id || c.path.includes(cat.slug)
+      ).map((c) => c.id);
+      const validIds = new Set([cat.id, ...descendants]);
+      return !EXPANDED_PRODUCTS.some(
+        (p) => validIds.has(p.primaryCategoryId) || p.categoryIds.some((id) => validIds.has(id))
+      );
+    });
+    expect(emptyCategories).toEqual([]);
+
+    const emptyBrands = EXPANDED_BRANDS.filter(
+      (b) => !EXPANDED_PRODUCTS.some((p) => p.brandId === b.id)
+    );
+    expect(emptyBrands).toEqual([]);
+
+    const seoIssues = auditSeoHealth(EXPANDED_PRODUCTS, EXPANDED_CATEGORIES, []).filter(
+      (f) => f.severity !== 'pass'
+    );
+    expect(seoIssues).toEqual([]);
 
     const localAssetPaths = new Set(
       EXPANDED_PRODUCTS.flatMap((p) => [p.imageUrl, ...(p.galleryUrls ?? [])]).filter((url) =>
         url.startsWith('/assets/products/')
       )
     );
-    expect(localAssetPaths.size).toBeGreaterThanOrEqual(30);
+    expect(localAssetPaths.size).toBeGreaterThanOrEqual(80);
     for (const relPath of localAssetPaths) {
       const diskPath = path.resolve(process.cwd(), 'public', relPath.replace(/^\//, ''));
       expect(fs.existsSync(diskPath)).toBe(true);
