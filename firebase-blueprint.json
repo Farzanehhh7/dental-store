@@ -223,9 +223,49 @@
         "userId": { "type": "string", "maxLength": 128 },
         "reasonFa": { "type": "string", "maxLength": 500 },
         "status": { "type": "string", "enum": ["requested", "approved", "received", "refunded", "rejected"] },
-        "refundAmount": { "type": "number" }
+        "refundAmount": { "type": "number" },
+        "condition": { "type": "string", "enum": ["resellable", "damaged"] },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "restockedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "returnNo", "orderId", "userId", "status", "refundAmount"]
+    },
+    "StockLevel": {
+      "title": "StockLevel",
+      "description": "Server-authoritative per-warehouse inventory level (onHand and reserved).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "variantId": { "type": "string", "maxLength": 128 },
+        "sku": { "type": "string", "maxLength": 64 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseCode": { "type": "string", "maxLength": 40 },
+        "onHand": { "type": "number" },
+        "reserved": { "type": "number" },
+        "lowStockThreshold": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "productId", "variantId", "warehouseId", "onHand", "reserved", "lowStockThreshold", "updatedAt"]
+    },
+    "StockBatchRecord": {
+      "title": "StockBatchRecord",
+      "description": "Per-warehouse FEFO batch inventory record with expiry date and condition.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "variantId": { "type": "string", "maxLength": 128 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseCode": { "type": "string", "maxLength": 40 },
+        "batchNo": { "type": "string", "maxLength": 80 },
+        "expiryDate": { "type": "string", "maxLength": 40 },
+        "qty": { "type": "number" },
+        "reserved": { "type": "number" },
+        "condition": { "type": "string", "enum": ["resellable", "damaged"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "productId", "variantId", "warehouseId", "batchNo", "expiryDate", "qty", "reserved", "condition", "updatedAt"]
     },
     "AuditLog": {
       "title": "AuditLog",
@@ -325,9 +365,11 @@
     "/tickets/{ticketId}": { "schema": { "$ref": "#/entities/Ticket" }, "description": "Support tickets" },
     "/users/{userId}": { "schema": { "$ref": "#/entities/UserProfile" }, "description": "User profiles and B2B verification status" },
     "/b2bVerifications/{verificationId}": { "schema": "B2BVerification", "description": "B2B upgrade verification queue" },
-    "/warehouses/{warehouseId}": { "schema": "Warehouse", "description": "Physical warehouses" },
+    "/warehouses/{warehouseId}": { "schema": "Warehouse", "description": "Physical warehouses (server-written)" },
     "/suppliers/{supplierId}": { "schema": "Supplier", "description": "Dental suppliers" },
-    "/stockMovements/{movementId}": { "schema": "StockMovement", "description": "Inventory movement ledger" },
+    "/stockLevels/{levelId}": { "schema": { "$ref": "#/entities/StockLevel" }, "description": "Per-warehouse variant stock levels (server-written)" },
+    "/stockBatches/{batchId}": { "schema": { "$ref": "#/entities/StockBatchRecord" }, "description": "Per-warehouse FEFO batches (server-written)" },
+    "/stockMovements/{movementId}": { "schema": "StockMovement", "description": "Append-only inventory movement ledger (server-written)" },
     "/contractPrices/{contractId}": { "schema": "ContractPrice", "description": "Customer-specific contract price agreements" },
     "/pages/{pageId}": { "schema": "SitePage", "description": "Static CMS informational pages" },
     "/banners/{bannerId}": { "schema": { "$ref": "#/entities/BannerItem" }, "description": "Storefront hero and promo banners" },

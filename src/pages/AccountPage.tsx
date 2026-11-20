@@ -46,6 +46,8 @@ const ORDER_STATUS_FA: Record<OrderStatus, string> = {
   delivered: 'تحویل‌شده',
   completed: 'تکمیل‌شده',
   cancelled: 'لغوشده',
+  expired: 'منقضی‌شده (عدم پرداخت)',
+  refunded: 'مستردشده',
   return_requested: 'درخواست مرجوعی',
   returned: 'مرجوع‌شده',
 };
@@ -376,7 +378,8 @@ export default function AccountPage() {
     return Array.from(map.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   })();
   const myRfqs = rfqs;
-  const myProformas = authUser ? proformas.filter((p) => p.userId === authUser.uid) : [];
+  const proformaUid = authUser ? authUser.uid : mobileSession ? `mobile:${mobileSession.mobile}` : '';
+  const myProformas = proformaUid ? proformas.filter((p) => p.userId === proformaUid) : [];
   const myInvoices = invoices.filter((inv) => myOrders.some((o) => o.id === inv.orderId));
   const myReturns = returns.filter((r) => (authUser && r.userId === authUser.uid) || myOrders.some((o) => o.id === r.orderId));
   const myTickets = authUser ? tickets.filter((t) => t.userId === authUser.uid) : [];

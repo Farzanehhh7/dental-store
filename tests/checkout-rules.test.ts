@@ -83,10 +83,11 @@ describe('Firestore Security Rules & Hardcoded Credential Hygiene', () => {
     expect(rulesText).toContain('match /rfqRequests/{rfqId}');
   });
 
-  it('blocks client orders creation with status paid or paymentStatus paid', () => {
-    expect(rulesText).toContain("incoming().status in ['pending_payment', 'awaiting_review']");
-    expect(rulesText).toContain("incoming().paymentStatus in ['unpaid', 'pending_credit']");
-    expect(rulesText).toContain('allow delete: if false;');
+  it('forbids direct client order create, update, and delete in favor of server-only writes', () => {
+    const ordersBlock = rulesText.match(/match \/orders\/\{orderId\}\s*\{[\s\S]*?\n\s*\}/)?.[0] ?? '';
+    expect(ordersBlock).toContain('allow get: if isValidId(orderId)');
+    expect(ordersBlock).toContain('allow list:');
+    expect(ordersBlock).toContain('allow create, update, delete: if false;');
   });
 
   it('keeps expanded catalog multi-vertical compatible with valid product schema, 100% category coverage, and clean SEO', () => {

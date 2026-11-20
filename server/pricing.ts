@@ -23,6 +23,7 @@ export type AuthoritativeCalculationResult =
       items: OrderItem[];
       subtotal: number;
       couponDiscount: number;
+      appliedCouponCode?: string;
       discountTotal: number;
       shippingTotal: number;
       taxTotal: number;
@@ -77,7 +78,7 @@ export function calculateAuthoritativeCheckout(
         message: `کالای «${product.titleFa}» نیاز به استعلام قیمت (RFQ) یا ثبت پیش‌فاکتور دارد و خرید آنلاین مستقیم ندارد.`,
       };
     }
-    const availableStock = getVariantAvailableStock(variant);
+    const availableStock = getVariantAvailableStock(variant, catalog.stockLevels);
     if (qty > availableStock) {
       return {
         ok: false,
@@ -100,6 +101,8 @@ export function calculateAuthoritativeCheckout(
       settings: catalog.settings,
       contractPrices: catalog.contractPrices,
       userId,
+      stockLevels: catalog.stockLevels,
+      stockBatches: catalog.stockBatches,
     });
     if (resolved.state !== 'fixed' || resolved.unitPrice === null || resolved.unitPrice <= 0) {
       return {
@@ -168,6 +171,7 @@ export function calculateAuthoritativeCheckout(
     items: pricedItems,
     subtotal,
     couponDiscount,
+    ...(coupon ? { appliedCouponCode: coupon.code } : {}),
     discountTotal: itemDiscountTotal + couponDiscount,
     shippingTotal,
     taxTotal,

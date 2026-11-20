@@ -14,14 +14,19 @@ import {
   parseTrustProxySetting,
 } from './server/lib/http';
 import { createServerStore } from './server/persistence';
+import { createRepositories } from './server/repositories';
 import { createAdminRouter } from './server/routes/admin.routes';
 import { createAuthRouter } from './server/routes/auth.routes';
 import { createCatalogRouter } from './server/routes/catalog.routes';
 import { createCheckoutRouter } from './server/routes/checkout.routes';
 import { createFilesRouter } from './server/routes/files.routes';
+import { createInventoryRouter } from './server/routes/inventory.routes';
 import { createPaymentsRouter } from './server/routes/payments.routes';
 import { createRfqRouter } from './server/routes/rfq.routes';
 import { createRedirectsMiddleware, createSeoRouter } from './server/routes/seo.routes';
+import { createInventoryService } from './server/services/inventoryService';
+import { createOrderService } from './server/services/orderService';
+import { createPaymentService } from './server/services/paymentService';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,6 +41,10 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
   const isProd = process.env.NODE_ENV === 'production';
   const attachVite = options.attachVite ?? true;
   const store = createServerStore(options.dataDir);
+  const repos = createRepositories(store);
+  const orderService = createOrderService(repos);
+  const paymentService = createPaymentService(repos);
+  const inventoryService = createInventoryService(repos);
   const app = express();
 
   const trustProxy = parseTrustProxySetting(process.env.TRUST_PROXY);
@@ -96,7 +105,15 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
         origin: isAllowed,
         credentials: isAllowed,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Mobile-Session'],
+        allowedHeaders: [
+          'Content-Type',
+          'Authorization',
+          'X-Mobile-Session',
+          'Idempotency-Key',
+          'X-Idempotency-Key',
+          'X-Order-Token',
+          'X-Webhook-Signature',
+        ],
       });
     })
   );
@@ -163,7 +180,12 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     res.status(200).json({ ok: true });
   });
 
-  const jsonParser1mb = express.json({ limit: '1mb' });
+  const jsonParser1mb = express.json({
+    limit: '1mb',
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: string }).rawBody = buf.toString('utf8');
+    },
+  });
   app.use((req, res, next) => {
     if (req.path === '/api/seo/sync') {
       return next();
@@ -176,11 +198,12 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
   // Mount domain routers
   app.use(createSeoRouter(store));
   app.use(createCatalogRouter(store));
-  app.use(createAdminRouter(store));
+  app.use(createAdminRouter(store, orderService, paymentService));
   app.use(createFilesRouter(store));
   app.use(createAuthRouter(store));
-  app.use(createCheckoutRouter(store));
-  app.use(createPaymentsRouter(store));
+  app.use(createCheckoutRouter(store, orderService));
+  app.use(createInventoryRouter(store, inventoryService));
+  app.use(createPaymentsRouter(store, paymentService));
   app.use(createRfqRouter(store));
 
   // Clean JSON error handler for malformed / oversized API bodies
@@ -220,7 +243,24 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     }
   }
 
-  return { app, store };
+  // Background payment expiry sweep (unref'd so tests/graceful exit are never blocked)
+  const sweepIntervalMs = envPositiveInt('PAYMENT_EXPIRY_SWEEP_INTERVAL_MS', 60_000);
+  const expiryTimer = setInterval(() => {
+    paymentService.runExpirySweep().catch((err) => {
+      console.warn('[payment-expiry] sweep failed:', err);
+    });
+  }, sweepIntervalMs);
+  expiryTimer.unref();
+
+  return {
+    app,
+    store,
+    repos,
+    orderService,
+    paymentService,
+    inventoryService,
+    stopExpiryJob: () => clearInterval(expiryTimer),
+  };
 }
 
 const isMainEntry =

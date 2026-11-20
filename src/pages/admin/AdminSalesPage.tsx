@@ -16,17 +16,30 @@ import {
   InvoiceRecord,
   Order,
   OrderItem,
+  OrderSource,
   OrderStatus,
   PaymentMethod,
   ProformaInvoice,
 } from '../../types/domain';
 
+const SOURCE_LABELS: Record<OrderSource, string> = {
+  google: 'کاربر گوگل',
+  otp: 'کاربر موبایلی (OTP)',
+  guest: 'مهمان',
+  admin_manual: 'ثبت دستی/تلفنی',
+  proforma: 'تبدیل از پیش‌فاکتور',
+};
+
 export function AdminSalesPage() {
   const {
     orders,
+    adminOrdersMeta,
+    adminOrdersLoading,
+    fetchAdminOrders,
     invoices,
     paymentLedger,
     returns,
+    warehouses,
     proformas,
     rfqs,
     paymentPlans,
@@ -40,7 +53,7 @@ export function AdminSalesPage() {
     issueInvoice,
     voidInvoice,
     recordPaymentEntry,
-    updateReturnStatus,
+    processReturnAdmin,
     upsertProformaAdmin,
     convertProformaToOrder,
     sendRfqMessage,
@@ -56,8 +69,25 @@ export function AdminSalesPage() {
   const [manualOpen, setManualOpen] = useState(false);
   const [printInvoice, setPrintInvoice] = useState<InvoiceRecord | null>(null);
 
+  const [orderFilters, setOrderFilters] = useState<{
+    q: string;
+    status: OrderStatus | '';
+    source: OrderSource | '';
+    fromDate: string;
+    toDate: string;
+  }>({
+    q: '',
+    status: '',
+    source: '',
+    fromDate: '',
+    toDate: '',
+  });
+
   const [rfqQuoteDraft, setRfqQuoteDraft] = useState<Record<string, { price: string; days: string; note: string }>>({});
   const [rfqReplyDraft, setRfqReplyDraft] = useState<Record<string, string>>({});
+  const [returnDrafts, setReturnDrafts] = useState<
+    Record<string, { condition: 'resellable' | 'damaged'; warehouseId: string; batchNo: string; adminNote: string }>
+  >({});
 
   const [manualForm, setManualForm] = useState({
     customerName: '',
@@ -139,50 +169,162 @@ export function AdminSalesPage() {
       </div>
 
       {tab === 'orders' && (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-surface/60 dark:bg-slate-800 text-ink/70">
-                <tr>
-                  <th className="p-3 text-right">شماره سفارش</th>
-                  <th className="p-3 text-right">مشتری / گروه</th>
-                  <th className="p-3 text-right">روش پرداخت</th>
-                  <th className="p-3 text-right">جمع کل</th>
-                  <th className="p-3 text-right">وضعیت</th>
-                  <th className="p-3 text-right">اقدام</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line dark:divide-slate-800">
-                {orders.map((o) => (
-                  <tr key={o.id}>
-                    <td className="p-3 font-extrabold tabular-nums">{o.orderNo}</td>
-                    <td className="p-3">{o.customerName} ({o.customerGroup})</td>
-                    <td className="p-3">{o.paymentMethod}</td>
-                    <td className="p-3 tabular-nums font-bold text-brand">{formatMoney(o.grandTotal, currency)}</td>
-                    <td className="p-3 font-bold">{o.status}</td>
-                    <td className="p-3 flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedOrder(o);
-                          setTrackingInput(o.trackingCode ?? '');
-                        }}
-                        className="px-2.5 py-1 rounded-lg border border-brand text-brand font-bold"
-                      >
-                        تغییر وضعیت
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => issueInvoice(o.id, true)}
-                        className="px-2.5 py-1 rounded-lg border border-line dark:border-slate-700 font-bold"
-                      >
-                        صدور فاکتور
-                      </button>
-                    </td>
+        <div className="space-y-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void fetchAdminOrders({ ...orderFilters, page: 1 });
+            }}
+            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 text-xs"
+          >
+            <input
+              value={orderFilters.q}
+              onChange={(e) => setOrderFilters((f) => ({ ...f, q: e.target.value }))}
+              placeholder="جستجو شماره سفارش، نام یا موبایل..."
+              className="lg:col-span-2 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            />
+            <select
+              value={orderFilters.status}
+              onChange={(e) => setOrderFilters((f) => ({ ...f, status: e.target.value as OrderStatus | '' }))}
+              className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            >
+              <option value="">همه وضعیت‌ها</option>
+              <option value="pending_payment">در انتظار پرداخت</option>
+              <option value="awaiting_review">در انتظار بررسی اعتبار</option>
+              <option value="payment_failed">پرداخت ناموفق</option>
+              <option value="paid">پرداخت‌شده</option>
+              <option value="processing">در حال پردازش</option>
+              <option value="packed">بسته‌بندی‌شده</option>
+              <option value="shipped">ارسال‌شده</option>
+              <option value="delivered">تحویل‌شده</option>
+              <option value="completed">تکمیل‌شده</option>
+              <option value="cancelled">لغوشده</option>
+              <option value="expired">منقضی‌شده</option>
+              <option value="refunded">مستردشده</option>
+            </select>
+            <select
+              value={orderFilters.source}
+              onChange={(e) => setOrderFilters((f) => ({ ...f, source: e.target.value as OrderSource | '' }))}
+              className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            >
+              <option value="">همه مبادی ثبت</option>
+              <option value="google">کاربر گوگل</option>
+              <option value="otp">کاربر موبایلی (OTP)</option>
+              <option value="guest">مهمان</option>
+              <option value="admin_manual">ثبت دستی/تلفنی</option>
+            </select>
+            <input
+              value={orderFilters.fromDate}
+              onChange={(e) => setOrderFilters((f) => ({ ...f, fromDate: e.target.value }))}
+              placeholder="از تاریخ جلالی (مثلاً 1405/01/01)"
+              className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 tabular-nums"
+            />
+            <div className="flex gap-2">
+              <input
+                value={orderFilters.toDate}
+                onChange={(e) => setOrderFilters((f) => ({ ...f, toDate: e.target.value }))}
+                placeholder="تا تاریخ جلالی"
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 tabular-nums"
+              />
+              <button
+                type="submit"
+                disabled={adminOrdersLoading}
+                className="px-4 py-2 rounded-lg bg-brand text-white font-bold shrink-0 disabled:opacity-50"
+              >
+                اعمال
+              </button>
+            </div>
+          </form>
+
+          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-surface/60 dark:bg-slate-800 text-ink/70">
+                  <tr>
+                    <th className="p-3 text-right">شماره سفارش</th>
+                    <th className="p-3 text-right">مشتری / گروه</th>
+                    <th className="p-3 text-right">مبدا ثبت</th>
+                    <th className="p-3 text-right">روش پرداخت</th>
+                    <th className="p-3 text-right">جمع کل</th>
+                    <th className="p-3 text-right">وضعیت</th>
+                    <th className="p-3 text-right">اقدام</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-line dark:divide-slate-800">
+                  {orders.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-ink/55">
+                        {adminOrdersLoading ? 'در حال بارگذاری سفارش‌ها...' : 'سفارشی با فیلتر فعلی یافت نشد.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    orders.map((o) => (
+                      <tr key={o.id}>
+                        <td className="p-3 font-extrabold tabular-nums">
+                          <div>{o.orderNo}</div>
+                          <div className="text-[10px] font-normal text-ink/50">{formatJalaliDateTime(o.createdAt)}</div>
+                        </td>
+                        <td className="p-3">
+                          <div>{o.customerName} ({o.customerGroup})</div>
+                          <div className="text-[10px] text-ink/50 tabular-nums">{o.customerMobile}</div>
+                        </td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded bg-surface dark:bg-slate-800 font-medium">
+                            {o.source ? SOURCE_LABELS[o.source] ?? o.source : o.isGuest ? 'مهمان' : 'کاربر'}
+                          </span>
+                        </td>
+                        <td className="p-3">{o.paymentMethod}</td>
+                        <td className="p-3 tabular-nums font-bold text-brand">{formatMoney(o.grandTotal, currency)}</td>
+                        <td className="p-3 font-bold">{o.status}</td>
+                        <td className="p-3 flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedOrder(o);
+                              setTrackingInput(o.trackingCode ?? '');
+                            }}
+                            className="px-2.5 py-1 rounded-lg border border-brand text-brand font-bold"
+                          >
+                            مدیریت وضعیت
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => issueInvoice(o.id, true)}
+                            className="px-2.5 py-1 rounded-lg border border-line dark:border-slate-700 font-bold"
+                          >
+                            صدور فاکتور
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="px-4 py-3 border-t border-line dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <span className="text-ink/60 tabular-nums">
+                مجموع: {toPersianDigits(adminOrdersMeta.total)} سفارش · صفحه {toPersianDigits(adminOrdersMeta.page)} از {toPersianDigits(adminOrdersMeta.totalPages)}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={adminOrdersMeta.page <= 1 || adminOrdersLoading}
+                  onClick={() => void fetchAdminOrders({ page: adminOrdersMeta.page - 1 })}
+                  className="px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 font-bold disabled:opacity-40"
+                >
+                  صفحه قبل
+                </button>
+                <button
+                  type="button"
+                  disabled={adminOrdersMeta.page >= adminOrdersMeta.totalPages || adminOrdersLoading}
+                  onClick={() => void fetchAdminOrders({ page: adminOrdersMeta.page + 1 })}
+                  className="px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 font-bold disabled:opacity-40"
+                >
+                  صفحه بعد
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -448,27 +590,151 @@ export function AdminSalesPage() {
         <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3 text-xs">
           <h2 className="text-base font-extrabold flex items-center gap-2">
             <RotateCcw className="w-4 h-4 text-brand" />
-            <span>پرونده‌های مرجوعی و استرداد وجه (RMA)</span>
+            <span>پرونده‌های مرجوعی، بازگشت به انبار و استرداد وجه (RMA)</span>
           </h2>
-          {returns.map((r) => (
-            <div key={r.id} className="p-3 rounded-xl border border-line dark:border-slate-800 flex flex-wrap justify-between items-center gap-3">
-              <div>
-                <p className="font-extrabold tabular-nums">{r.returnNo} (سفارش {r.orderNo}) — {r.customerName}</p>
-                <p className="text-ink/60">{r.reasonFa} · مبلغ: {formatMoney(r.refundAmount, currency)}</p>
-              </div>
-              <select
-                value={r.status}
-                onChange={(e) => updateReturnStatus(r.id, e.target.value as typeof r.status)}
-                className="px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
-              >
-                <option value="requested">درخواست‌شده</option>
-                <option value="approved">تاییدشده برای عودت</option>
-                <option value="received">تحویل به انبار</option>
-                <option value="refunded">عودت وجه انجام شد</option>
-                <option value="rejected">رد شده</option>
-              </select>
-            </div>
-          ))}
+          {returns.length === 0 ? (
+            <p className="text-ink/60 py-4 text-center">درخواست مرجوعی ثبت‌شده‌ای وجود ندارد.</p>
+          ) : (
+            returns.map((r) => {
+              const draft = returnDrafts[r.id] ?? {
+                condition: r.condition ?? ('resellable' as const),
+                warehouseId: r.warehouseId ?? warehouses[0]?.id ?? 'wh_teh',
+                batchNo: r.items[0]?.batchNo ?? '',
+                adminNote: r.adminNote ?? '',
+              };
+              const setDraft = (patch: Partial<typeof draft>) =>
+                setReturnDrafts((prev) => ({ ...prev, [r.id]: { ...draft, ...patch } }));
+
+              return (
+                <div key={r.id} className="p-4 rounded-xl border border-line dark:border-slate-800 space-y-3">
+                  <div className="flex flex-wrap justify-between items-start gap-3">
+                    <div>
+                      <p className="font-extrabold tabular-nums">
+                        {r.returnNo} (سفارش {r.orderNo}) — {r.customerName}
+                      </p>
+                      <p className="text-ink/60">
+                        {r.reasonFa} · مبلغ: {formatMoney(r.refundAmount, currency)}
+                      </p>
+                      <p className="text-ink/55 mt-1">
+                        اقلام: {r.items.map((it) => `${it.titleFa} × ${toPersianDigits(it.quantity)}`).join('، ')}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2.5 py-1 rounded-lg bg-brand/10 text-brand font-bold">{r.status}</span>
+                      {r.condition && (
+                        <span
+                          className={`px-2.5 py-1 rounded-lg font-bold ${
+                            r.condition === 'damaged'
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          }`}
+                        >
+                          {r.condition === 'damaged' ? 'آسیب‌دیده (قرنطینه)' : 'سالم (قابل فروش)'}
+                        </span>
+                      )}
+                      {r.restockedAt && (
+                        <span className="text-emerald-700 dark:text-emerald-300 font-bold tabular-nums">
+                          ثبت انبار: {formatJalaliDateTime(r.restockedAt)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {!r.restockedAt && r.status !== 'refunded' && r.status !== 'rejected' && (
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2 pt-2 border-t border-line dark:border-slate-800">
+                      <select
+                        value={draft.condition}
+                        onChange={(e) => setDraft({ condition: e.target.value as 'resellable' | 'damaged' })}
+                        className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+                      >
+                        <option value="resellable">سالم و قابل فروش مجدد (resellable)</option>
+                        <option value="damaged">آسیب‌دیده / قرنطینه ضایعات (damaged)</option>
+                      </select>
+                      <select
+                        value={draft.warehouseId}
+                        onChange={(e) => setDraft({ warehouseId: e.target.value })}
+                        className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                      >
+                        {warehouses.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.nameFa} ({w.code})
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        value={draft.batchNo}
+                        onChange={(e) => setDraft({ batchNo: e.target.value })}
+                        placeholder="شماره بچ بازگشتی (اختیاری)"
+                        className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                      />
+                      <input
+                        value={draft.adminNote}
+                        onChange={(e) => setDraft({ adminNote: e.target.value })}
+                        placeholder="یادداشت کارشناس انبار/مالی..."
+                        className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    {r.status === 'requested' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => processReturnAdmin(r.id, { status: 'approved', adminNote: draft.adminNote || undefined })}
+                          className="px-3 py-1.5 rounded-lg bg-brand text-white font-bold"
+                        >
+                          تایید اولیه مرجوعی
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => processReturnAdmin(r.id, { status: 'rejected', adminNote: draft.adminNote || undefined })}
+                          className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 font-bold"
+                        >
+                          رد درخواست
+                        </button>
+                      </>
+                    )}
+                    {r.status === 'approved' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            processReturnAdmin(r.id, {
+                              status: 'received',
+                              condition: draft.condition,
+                              warehouseId: draft.warehouseId,
+                              ...(draft.batchNo.trim() ? { batchNo: draft.batchNo.trim() } : {}),
+                              ...(draft.adminNote.trim() ? { adminNote: draft.adminNote.trim() } : {}),
+                            })
+                          }
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold"
+                        >
+                          ثبت تحویل به انبار (Restock)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => processReturnAdmin(r.id, { status: 'rejected', adminNote: draft.adminNote || undefined })}
+                          className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 font-bold"
+                        >
+                          رد درخواست
+                        </button>
+                      </>
+                    )}
+                    {r.status === 'received' && (
+                      <button
+                        type="button"
+                        onClick={() => processReturnAdmin(r.id, { status: 'refunded', adminNote: draft.adminNote || undefined })}
+                        className="px-3 py-1.5 rounded-lg bg-brand text-white font-bold"
+                      >
+                        تکمیل عودت وجه (Refunded)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 
@@ -539,7 +805,7 @@ export function AdminSalesPage() {
               />
             </label>
             <div className="flex flex-wrap gap-2">
-              {(['paid', 'processing', 'packed', 'shipped', 'delivered', 'completed', 'cancelled'] as OrderStatus[]).map((st) => (
+              {(['paid', 'processing', 'packed', 'shipped', 'delivered', 'completed', 'cancelled', 'refunded'] as OrderStatus[]).map((st) => (
                 <button
                   key={st}
                   type="button"
@@ -555,6 +821,17 @@ export function AdminSalesPage() {
                 </button>
               ))}
             </div>
+            {selectedOrder.statusHistory && selectedOrder.statusHistory.length > 0 && (
+              <div className="pt-2 border-t border-line dark:border-slate-800 space-y-1.5 max-h-36 overflow-y-auto">
+                <p className="font-bold text-ink/70">تاریخچه تغییر وضعیت (Append-only)</p>
+                {selectedOrder.statusHistory.map((h, idx) => (
+                  <div key={idx} className="flex justify-between text-[11px] bg-surface/50 dark:bg-slate-800 px-2.5 py-1.5 rounded">
+                    <span>{h.status} ({h.actorType}){h.note ? ` — ${h.note}` : ''}</span>
+                    <span className="tabular-nums text-ink/50">{formatJalaliDateTime(h.changedAt)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex justify-end">
               <button type="button" onClick={() => setSelectedOrder(null)} className="px-4 py-2 rounded-lg border border-line font-bold">
                 بستن

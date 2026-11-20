@@ -7,6 +7,8 @@ import {
   Product,
   ProductVariant,
   SiteSettings,
+  StockBatchRecord,
+  StockLevel,
 } from '../types/domain';
 
 export interface ResolvedVariantPrice {
@@ -24,21 +26,44 @@ export interface ResolvedVariantPrice {
   nearestBatchNo: string | null;
 }
 
-export function getVariantAvailableStock(variant: ProductVariant): number {
+export function getVariantAvailableStock(variant: ProductVariant, stockLevels?: StockLevel[]): number {
+  const levels = (stockLevels ?? variant.stockLevels)?.filter((l) => l.variantId === variant.id);
+  if (levels && levels.length > 0) {
+    return levels.reduce((sum, lvl) => sum + Math.max(0, lvl.onHand - lvl.reserved), 0);
+  }
   return Math.max(0, variant.stockOnHand - variant.reserved);
 }
 
-export function getNearestFefoBatch(variant: ProductVariant, nearExpiryThresholdDays = 90) {
-  if (!variant.batches || variant.batches.length === 0) {
-    return { nearExpiry: false, expiresAt: null, batchNo: null, specialPrice: null };
-  }
-  const activeBatches = variant.batches
-    .filter((b) => b.qtyOnHand > 0)
-    .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+export function getNearestFefoBatch(
+  variant: ProductVariant,
+  nearExpiryThresholdDays = 90,
+  stockBatches?: StockBatchRecord[]
+) {
+  const matchingRecords = stockBatches?.filter((b) => b.variantId === variant.id);
+  const candidates =
+    matchingRecords && matchingRecords.length > 0
+      ? matchingRecords
+          .filter((b) => b.condition !== 'damaged' && b.qty - (b.reserved || 0) > 0)
+          .map((b) => ({
+            batchNo: b.batchNo,
+            expiresAt: b.expiryDate,
+            specialPrice: b.specialPrice ?? null,
+          }))
+      : (variant.batches ?? [])
+          .filter((b) => b.condition !== 'damaged' && (b.qty ?? b.qtyOnHand) - (b.reserved || 0) > 0)
+          .map((b) => ({
+            batchNo: b.batchNo,
+            expiresAt: b.expiryDate || b.expiresAt,
+            specialPrice: b.specialPrice ?? null,
+          }));
 
-  if (activeBatches.length === 0) {
+  if (candidates.length === 0) {
     return { nearExpiry: false, expiresAt: null, batchNo: null, specialPrice: null };
   }
+
+  const activeBatches = [...candidates].sort(
+    (a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime()
+  );
 
   const first = activeBatches[0];
   const remaining = daysUntil(first.expiresAt);
@@ -104,6 +129,8 @@ export function resolveVariantPrice(
     settings?: SiteSettings;
     contractPrices?: ContractPrice[];
     userId?: string;
+    stockLevels?: StockLevel[];
+    stockBatches?: StockBatchRecord[];
   } = {}
 ): ResolvedVariantPrice {
   const {
@@ -113,11 +140,13 @@ export function resolveVariantPrice(
     settings,
     contractPrices = [],
     userId,
+    stockLevels,
+    stockBatches,
   } = options;
-  const availableStock = getVariantAvailableStock(variant);
+  const availableStock = getVariantAvailableStock(variant, stockLevels);
   const nearThreshold = settings?.nearExpiryThresholdDays ?? 90;
   const minProofDays = settings?.discountProofMinDays ?? 30;
-  const fefo = getNearestFefoBatch(variant, nearThreshold);
+  const fefo = getNearestFefoBatch(variant, nearThreshold, stockBatches);
 
   if (product.status === 'coming_soon') {
     return {
@@ -275,9 +304,20 @@ export function getProductPriceSummary(
     settings?: SiteSettings;
     contractPrices?: ContractPrice[];
     userId?: string;
+    stockLevels?: StockLevel[];
+    stockBatches?: StockBatchRecord[];
   } = {}
 ): ProductPriceSummary {
-  const { customerGroup = 'retail', campaigns = [], currency = 'IRT', settings, contractPrices, userId } = options;
+  const {
+    customerGroup = 'retail',
+    campaigns = [],
+    currency = 'IRT',
+    settings,
+    contractPrices,
+    userId,
+    stockLevels,
+    stockBatches,
+  } = options;
 
   if (product.status === 'coming_soon') {
     return {
@@ -295,7 +335,17 @@ export function getProductPriceSummary(
 
   const resolvedList = product.variants
     .filter((v) => v.isActive)
-    .map((v) => resolveVariantPrice(product, v, { customerGroup, campaigns, settings, contractPrices, userId }));
+    .map((v) =>
+      resolveVariantPrice(product, v, {
+        customerGroup,
+        campaigns,
+        settings,
+        contractPrices,
+        userId,
+        stockLevels,
+        stockBatches,
+      })
+    );
 
   const inStockList = resolvedList.filter((r) => r.state !== 'out_of_stock');
   if (inStockList.length === 0) {

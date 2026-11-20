@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, deleteDoc, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { OperationType, db, handleFirestoreError } from '../lib/firebase';
 import {
@@ -40,14 +40,17 @@ import type {
   ContractPrice,
   Product,
   ProductCostRecord,
+  StockBatch,
+  StockBatchRecord,
+  StockLevel,
   StockMovement,
   StockNotification,
   StockRequest,
   Supplier,
   Warehouse,
 } from '../types/domain';
-import type { BulkPriceUndoSnapshot, StoreContextValue } from './storeTypes';
-import { ADMIN_REQUIRED_MSG, commitInChunks, mergeById, stripCostFromProduct } from './storeHelpers';
+import type { BulkPriceUndoSnapshot, LowStockAlertItem, StoreContextValue } from './storeTypes';
+import { ADMIN_REQUIRED_MSG, commitInChunks, mergeById, resolveAuthHeaders, stripCostFromProduct } from './storeHelpers';
 import { useAuth } from './auth';
 
 export interface CatalogContextValue {
@@ -58,11 +61,15 @@ export interface CatalogContextValue {
   productCosts: ProductCostRecord[];
   contractPrices: ContractPrice[];
   warehouses: Warehouse[];
+  stockLevels: StockLevel[];
+  stockBatches: StockBatchRecord[];
+  lowStockAlerts: LowStockAlertItem[];
   suppliers: Supplier[];
   stockMovements: StockMovement[];
   stockRequests: StockRequest[];
   stockNotifications: StockNotification[];
   canUndoBulkPrice: boolean;
+  refreshInventory: StoreContextValue['refreshInventory'];
   submitStockRequest: StoreContextValue['submitStockRequest'];
   submitStockNotification: StoreContextValue['submitStockNotification'];
   upsertProduct: StoreContextValue['upsertProduct'];
@@ -78,6 +85,8 @@ export interface CatalogContextValue {
   applyBulkPriceAdjustment: StoreContextValue['applyBulkPriceAdjustment'];
   undoBulkPriceAdjustment: StoreContextValue['undoBulkPriceAdjustment'];
   adjustVariantStock: StoreContextValue['adjustVariantStock'];
+  stocktakeVariantStock: StoreContextValue['stocktakeVariantStock'];
+  transferStock: StoreContextValue['transferStock'];
   applyNearExpirySpecialPrice: StoreContextValue['applyNearExpirySpecialPrice'];
   markStockNotificationSent: StoreContextValue['markStockNotificationSent'];
   upsertWarehouse: StoreContextValue['upsertWarehouse'];
@@ -115,6 +124,9 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   const [productCosts, setProductCosts] = useState<ProductCostRecord[]>(SEED_PRODUCT_COSTS);
   const [contractPrices, setContractPrices] = useState<ContractPrice[]>(SEED_CONTRACT_PRICES);
   const [warehouses, setWarehouses] = useState<Warehouse[]>(SEED_WAREHOUSES);
+  const [stockLevels, setStockLevels] = useState<StockLevel[]>([]);
+  const [stockBatches, setStockBatches] = useState<StockBatchRecord[]>([]);
+  const [lowStockAlerts, setLowStockAlerts] = useState<LowStockAlertItem[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>(SEED_SUPPLIERS);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(SEED_STOCK_MOVEMENTS);
   const [stockRequests, setStockRequests] = useState<StockRequest[]>(SEED_STOCK_REQUESTS);
@@ -197,12 +209,6 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
       if (['super_admin', 'admin', 'warehouse', 'sales_mgr', 'accountant'].includes(roleEffective)) {
         unsubs.push(
           onSnapshot(
-            collection(db, 'warehouses'),
-            (snap) =>
-              setWarehouses(mergeById(SEED_WAREHOUSES, snap.docs.map((d) => ({ ...(d.data() as Warehouse), id: d.id })))),
-            (err) => handleListenerError(err, OperationType.LIST, 'warehouses')
-          ),
-          onSnapshot(
             collection(db, 'suppliers'),
             (snap) =>
               setSuppliers(mergeById(SEED_SUPPLIERS, snap.docs.map((d) => ({ ...(d.data() as Supplier), id: d.id })))),
@@ -221,22 +227,90 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
           )
         );
       }
-      if (['super_admin', 'admin', 'warehouse', 'accountant'].includes(roleEffective)) {
-        unsubs.push(
-          onSnapshot(
-            collection(db, 'stockMovements'),
-            (snap) =>
-              setStockMovements(
-                mergeById(SEED_STOCK_MOVEMENTS, snap.docs.map((d) => ({ ...(d.data() as StockMovement), id: d.id })))
-              ),
-            (err) => handleListenerError(err, OperationType.LIST, 'stockMovements')
-          )
-        );
-      }
     }
 
     return () => unsubs.forEach((u) => u());
   }, [connectionChecked, dbSynced, authReady, authUser, isAdmin, actualAdminRole, activeAdminRole]);
+
+  const refreshInventory = useCallback(async () => {
+    const roleEffective = actualAdminRole ?? activeAdminRole;
+    if (!isAdmin || !authUser || !['super_admin', 'admin', 'warehouse', 'sales_mgr', 'accountant'].includes(roleEffective)) {
+      return;
+    }
+    try {
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch('/api/admin/inventory', { headers, credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data?.ok) return;
+
+      const levels = (Array.isArray(data.stockLevels) ? data.stockLevels : []) as StockLevel[];
+      const batches = (Array.isArray(data.stockBatches) ? data.stockBatches : []) as StockBatchRecord[];
+      if (Array.isArray(data.warehouses)) setWarehouses(data.warehouses as Warehouse[]);
+      setStockLevels(levels);
+      setStockBatches(batches);
+      if (Array.isArray(data.movements)) setStockMovements(data.movements as StockMovement[]);
+      if (Array.isArray(data.lowStockAlerts)) setLowStockAlerts(data.lowStockAlerts as LowStockAlertItem[]);
+
+      // Keep aggregate variant quantities & resellable batches in sync across products
+      const aggMap = new Map<string, { onHand: number; reserved: number; levels: StockLevel[] }>();
+      for (const lvl of levels) {
+        const cur = aggMap.get(lvl.variantId) ?? { onHand: 0, reserved: 0, levels: [] };
+        cur.onHand += lvl.onHand;
+        cur.reserved += lvl.reserved;
+        cur.levels.push(lvl);
+        aggMap.set(lvl.variantId, cur);
+      }
+      const batchMap = new Map<string, StockBatch[]>();
+      for (const b of batches) {
+        if (b.condition !== 'resellable') continue;
+        const list = batchMap.get(b.variantId) ?? [];
+        list.push({
+          id: b.id,
+          batchNo: b.batchNo,
+          warehouseId: b.warehouseId,
+          warehouseCode: b.warehouseCode,
+          expiresAt: b.expiryDate,
+          expiryDate: b.expiryDate,
+          qtyOnHand: b.qty,
+          qty: b.qty,
+          reserved: b.reserved,
+          unitCost: b.unitCost,
+          specialPrice: b.specialPrice ?? null,
+          condition: b.condition,
+        });
+        batchMap.set(b.variantId, list);
+      }
+
+      if (aggMap.size > 0 || batchMap.size > 0) {
+        setProducts((prev) =>
+          prev.map((p) => {
+            const hasAnyVariant = p.variants.some((v) => aggMap.has(v.id) || batchMap.has(v.id));
+            if (!hasAnyVariant) return p;
+            return {
+              ...p,
+              variants: p.variants.map((v) => {
+                const agg = aggMap.get(v.id);
+                const vb = batchMap.get(v.id);
+                return {
+                  ...v,
+                  ...(agg ? { stockOnHand: agg.onHand, reserved: agg.reserved, stockLevels: agg.levels } : {}),
+                  ...(vb ? { batches: vb } : {}),
+                };
+              }),
+            };
+          })
+        );
+      }
+    } catch {
+      // Ignore transient errors
+    }
+  }, [actualAdminRole, activeAdminRole, authUser, isAdmin]);
+
+  useEffect(() => {
+    if (!authReady || !isAdmin || !authUser) return;
+    void refreshInventory();
+  }, [authReady, authUser, isAdmin, refreshInventory]);
 
   const seedDatabaseNow = async () => {
     if (!isAdmin) {
@@ -260,7 +334,6 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
       SEED_PAGES.forEach((pg) => ops.push((b) => b.set(doc(db, 'pages', pg.id), pg)));
       SEED_BANNERS.forEach((bn) => ops.push((b) => b.set(doc(db, 'banners', bn.id), bn)));
       SEED_FAQS.forEach((fq) => ops.push((b) => b.set(doc(db, 'faqs', fq.id), fq)));
-      SEED_WAREHOUSES.forEach((wh) => ops.push((b) => b.set(doc(db, 'warehouses', wh.id), wh)));
       SEED_SUPPLIERS.forEach((sp) => ops.push((b) => b.set(doc(db, 'suppliers', sp.id), sp)));
 
       await commitInChunks(ops, 280);
@@ -570,47 +643,118 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     pushToast('تغییرات قیمت گروهی به حالت قبل بازگردانده شد.', 'info');
   };
 
-  const adjustVariantStock = async (
-    productId: string,
-    variantId: string,
-    delta: number,
-    reason: string,
+  const adjustVariantStock: StoreContextValue['adjustVariantStock'] = async (
+    productId,
+    variantId,
+    delta,
+    reason,
     warehouseCode = 'TEH-CENTRAL',
-    type: StockMovement['type'] = 'adjust'
+    type = 'adjust',
+    options
   ) => {
-    if (!isAdmin) {
+    if (!isAdmin || !authUser) {
       pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
-    const product = products.find((p) => p.id === productId);
-    if (!product) return;
-    const variant = product.variants.find((v) => v.id === variantId);
-    const nextVariants = product.variants.map((v) =>
-      v.id === variantId ? { ...v, stockOnHand: Math.max(0, v.stockOnHand + delta) } : v
-    );
-    const now = new Date().toISOString();
-    const updatedProd = stripCostFromProduct({ ...product, variants: nextVariants, updatedAt: now });
-    const mvId = `sm_${Date.now()}`;
-    const movement: StockMovement = {
-      id: mvId,
-      productId,
-      productTitleFa: product.titleFa,
-      variantId,
-      sku: variant?.sku ?? product.sku,
-      warehouseCode,
-      delta,
-      type,
-      reason,
-      actorEmail: authUser?.email ?? 'admin@dentalmarket.ir',
-      createdAt: now,
-    };
+    if (!reason.trim()) {
+      pushToast('درج علت تعدیل/ورود کالا الزامی است.', 'error');
+      return;
+    }
     try {
-      await setDoc(doc(db, 'products', productId), updatedProd);
-      await setDoc(doc(db, 'stockMovements', mvId), movement);
-      await writeAudit('inventory.adjust', 'product', productId, `تعدیل موجودی (${delta > 0 ? `+${delta}` : delta}): ${reason}`);
-      pushToast('موجودی انبار و دفترکل انبار بروزرسانی شد.', 'success');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `products/${productId}`);
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch('/api/admin/inventory/adjust', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({
+          productId,
+          variantId,
+          ...(options?.warehouseId ? { warehouseId: options.warehouseId } : {}),
+          warehouseCode,
+          delta,
+          type: type === 'receive' ? 'receive' : 'adjust',
+          reason: reason.trim(),
+          ...(options?.batchNo ? { batchNo: options.batchNo } : {}),
+          ...(options?.expiryDate ? { expiryDate: options.expiryDate } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        pushToast(data?.message || 'بروزرسانی موجودی انبار ناموفق بود.', 'error');
+        return;
+      }
+      await refreshInventory();
+      pushToast('موجودی انبار و دفترکل انبار با موفقیت بروزرسانی شد.', 'success');
+    } catch {
+      pushToast('خطا در ارتباط با سرور هنگام بروزرسانی موجودی.', 'error');
+    }
+  };
+
+  const stocktakeVariantStock: StoreContextValue['stocktakeVariantStock'] = async (payload) => {
+    if (!isAdmin || !authUser) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return false;
+    }
+    if (!payload.reason.trim()) {
+      pushToast('درج علت انبارگردانی الزامی است.', 'error');
+      return false;
+    }
+    try {
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch('/api/admin/inventory/stocktake', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({
+          ...payload,
+          reason: payload.reason.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        pushToast(data?.message || 'ثبت مغایرت انبارگردانی ناموفق بود.', 'error');
+        return false;
+      }
+      await refreshInventory();
+      pushToast('انبارگردانی در دفترکل ثبت و موجودی بروزرسانی شد.', 'success');
+      return true;
+    } catch {
+      pushToast('خطا در ارتباط با سرور هنگام انبارگردانی.', 'error');
+      return false;
+    }
+  };
+
+  const transferStock: StoreContextValue['transferStock'] = async (payload) => {
+    if (!isAdmin || !authUser) {
+      pushToast(ADMIN_REQUIRED_MSG, 'error');
+      return false;
+    }
+    if (!payload.reason.trim()) {
+      pushToast('درج علت انتقال بین انبارها الزامی است.', 'error');
+      return false;
+    }
+    try {
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch('/api/admin/inventory/transfer', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({
+          ...payload,
+          reason: payload.reason.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        pushToast(data?.message || 'انتقال بین انبارها ناموفق بود.', 'error');
+        return false;
+      }
+      await refreshInventory();
+      pushToast('انتقال موجودی بین انبارها با موفقیت انجام شد.', 'success');
+      return true;
+    } catch {
+      pushToast('خطا در ارتباط با سرور هنگام انتقال موجودی.', 'error');
+      return false;
     }
   };
 
@@ -620,26 +764,32 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     batchId: string,
     specialPrice: number
   ) => {
-    if (!isAdmin) {
+    if (!isAdmin || !authUser) {
       pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
-    const product = products.find((p) => p.id === productId);
-    if (!product) return;
-    const nextVariants = product.variants.map((v) => {
-      if (v.id !== variantId) return v;
-      return {
-        ...v,
-        batches: (v.batches ?? []).map((b) => (b.id === batchId ? { ...b, specialPrice } : b)),
-      };
-    });
-    const updated = stripCostFromProduct({ ...product, variants: nextVariants, updatedAt: new Date().toISOString() });
     try {
-      await setDoc(doc(db, 'products', productId), updated);
-      await writeAudit('inventory.near_expiry_price', 'product', productId, `تنظیم قیمت ویژه انقضای نزدیک: ${specialPrice} تومان`);
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch('/api/admin/inventory/batch-special-price', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({
+          productId,
+          variantId,
+          batchId,
+          specialPrice,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        pushToast(data?.message || 'ثبت قیمت ویژه سری ساخت ناموفق بود.', 'error');
+        return;
+      }
+      await refreshInventory();
       pushToast('قیمت ویژه سری ساخت انقضای نزدیک ثبت شد.', 'success');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `products/${productId}`);
+    } catch {
+      pushToast('خطا در ارتباط با سرور هنگام ثبت قیمت ویژه سری ساخت.', 'error');
     }
   };
 
@@ -657,28 +807,51 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertWarehouse = async (warehouse: Warehouse) => {
-    if (!isAdmin) {
+    if (!isAdmin || !authUser) {
       pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
-      await setDoc(doc(db, 'warehouses', warehouse.id), warehouse);
-      pushToast('انبار ذخیره شد.', 'success');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `warehouses/${warehouse.id}`);
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch('/api/admin/warehouses', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify(warehouse),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        pushToast(data?.message || 'ذخیره انبار ناموفق بود.', 'error');
+        return;
+      }
+      await refreshInventory();
+      pushToast('انبار در سرور ذخیره شد.', 'success');
+    } catch {
+      pushToast('خطا در ارتباط با سرور هنگام ذخیره انبار.', 'error');
     }
   };
 
   const deleteWarehouse = async (id: string) => {
-    if (!isAdmin) {
+    if (!isAdmin || !authUser) {
       pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
-      await deleteDoc(doc(db, 'warehouses', id));
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch(`/api/admin/warehouses/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers,
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        pushToast(data?.message || 'حذف انبار امکان‌پذیر نیست.', 'error');
+        return;
+      }
+      await refreshInventory();
       pushToast('انبار حذف شد.', 'info');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `warehouses/${id}`);
+    } catch {
+      pushToast('خطا در ارتباط با سرور هنگام حذف انبار.', 'error');
     }
   };
 
@@ -734,11 +907,15 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
         productCosts,
         contractPrices,
         warehouses,
+        stockLevels,
+        stockBatches,
+        lowStockAlerts,
         suppliers,
         stockMovements,
         stockRequests,
         stockNotifications,
         canUndoBulkPrice: Boolean(bulkPriceUndo),
+        refreshInventory,
         submitStockRequest,
         submitStockNotification,
         upsertProduct,
@@ -754,6 +931,8 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
         applyBulkPriceAdjustment,
         undoBulkPriceAdjustment,
         adjustVariantStock,
+        stocktakeVariantStock,
+        transferStock,
         applyNearExpirySpecialPrice,
         markStockNotificationSent,
         upsertWarehouse,

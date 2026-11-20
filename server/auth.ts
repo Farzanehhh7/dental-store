@@ -219,6 +219,48 @@ export function resolveMobileSession(store: ServerStore, req: express.Request) {
   };
 }
 
+export function issueGuestOrderToken(orderId: string, orderNo: string, customerMobile: string): string {
+  const cleanMobile = normalizeMobile(customerMobile);
+  const payload = Buffer.from(JSON.stringify({ orderId, orderNo, mobile: cleanMobile }), 'utf8').toString('base64url');
+  const sig = hashToken(`order_tok:${orderId}:${orderNo}:${cleanMobile}`).slice(0, 32);
+  return `ordtok_${payload}.${sig}`;
+}
+
+export function verifyGuestOrderToken(
+  token: string | null | undefined,
+  order: { id: string; orderNo: string; customerMobile: string }
+): boolean {
+  if (!token || typeof token !== 'string' || !token.startsWith('ordtok_')) return false;
+  const dotIdx = token.indexOf('.');
+  if (dotIdx <= 7) return false;
+  const sig = token.slice(dotIdx + 1).trim();
+  const expectedSig = hashToken(
+    `order_tok:${order.id}:${order.orderNo}:${normalizeMobile(order.customerMobile)}`
+  ).slice(0, 32);
+  if (sig.length !== expectedSig.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(sig, 'utf8'), Buffer.from(expectedSig, 'utf8'));
+}
+
+export function extractOrderToken(req: express.Request): string | null {
+  const header = req.headers['x-order-token'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+  if (typeof req.body?.orderToken === 'string' && req.body.orderToken.trim()) return req.body.orderToken.trim();
+  if (typeof req.query?.orderToken === 'string' && req.query.orderToken.trim()) return req.query.orderToken.trim();
+  if (typeof req.query?.token === 'string' && req.query.token.trim()) return req.query.token.trim();
+  return null;
+}
+
+export function issueWebhookSignature(rawBody: string, secret: string): string {
+  return crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+}
+
+export function verifyWebhookSignature(rawBody: string, signature: string | undefined, secret: string): boolean {
+  if (!signature || !secret) return false;
+  const clean = signature.replace(/^sha256=/i, '').trim().toLowerCase();
+  const expected = issueWebhookSignature(rawBody, secret);
+  return timingSafeHashEquals(clean, expected);
+}
+
 export {
   extractFirebaseBearerToken,
   fetchFirebaseOrderForUser,

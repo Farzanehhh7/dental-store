@@ -81,7 +81,7 @@ service cloud.firestore {
         && data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128
         && data.customerName is string && data.customerName.size() <= 120
         && data.customerMobile is string && data.customerMobile.size() <= 20
-        && data.status in ['pending_payment', 'awaiting_review', 'payment_failed', 'paid', 'processing', 'packed', 'shipped', 'delivered', 'completed', 'cancelled', 'return_requested', 'returned']
+        && data.status in ['pending_payment', 'awaiting_review', 'payment_failed', 'paid', 'processing', 'packed', 'shipped', 'delivered', 'completed', 'cancelled', 'expired', 'refunded', 'return_requested', 'returned']
         && data.paymentStatus in ['unpaid', 'partially_paid', 'paid', 'refunded', 'pending_credit']
         && data.paymentMethod in ['online', 'cash_on_delivery', 'bank_transfer', 'credit_request', 'cheque_request', 'installment_request']
         && data.subtotal is number && data.discountTotal is number && data.shippingTotal is number && data.taxTotal is number && data.grandTotal is number
@@ -194,14 +194,17 @@ service cloud.firestore {
 
     function isValidReturnRequest(data) {
       return data.keys().hasAll(['id', 'returnNo', 'orderId', 'orderNo', 'userId', 'customerName', 'items', 'reasonFa', 'resolution', 'status', 'refundAmount', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'returnNo', 'orderId', 'orderNo', 'userId', 'customerName', 'items', 'reasonFa', 'resolution', 'status', 'refundAmount', 'adminNote', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'returnNo', 'orderId', 'orderNo', 'userId', 'customerName', 'items', 'reasonFa', 'resolution', 'status', 'refundAmount', 'condition', 'warehouseId', 'restockedAt', 'adminNote', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.returnNo is string && data.returnNo.size() <= 40
         && data.userId is string && data.userId.size() <= 128
         && data.reasonFa is string && data.reasonFa.size() >= 3 && data.reasonFa.size() <= 500
         && data.resolution in ['refund', 'replacement', 'credit']
         && data.status in ['requested', 'approved', 'received', 'refunded', 'rejected']
-        && data.refundAmount is number && data.refundAmount >= 0;
+        && data.refundAmount is number && data.refundAmount >= 0
+        && (!('condition' in data) || data.condition in ['resellable', 'damaged'])
+        && (!('warehouseId' in data) || (data.warehouseId is string && data.warehouseId.size() <= 128))
+        && (!('restockedAt' in data) || (data.restockedAt is string && data.restockedAt.size() <= 40));
     }
 
     function isValidRfqRequest(data) {
@@ -425,25 +428,7 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow get: if isValidId(orderId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
       allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isVerified() && isValidId(orderId) && isValidOrder(incoming())
-        && incoming().userId == request.auth.uid
-        && incoming().status in ['pending_payment', 'awaiting_review']
-        && incoming().paymentStatus in ['unpaid', 'pending_credit']
-        && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
-      allow update: if isValidId(orderId) && isValidOrder(incoming()) && (
-        hasRole(['super_admin', 'admin', 'sales_mgr', 'warehouse', 'accountant']) || (
-          isVerified() && existing().userId == request.auth.uid
-          && incoming().userId == existing().userId
-          && incoming().createdAt == existing().createdAt
-          && incoming().updatedAt == request.time
-          && existing().status == 'pending_payment'
-          && incoming().status == 'cancelled'
-          && incoming().paymentStatus == existing().paymentStatus
-          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
-        )
-      );
-      allow delete: if false;
+      allow create, update, delete: if false;
     }
 
     match /invoices/{invoiceId} {
@@ -462,13 +447,7 @@ service cloud.firestore {
     match /returns/{returnId} {
       allow get: if isValidId(returnId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
       allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isVerified() && isValidId(returnId) && isValidReturnRequest(incoming())
-        && incoming().userId == request.auth.uid
-        && incoming().status == 'requested'
-        && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
-      allow update: if hasRole(['super_admin', 'admin', 'sales_mgr', 'warehouse', 'accountant']) && isValidId(returnId) && isValidReturnRequest(incoming());
-      allow delete: if false;
+      allow create, update, delete: if false;
     }
 
     match /proformas/{proformaId} {
@@ -577,7 +556,17 @@ service cloud.firestore {
 
     match /warehouses/{warehouseId} {
       allow get, list: if hasRole(['super_admin', 'admin', 'warehouse', 'sales_mgr', 'accountant']);
-      allow create, update, delete: if hasRole(['super_admin', 'admin', 'warehouse']) && isValidId(warehouseId);
+      allow create, update, delete: if false;
+    }
+
+    match /stockLevels/{levelId} {
+      allow get, list: if hasRole(['super_admin', 'admin', 'warehouse', 'sales_mgr', 'accountant']);
+      allow create, update, delete: if false;
+    }
+
+    match /stockBatches/{batchId} {
+      allow get, list: if hasRole(['super_admin', 'admin', 'warehouse', 'sales_mgr', 'accountant']);
+      allow create, update, delete: if false;
     }
 
     match /suppliers/{supplierId} {
@@ -587,8 +576,7 @@ service cloud.firestore {
 
     match /stockMovements/{movementId} {
       allow get, list: if hasRole(['super_admin', 'admin', 'warehouse', 'accountant']);
-      allow create: if hasRole(['super_admin', 'admin', 'warehouse', 'sales_mgr']) && isValidId(movementId);
-      allow update, delete: if false;
+      allow create, update, delete: if false;
     }
 
     // --- System & Admin Collections ---

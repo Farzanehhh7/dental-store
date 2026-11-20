@@ -1,7 +1,7 @@
 import type { User } from 'firebase/auth';
 import { writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import type { Order, Product } from '../types/domain';
+import type { Product } from '../types/domain';
 
 export const LS_CART = 'dm_cart_v1';
 export const LS_WISHLIST = 'dm_wishlist_v1';
@@ -9,10 +9,9 @@ export const LS_COMPARE = 'dm_compare_v1';
 export const LS_RECENT = 'dm_recent_v1';
 export const LS_CURRENCY = 'dm_currency_v1';
 export const LS_DARK = 'dm_dark_v1';
-export const LS_GUEST_ORDERS = 'dm_guest_orders_v1';
 export const LS_DELETED_IDS = 'dm_deleted_catalog_v1';
 export const LS_MOBILE_TOKEN = 'dm_mobile_session_token_v1';
-export const LS_VERIFIED_PAYMENTS = 'dm_verified_payments_v1';
+export const LS_GUEST_ORDER_TOKENS = 'dm_guest_order_tokens_v1';
 
 export const ADMIN_REQUIRED_MSG =
   'دسترسی غیرمجاز: برای ذخیره یا تغییر این بخش باید با حساب مدیر تاییدشده وارد شوید.';
@@ -23,6 +22,26 @@ export function readJsonLS<T>(key: string, fallback: T): T {
     return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
     return fallback;
+  }
+}
+
+export function getGuestOrderTokens(): Record<string, string> {
+  return readJsonLS<Record<string, string>>(LS_GUEST_ORDER_TOKENS, {});
+}
+
+export function getGuestOrderToken(orderId: string): string | undefined {
+  const map = getGuestOrderTokens();
+  return map[orderId];
+}
+
+export function saveGuestOrderToken(orderId: string, token: string): void {
+  if (!orderId || !token) return;
+  try {
+    const current = getGuestOrderTokens();
+    current[orderId] = token;
+    localStorage.setItem(LS_GUEST_ORDER_TOKENS, JSON.stringify(current));
+  } catch {
+    // Ignore storage quota issues
   }
 }
 
@@ -86,24 +105,4 @@ export async function resolveAuthHeaders(
     headers['X-Mobile-Session'] = mobileSessionToken;
   }
   return headers;
-}
-
-export interface VerifiedPaymentMark {
-  refId?: string;
-  paidAt: string;
-}
-
-export function applyVerifiedPaymentOverlay(
-  ordersList: Order[],
-  verifiedMap: Record<string, VerifiedPaymentMark>
-): Order[] {
-  return ordersList.map((o) =>
-    verifiedMap[o.id]
-      ? {
-          ...o,
-          status: o.status === 'pending_payment' || o.status === 'awaiting_review' ? 'paid' : o.status,
-          paymentStatus: 'paid',
-        }
-      : o
-  );
 }

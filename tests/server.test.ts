@@ -229,8 +229,8 @@ describe('Server Security, Payment Anti-Forgery, Persistence & API Integration',
     });
     expect(overStockRes.status).toBe(400);
 
-    // 3. Place valid guest order while passing tampered totals in body (server must ignore client amounts)
-    const orderRes = await fetch(`${baseUrl}/api/orders/guest`, {
+    // 3a. Tampered totals in guest order body must be rejected (400)
+    const tamperedOrderRes = await fetch(`${baseUrl}/api/orders/guest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -244,18 +244,35 @@ describe('Server Security, Payment Anti-Forgery, Persistence & API Integration',
         items: [{ productId: 'prod_rotary_files', variantId: 'var_rot_25', quantity: 1 }],
       }),
     });
+    expect(tamperedOrderRes.status).toBe(400);
+
+    // 3b. Place valid guest order without tampered totals; server computes authoritative pricing
+    const orderRes = await fetch(`${baseUrl}/api/orders/guest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerName: 'کلینیک دندانپزشکی مهر',
+        customerMobile: '09127778899',
+        shippingMethod: 'courier_tehran',
+        paymentMethod: 'online',
+        shippingAddress: { province: 'تهران', city: 'تهران', addressLine: 'خیابان سهروردی پلاک ۲۴' },
+        items: [{ productId: 'prod_rotary_files', variantId: 'var_rot_25', quantity: 1 }],
+      }),
+    });
     expect(orderRes.status).toBe(200);
-    const { order } = (await orderRes.json()) as {
+    const { order, orderToken } = (await orderRes.json()) as {
       order: { id: string; orderNo: string; grandTotal: number; subtotal: number; status: string };
+      orderToken: string;
     };
     expect(order.subtotal).toBe(3450000);
     expect(order.grandTotal).toBeGreaterThan(3450000);
     expect(order.status).toBe('pending_payment');
+    expect(orderToken).toMatch(/^ordtok_/);
 
-    // 4. Initiate payment with spoofed amount=100; server must enforce authoritative order.grandTotal
+    // 4. Initiate payment with spoofed amount=100; server enforces authoritative order.grandTotal
     const initRes = await fetch(`${baseUrl}/api/payments/initiate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Order-Token': orderToken },
       body: JSON.stringify({
         orderId: order.id,
         orderNo: order.orderNo,
@@ -306,7 +323,7 @@ describe('Server Security, Payment Anti-Forgery, Persistence & API Integration',
     // 7. Re-create server pointing to the same dataDir to verify atomic disk persistence
     const restarted = await createServerApp({ dataDir: tmpDir, attachVite: false });
     expect(restarted.store.data.verifiedOrderStatuses[order.id]?.status).toBe('paid');
-    expect(restarted.store.data.guestOrders[order.orderNo]?.status).toBe('paid');
+    expect(restarted.store.data.orders[order.id]?.status).toBe('paid');
   });
 
   it('returns honest unverified sheets or redirects when verified fileUrl exists on /api/files/certificate', async () => {
@@ -727,14 +744,15 @@ describe('Server Security, Payment Anti-Forgery, Persistence & API Integration',
       }),
     });
     expect(orderRes.status).toBe(200);
-    const { order } = (await orderRes.json()) as {
+    const { order, orderToken } = (await orderRes.json()) as {
       order: { id: string; orderNo: string; grandTotal: number };
+      orderToken: string;
     };
 
     // Initiate with wildly tampered amount; server enforces authoritative order.grandTotal
     const initRes = await fetch(`${baseUrl}/api/payments/initiate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Order-Token': orderToken },
       body: JSON.stringify({
         orderId: order.id,
         orderNo: order.orderNo,
@@ -810,7 +828,7 @@ describe('Server Security, Payment Anti-Forgery, Persistence & API Integration',
     // Initiating a fresh payment session on an already-paid order is rejected (400)
     const reInitPaid = await fetch(`${baseUrl}/api/payments/initiate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Order-Token': orderToken },
       body: JSON.stringify({
         orderId: order.id,
         orderNo: order.orderNo,
@@ -833,10 +851,13 @@ describe('Server Security, Payment Anti-Forgery, Persistence & API Integration',
         items: [{ productId: 'prod_rotary_files', variantId: 'var_rot_25', quantity: 1 }],
       }),
     });
-    const { order: order2 } = (await order2Res.json()) as { order: { id: string; orderNo: string } };
+    const { order: order2, orderToken: token2 } = (await order2Res.json()) as {
+      order: { id: string; orderNo: string };
+      orderToken: string;
+    };
     const init2Res = await fetch(`${baseUrl}/api/payments/initiate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Order-Token': token2 },
       body: JSON.stringify({ orderId: order2.id, orderNo: order2.orderNo, gateway: 'zarinpal' }),
     });
     const { session: session2 } = (await init2Res.json()) as { session: { authority: string } };

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  AlertCircle,
   CheckCircle2,
   CreditCard,
   Minus,
@@ -28,6 +29,7 @@ export function CartPage() {
     contractPrices,
     coupons,
     authUser,
+    mobileSession,
     currency,
     customerGroup,
     settings,
@@ -41,6 +43,8 @@ export function CartPage() {
 
   const [couponInput, setCouponInput] = useState('');
   const [appliedCouponCode, setAppliedCouponCode] = useState('');
+  const [proformaMobilePromptOpen, setProformaMobilePromptOpen] = useState(false);
+  const [proformaMobileInput, setProformaMobileInput] = useState('');
 
   useEffect(() => {
     applySeoHead({
@@ -127,7 +131,7 @@ export function CartPage() {
     pushToast(`کد تخفیف ${match.code} اعمال شد.`, 'success');
   };
 
-  const handleRequestProformaFromCart = async () => {
+  const submitProformaWithMobile = async (contactMobile: string) => {
     const orderItems: OrderItem[] = lines
       .filter((l) => l.unitPrice > 0)
       .map((l) => ({
@@ -145,14 +149,25 @@ export function CartPage() {
       }));
     if (orderItems.length === 0) return;
     const pf = await requestProforma({
-      contactName: userProfile?.displayName || 'مشتری کلینیک',
-      contactMobile: userProfile?.mobile || '09120000000',
+      contactName: userProfile?.displayName || mobileSession?.displayName || 'مشتری کلینیک',
+      contactMobile,
       clinicName: userProfile?.clinicName,
       items: orderItems,
     });
     if (pf) {
+      setProformaMobilePromptOpen(false);
       navigate(pf.shareToken ? `/proforma/${pf.shareToken}` : '/account');
     }
+  };
+
+  const handleRequestProformaFromCart = async () => {
+    const knownMobile = (userProfile?.mobile || mobileSession?.mobile || '').trim();
+    if (!/^09\d{9}$/.test(knownMobile)) {
+      setProformaMobileInput(knownMobile);
+      setProformaMobilePromptOpen(true);
+      return;
+    }
+    await submitProformaWithMobile(knownMobile);
   };
 
   return (
@@ -353,6 +368,47 @@ export function CartPage() {
           </div>
         </section>
       )}
+
+      {proformaMobilePromptOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!/^09\d{9}$/.test(proformaMobileInput.trim())) {
+                pushToast('لطفاً شماره موبایل معتبر ۱۱ رقمی (با شروع 09) وارد کنید.', 'error');
+                return;
+              }
+              await submitProformaWithMobile(proformaMobileInput.trim());
+            }}
+            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 text-xs"
+          >
+            <h2 className="text-base font-extrabold">شماره تماس برای صدور پیش‌فاکتور رسمی</h2>
+            <p className="text-ink/70 dark:text-slate-400">
+              برای ثبت پیش‌فاکتور رسمی در سامانه، وارد کردن شماره موبایل واقعی خریدار الزامی است.
+            </p>
+            <input
+              required
+              type="tel"
+              value={proformaMobileInput}
+              onChange={(e) => setProformaMobileInput(e.target.value)}
+              placeholder="0912..."
+              className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setProformaMobilePromptOpen(false)}
+                className="px-4 py-2 rounded-xl border border-line dark:border-slate-700 font-bold"
+              >
+                انصراف
+              </button>
+              <button type="submit" className="px-5 py-2 rounded-xl bg-brand text-white font-bold">
+                تایید و صدور پیش‌فاکتور
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -382,11 +438,18 @@ export function CheckoutPage() {
     verifyMobileOtp,
     placeOrder,
     verifyOnlinePayment,
+    fetchOrderPaymentStatus,
     pushToast,
   } = useStore();
 
   const [searchParams] = useSearchParams();
   const initialCoupon = searchParams.get('coupon') ?? '';
+  const paymentCallbackParam = searchParams.get('paymentCallback');
+  const callbackOrderId = searchParams.get('orderId') ?? '';
+  const callbackAuthority = searchParams.get('Authority') || searchParams.get('authority') || searchParams.get('id') || '';
+  const callbackRawStatus = searchParams.get('Status') || searchParams.get('status') || '';
+  const callbackRefIdParam = searchParams.get('refId') ?? '';
+  const callbackMessageParam = searchParams.get('message') ?? '';
 
   const [customerName, setCustomerName] = useState(userProfile?.displayName || authUser?.displayName || '');
   const [customerMobile, setCustomerMobile] = useState(userProfile?.mobile || '');
@@ -423,6 +486,16 @@ export function CheckoutPage() {
   const [gatewayModalOpen, setGatewayModalOpen] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
+  const [callbackState, setCallbackState] = useState<{
+    loading: boolean;
+    paid: boolean;
+    order?: Order;
+    refId?: string;
+    gateway?: string;
+    verifiedAt?: string;
+    message?: string;
+  } | null>(null);
+
   useEffect(() => {
     applySeoHead({
       title: `تسویه‌حساب و ثبت سفارش | ${settings.storeNameFa}`,
@@ -431,6 +504,55 @@ export function CheckoutPage() {
       robots: 'noindex, nofollow',
     });
   }, [settings.storeNameFa]);
+
+  useEffect(() => {
+    if (paymentCallbackParam !== '1' || !callbackOrderId) {
+      setCallbackState(null);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      setCallbackState({ loading: true, paid: false });
+      if (callbackAuthority && callbackRawStatus !== 'success' && callbackRawStatus !== 'failed') {
+        const cbQs = new URLSearchParams({
+          orderId: callbackOrderId,
+          Authority: callbackAuthority,
+          Status: callbackRawStatus || 'OK',
+          format: 'json',
+        });
+        await fetch(`/api/payments/callback?${cbQs.toString()}`, {
+          headers: { Accept: 'application/json' },
+          credentials: 'include',
+        }).catch(() => null);
+      }
+      const statusRes = await fetchOrderPaymentStatus(callbackOrderId);
+      if (cancelled) return;
+      if (!statusRes.ok) {
+        setCallbackState({
+          loading: false,
+          paid: false,
+          refId: callbackRefIdParam || undefined,
+          message: callbackMessageParam || statusRes.message || 'تایید وضعیت پرداخت از سرور ناموفق بود.',
+        });
+        return;
+      }
+      setCallbackState({
+        loading: false,
+        paid: statusRes.paid,
+        order: statusRes.order,
+        refId: statusRes.refId || callbackRefIdParam || undefined,
+        gateway: statusRes.gateway,
+        verifiedAt: statusRes.verifiedAt,
+        message: statusRes.paid
+          ? undefined
+          : callbackMessageParam || 'پرداخت تایید نشد یا لغو گردید. در صورت کسر وجه، تا ۷۲ ساعت به حساب شما بازمی‌گردد.',
+      });
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentCallbackParam, callbackOrderId, callbackAuthority, callbackRawStatus, callbackRefIdParam, callbackMessageParam]);
 
   useEffect(() => {
     if (cart.length > 0) {
@@ -597,6 +719,86 @@ export function CheckoutPage() {
     }
   };
 
+  if (paymentCallbackParam === '1' && callbackOrderId && callbackState) {
+    return (
+      <div data-testid="payment-callback-receipt" className="max-w-2xl mx-auto px-4 py-12 space-y-6">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
+          {callbackState.loading ? (
+            <div className="text-center py-8 space-y-3">
+              <p className="text-base font-extrabold">در حال استعلام قطعی وضعیت تراکنش از سرور...</p>
+              <p className="text-xs text-ink/60">لطفاً تا دریافت تاییدیه بانکی صفحه را نبندید.</p>
+            </div>
+          ) : callbackState.paid ? (
+            <>
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="w-9 h-9 text-emerald-600 shrink-0" />
+                <div>
+                  <h1 className="text-xl font-extrabold text-emerald-700 dark:text-emerald-400">
+                    پرداخت با موفقیت تایید و ثبت شد
+                  </h1>
+                  <p className="text-xs text-ink/60 dark:text-slate-400 mt-1">
+                    {callbackState.verifiedAt ? `زمان تایید سرور: ${formatJalaliDateTime(callbackState.verifiedAt)}` : ''}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs p-4 rounded-xl bg-surface/60 dark:bg-slate-800/60">
+                <div>
+                  <span className="text-ink/50 block">شماره سفارش</span>
+                  <strong className="mt-1 block tabular-nums">{callbackState.order?.orderNo || callbackOrderId}</strong>
+                </div>
+                <div>
+                  <span className="text-ink/50 block">کد رهگیری پرداخت</span>
+                  <strong className="mt-1 block font-mono">{callbackState.refId || 'ثبت‌شده'}</strong>
+                </div>
+                <div>
+                  <span className="text-ink/50 block">درگاه</span>
+                  <strong className="mt-1 block">{callbackState.gateway || 'بانکی'}</strong>
+                </div>
+                <div>
+                  <span className="text-ink/50 block">مبلغ پرداختی</span>
+                  <strong className="mt-1 block tabular-nums text-brand">
+                    {callbackState.order ? formatMoney(callbackState.order.grandTotal, currency) : '—'}
+                  </strong>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-9 h-9 text-rose-600 shrink-0" />
+                <div>
+                  <h1 className="text-xl font-extrabold text-rose-700 dark:text-rose-400">
+                    پرداخت تایید نشد یا ناتمام ماند
+                  </h1>
+                  <p className="text-xs text-ink/65 dark:text-slate-400 mt-1">
+                    {callbackState.message || 'تراکنش توسط درگاه تایید نگردید.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => void verifyOnlinePayment(callbackOrderId, gatewayName)}
+                  className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
+                >
+                  تلاش مجدد برای پرداخت آنلاین
+                </button>
+              </div>
+            </>
+          )}
+          <div className="flex flex-wrap gap-3 pt-2 border-t border-line dark:border-slate-800">
+            <Link to="/account" className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
+              مشاهده سفارش در حساب کاربری
+            </Link>
+            <Link to="/" className="px-5 py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold">
+              بازگشت به فروشگاه
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (createdOrder) {
     return (
       <div data-testid="order-success-card" className="max-w-3xl mx-auto px-4 py-12 space-y-6">
@@ -670,11 +872,11 @@ export function CheckoutPage() {
               <div className="flex items-center gap-2 text-brand">
                 <ShieldCheck className="w-6 h-6" />
                 <h2 className="text-lg font-extrabold">
-                  درگاه پرداخت شاپرکی ({gatewayName === 'zarinpal' ? 'زرین‌پال' : 'آی‌دی‌پی'})
+                  شبیه‌ساز درگاه شاپرکی — Demo/Sandbox ({gatewayName === 'zarinpal' ? 'زرین‌پال' : 'آی‌دی‌پی'})
                 </h2>
               </div>
               <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed">
-                پرداخت امن شاپرکی با کلید یکتای تراکنش (Idempotency Key). مبلغ قابل پرداخت:
+                حالت آزمایشی (Demo / Sandbox): پرداخت آنلاین با تایید قطعی سمت سرور و کلید یکتای تراکنش انجام می‌شود. مبلغ قابل پرداخت:
               </p>
               <p className="text-2xl font-extrabold text-brand tabular-nums text-center py-3 bg-surface/60 dark:bg-slate-800 rounded-xl">
                 {formatMoney(createdOrder.grandTotal, currency)}

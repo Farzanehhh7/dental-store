@@ -164,14 +164,19 @@ export default function ProductPage() {
   const specAttributes = attributes.filter((a) => a.showInSpec && product.attributes[a.code] !== undefined);
 
   const handleRequestProforma = async () => {
-    if (!authUser) {
-      pushToast('برای صدور پیش‌فاکتور رسمی لطفاً ابتدا وارد حساب کاربری شوید.', 'error');
+    if (!authUser && !mobileSession) {
+      pushToast('برای صدور پیش‌فاکتور رسمی لطفاً ابتدا وارد حساب کاربری یا نشست موبایلی شوید.', 'error');
+      return;
+    }
+    const contactMobile = (userProfile?.mobile || mobileSession?.mobile || '').trim();
+    if (!/^09\d{9}$/.test(contactMobile)) {
+      pushToast('لطفاً ابتدا شماره موبایل معتبر خود را در حساب کاربری ثبت کنید.', 'error');
       return;
     }
     const unitPrice = resolved.unitPrice ?? variant.basePrice ?? 0;
     await requestProforma({
-      contactName: userProfile?.displayName || authUser.displayName || 'مشتری کلینیک',
-      contactMobile: userProfile?.mobile || '۰۹۱۲۰۰۰۰۰۰۰',
+      contactName: userProfile?.displayName || authUser?.displayName || mobileSession?.displayName || 'مشتری کلینیک',
+      contactMobile,
       clinicName: userProfile?.clinicName,
       items: [
         {

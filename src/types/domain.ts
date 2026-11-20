@@ -26,8 +26,23 @@ export type OrderStatus =
   | 'delivered'
   | 'completed'
   | 'cancelled'
+  | 'expired'
+  | 'refunded'
   | 'return_requested'
   | 'returned';
+
+export type OrderSource = 'google' | 'otp' | 'guest' | 'admin_manual' | 'proforma';
+
+export type PaymentSessionStatus = 'initiated' | 'redirected' | 'verified' | 'failed' | 'expired' | 'refunded';
+
+export interface OrderStatusHistoryEntry {
+  status: OrderStatus;
+  paymentStatus?: PaymentStatus;
+  changedAt: string;
+  actorType: 'system' | 'customer' | 'admin' | 'gateway';
+  actorId?: string;
+  note?: string;
+}
 
 export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid' | 'refunded' | 'pending_credit';
 export type PaymentMethod =
@@ -112,12 +127,56 @@ export interface AttributeDef {
 export interface StockBatch {
   id: string;
   batchNo: string;
+  warehouseId?: string;
   warehouseCode: string;
   producedAt?: string;
   expiresAt: string;
+  expiryDate?: string;
   qtyOnHand: number;
+  qty?: number;
+  reserved?: number;
   unitCost?: number;
   specialPrice?: number | null;
+  condition?: 'resellable' | 'damaged';
+}
+
+export interface StockLevel {
+  id: string; // `${warehouseId}__${variantId}`
+  productId: string;
+  variantId: string;
+  sku?: string;
+  warehouseId: string;
+  warehouseCode?: string;
+  onHand: number;
+  reserved: number;
+  lowStockThreshold: number;
+  updatedAt: string;
+}
+
+export interface StockBatchRecord {
+  id: string;
+  productId: string;
+  variantId: string;
+  warehouseId: string;
+  warehouseCode: string;
+  batchNo: string;
+  expiryDate: string;
+  qty: number;
+  reserved: number;
+  unitCost?: number;
+  specialPrice?: number | null;
+  condition: 'resellable' | 'damaged';
+  createdAt?: string;
+  updatedAt: string;
+}
+
+export interface OrderBatchAllocation {
+  warehouseId: string;
+  warehouseCode?: string;
+  batchId?: string;
+  batchNo: string;
+  expiryDate?: string;
+  qty: number;
 }
 
 export interface TierPrice {
@@ -146,6 +205,7 @@ export interface ProductVariant {
   isDefault?: boolean;
   isActive: boolean;
   batches?: StockBatch[];
+  stockLevels?: StockLevel[];
 }
 
 export interface ProductFile {
@@ -328,7 +388,9 @@ export interface OrderItem {
   discountAmount: number;
   lineTotal: number;
   priceSource: 'base' | 'group' | 'tier' | 'campaign' | 'contract';
+  warehouseId?: string;
   batchNo?: string;
+  batchAllocations?: OrderBatchAllocation[];
 }
 
 export interface Order {
@@ -336,6 +398,8 @@ export interface Order {
   orderNo: string;
   userId: string;
   isGuest?: boolean;
+  source?: OrderSource;
+  idempotencyKey?: string;
   customerName: string;
   customerMobile: string;
   customerGroup: CustomerGroupCode;
@@ -358,6 +422,10 @@ export interface Order {
   customerNote?: string;
   trackingCode?: string;
   proformaId?: string;
+  expiresAt?: string;
+  stockReserved?: boolean;
+  stockCommitted?: boolean;
+  statusHistory?: OrderStatusHistoryEntry[];
   items: OrderItem[];
   createdAt: string;
   updatedAt: string;
@@ -400,10 +468,13 @@ export interface ReturnRequest {
   orderNo: string;
   userId: string;
   customerName: string;
-  items: { productId: string; variantId: string; titleFa: string; quantity: number }[];
+  items: { productId: string; variantId: string; titleFa: string; quantity: number; batchNo?: string }[];
   reasonFa: string;
   resolution: 'refund' | 'replacement' | 'credit';
   status: 'requested' | 'approved' | 'received' | 'refunded' | 'rejected';
+  condition?: 'resellable' | 'damaged';
+  warehouseId?: string;
+  restockedAt?: string;
   refundAmount: number;
   adminNote?: string;
   createdAt: string;
@@ -604,15 +675,35 @@ export interface Supplier {
   isActive: boolean;
 }
 
+export type StockMovementType =
+  | 'receive'
+  | 'reserve'
+  | 'release'
+  | 'commit'
+  | 'adjust'
+  | 'transfer'
+  | 'return'
+  | 'sale'
+  | 'stocktake';
+
 export interface StockMovement {
   id: string;
   productId: string;
   productTitleFa: string;
   variantId: string;
   sku: string;
+  warehouseId?: string;
   warehouseCode: string;
+  toWarehouseId?: string;
+  toWarehouseCode?: string;
+  batchId?: string;
+  batchNo?: string;
+  orderId?: string;
+  orderNo?: string;
+  returnId?: string;
+  condition?: 'resellable' | 'damaged';
   delta: number;
-  type: 'receive' | 'sale' | 'adjust' | 'return' | 'stocktake';
+  type: StockMovementType;
   reason: string;
   actorEmail: string;
   createdAt: string;

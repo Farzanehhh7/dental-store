@@ -270,8 +270,8 @@ describe('Firestore Security Rules (security_spec.md Dirty Dozen & Invariants)',
       )
     );
 
-    // Valid order create -> ALLOWED
-    await assertSucceeds(
+    // Direct client order create -> DENIED (orders are created solely by Express server via Admin SDK)
+    await assertFails(
       setDoc(doc(userADb, 'orders', 'ord_valid_1'), makeOrderPayload())
     );
 
@@ -282,8 +282,8 @@ describe('Firestore Security Rules (security_spec.md Dirty Dozen & Invariants)',
         updatedAt: serverTimestamp(),
       })
     );
-    // Customer cancelling own pending order -> ALLOWED
-    await assertSucceeds(
+    // Customer direct update/cancel in Firestore -> DENIED (must go through POST /api/orders/:id/cancel)
+    await assertFails(
       updateDoc(doc(userADb, 'orders', 'order-of-user-a'), {
         status: 'cancelled',
         updatedAt: serverTimestamp(),
@@ -481,5 +481,154 @@ describe('Firestore Security Rules (security_spec.md Dirty Dozen & Invariants)',
     await assertFails(getDocs(collection(userADb, 'users')));
     // Admin list on /users -> ALLOWED
     await assertSucceeds(getDocs(collection(adminDb, 'users')));
+  });
+
+  // --- Phase 0 Rules Regressions (RED until Firestore rules are hardened) ---
+  it('[Phase 0 - Claim 9] denies unauthenticated public create/update on notFoundLogs', async () => {
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      setDoc(doc(anonDb, 'notFoundLogs', 'nf_poison_1'), {
+        id: 'nf_poison_1',
+        path: '/poisoned-path',
+        hitCount: 9999,
+        lastSeenAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  it('[Phase 0 - Claim 5] blocks direct client order creation and tampered negative subtotals', async () => {
+    const userADb = testEnv.authenticatedContext('user_a', { email_verified: true }).firestore();
+    await assertFails(
+      setDoc(
+        doc(userADb, 'orders', 'ord_client_direct'),
+        makeOrderPayload({ id: 'ord_client_direct', subtotal: -500000, grandTotal: 1 })
+      )
+    );
+  });
+
+  it('[Phase 0 - Missed Rules Holes] blocks unauthenticated get on draft products/inactive coupons and user status overwrite on tickets', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'products', 'prod-draft-secret'), {
+        id: 'prod-draft-secret',
+        titleFa: 'محصول محرمانه پیش‌نویس',
+        status: 'draft',
+      });
+      await setDoc(doc(db, 'coupons', 'cpn-hidden'), {
+        id: 'cpn-hidden',
+        code: 'SECRET99',
+        isActive: false,
+      });
+      await setDoc(doc(db, 'tickets', 't-existing'), {
+        id: 't-existing',
+        ticketNo: 'TK-9001',
+        userId: 'user_a',
+        subject: 'مشکل سفارش',
+        department: 'support',
+        priority: 'normal',
+        status: 'open',
+        messages: [{ authorName: 'پشتیبان', body: 'پاسخ ادمین', createdAt: '2026-01-01T00:00:00Z' }],
+        createdAt: Timestamp.fromMillis(1_700_000_000_000),
+        updatedAt: Timestamp.fromMillis(1_700_000_000_000),
+      });
+    });
+
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const userADb = testEnv.authenticatedContext('user_a', { email_verified: true }).firestore();
+
+    // Unauthenticated get on draft product and inactive coupon must fail
+    await assertFails(getDoc(doc(anonDb, 'products', 'prod-draft-secret')));
+    await assertFails(getDoc(doc(anonDb, 'coupons', 'cpn-hidden')));
+
+    // User must not self-close/resolve tickets via direct client update
+    await assertFails(
+      updateDoc(doc(userADb, 'tickets', 't-existing'), {
+        status: 'resolved',
+        messages: [],
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  // --- Phase 3 Rules Coverage (Atomic Inventory & RMA Returns are server-written only) ---
+  it('[Phase 3] denies direct client writes to stockLevels, stockBatches, stockMovements, warehouses, and returns while allowing scoped reads', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'stockLevels', 'wh_teh__var_1'), {
+        id: 'wh_teh__var_1',
+        productId: 'prod-1',
+        variantId: 'var_1',
+        warehouseId: 'wh_teh',
+        onHand: 10,
+        reserved: 0,
+        lowStockThreshold: 2,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      });
+      await setDoc(doc(db, 'returns', 'ret_user_a'), {
+        id: 'ret_user_a',
+        returnNo: 'RMA-2026-1001',
+        orderId: 'order-of-user-a',
+        orderNo: 'DM-2026-10001',
+        userId: 'user_a',
+        customerName: 'دکتر احمدی',
+        items: [{ productId: 'prod-1', variantId: 'var_1', titleFa: 'کامپوزیت', quantity: 1 }],
+        reasonFa: 'آسیب بسته‌بندی',
+        resolution: 'refund',
+        status: 'requested',
+        refundAmount: 1000000,
+        createdAt: Timestamp.fromMillis(1_700_000_000_000),
+        updatedAt: Timestamp.fromMillis(1_700_000_000_000),
+      });
+    });
+
+    const userADb = testEnv.authenticatedContext('user_a', { email_verified: true }).firestore();
+    const adminDb = testEnv.authenticatedContext('admin_1', { email_verified: true }).firestore();
+
+    // Non-admin cannot read stockLevels; admin can read
+    await assertFails(getDoc(doc(userADb, 'stockLevels', 'wh_teh__var_1')));
+    await assertSucceeds(getDoc(doc(adminDb, 'stockLevels', 'wh_teh__var_1')));
+
+    // Even verified admins cannot write stockLevels/stockBatches/stockMovements/warehouses/returns directly from client
+    await assertFails(
+      setDoc(doc(adminDb, 'stockLevels', 'wh_teh__var_hack'), {
+        id: 'wh_teh__var_hack',
+        productId: 'prod-1',
+        variantId: 'var_1',
+        warehouseId: 'wh_teh',
+        onHand: 999,
+        reserved: 0,
+      })
+    );
+    await assertFails(
+      setDoc(doc(adminDb, 'stockBatches', 'batch_hack'), {
+        id: 'batch_hack',
+        batchNo: 'LOT-HACK',
+      })
+    );
+    await assertFails(
+      setDoc(doc(adminDb, 'stockMovements', 'sm_hack'), {
+        id: 'sm_hack',
+        delta: 100,
+      })
+    );
+    await assertFails(
+      setDoc(doc(adminDb, 'warehouses', 'wh_hack'), {
+        id: 'wh_hack',
+        code: 'HACK',
+      })
+    );
+
+    // Owner can read their return request, but neither owner nor admin can mutate returns directly
+    await assertSucceeds(getDoc(doc(userADb, 'returns', 'ret_user_a')));
+    await assertFails(
+      updateDoc(doc(userADb, 'returns', 'ret_user_a'), {
+        status: 'refunded',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(adminDb, 'returns', 'ret_user_a'), {
+        status: 'received',
+      })
+    );
   });
 });

@@ -24,6 +24,7 @@ import type {
   NotFoundLog,
   Order,
   OrderItem,
+  OrderSource,
   OrderStatus,
   PaymentLedgerEntry,
   PaymentMethod,
@@ -38,6 +39,8 @@ import type {
   RfqRequest,
   SitePage,
   SiteSettings,
+  StockBatchRecord,
+  StockLevel,
   StockMovement,
   StockNotification,
   StockRequest,
@@ -79,6 +82,38 @@ export interface PlaceOrderPayload {
   installmentsCount?: number;
   proposedTermsFa?: string;
   verifiedToken?: string;
+}
+
+export interface AdminOrdersQuery {
+  page?: number;
+  limit?: number;
+  status?: OrderStatus | '';
+  source?: OrderSource | '';
+  q?: string;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export interface AdminOrdersMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface LowStockAlertItem {
+  levelId: string;
+  productId: string;
+  productTitleFa: string;
+  variantId: string;
+  variantLabelFa: string;
+  sku: string;
+  warehouseId: string;
+  warehouseCode: string;
+  onHand: number;
+  reserved: number;
+  available: number;
+  lowStockThreshold: number;
 }
 
 export interface StoreContextValue {
@@ -137,6 +172,9 @@ export interface StoreContextValue {
   // Operational Data
   orders: Order[];
   guestOrders: Order[];
+  adminOrdersMeta: AdminOrdersMeta;
+  adminOrdersLoading: boolean;
+  fetchAdminOrders: (query?: AdminOrdersQuery) => Promise<void>;
   invoices: InvoiceRecord[];
   paymentLedger: PaymentLedgerEntry[];
   returns: ReturnRequest[];
@@ -150,6 +188,9 @@ export interface StoreContextValue {
   consultationRequests: ConsultationRequest[];
   contractPrices: ContractPrice[];
   warehouses: Warehouse[];
+  stockLevels: StockLevel[];
+  stockBatches: StockBatchRecord[];
+  lowStockAlerts: LowStockAlertItem[];
   suppliers: Supplier[];
   stockMovements: StockMovement[];
   usersList: UserProfile[];
@@ -179,6 +220,15 @@ export interface StoreContextValue {
   // Storefront & Checkout Actions
   placeOrder: (payload: PlaceOrderPayload) => Promise<Order | null>;
   verifyOnlinePayment: (orderId: string, gateway?: string) => Promise<boolean>;
+  fetchOrderPaymentStatus: (orderId: string) => Promise<{
+    ok: boolean;
+    paid: boolean;
+    order?: Order;
+    refId?: string;
+    gateway?: string;
+    verifiedAt?: string;
+    message?: string;
+  }>;
   lookupGuestOrder: (orderNo: string, mobile: string) => Promise<Order | null>;
   cancelOwnOrder: (orderId: string) => Promise<void>;
   requestProforma: (payload: {
@@ -282,14 +332,33 @@ export interface StoreContextValue {
   }) => Promise<void>;
   undoBulkPriceAdjustment: () => Promise<void>;
   canUndoBulkPrice: boolean;
+  refreshInventory: () => Promise<void>;
   adjustVariantStock: (
     productId: string,
     variantId: string,
     delta: number,
     reason: string,
     warehouseCode?: string,
-    type?: StockMovement['type']
+    type?: StockMovement['type'],
+    options?: { batchNo?: string; expiryDate?: string; warehouseId?: string }
   ) => Promise<void>;
+  stocktakeVariantStock: (payload: {
+    productId: string;
+    variantId: string;
+    warehouseId?: string;
+    warehouseCode?: string;
+    onHand: number;
+    reason: string;
+  }) => Promise<boolean>;
+  transferStock: (payload: {
+    productId: string;
+    variantId: string;
+    fromWarehouseId: string;
+    toWarehouseId: string;
+    quantity: number;
+    reason: string;
+    batchNo?: string;
+  }) => Promise<boolean>;
   applyNearExpirySpecialPrice: (
     productId: string,
     variantId: string,
@@ -317,6 +386,17 @@ export interface StoreContextValue {
   voidInvoice: (invoiceId: string) => Promise<void>;
   recordPaymentEntry: (entry: PaymentLedgerEntry) => Promise<void>;
   updateReturnStatus: (id: string, status: ReturnRequest['status'], adminNote?: string) => Promise<void>;
+  processReturnAdmin: (
+    id: string,
+    payload: {
+      status: ReturnRequest['status'];
+      condition?: 'resellable' | 'damaged';
+      warehouseId?: string;
+      batchNo?: string;
+      expiryDate?: string;
+      adminNote?: string;
+    }
+  ) => Promise<void>;
   reviewB2BVerification: (
     id: string,
     status: 'approved' | 'rejected' | 'needs_info',

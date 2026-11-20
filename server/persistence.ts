@@ -6,6 +6,9 @@ import {
   EXPANDED_PRODUCTS,
   SEED_CONTRACT_PRICES,
   SEED_PAYMENT_LEDGER,
+  SEED_RETURNS,
+  SEED_STOCK_MOVEMENTS,
+  SEED_WAREHOUSES,
 } from '../src/data/expandedCatalog';
 import {
   SEED_AGENTS,
@@ -25,13 +28,22 @@ import {
   Category,
   ContractPrice,
   Coupon,
+  CustomerGroupCode,
   Order,
   PaymentLedgerEntry,
+  PaymentSessionStatus,
   Product,
+  ProformaInvoice,
   RedirectRule,
+  ReturnRequest,
   RfqRequest,
   SiteSettings,
+  StockBatchRecord,
+  StockLevel,
+  StockMovement,
+  Warehouse,
 } from '../src/types/domain';
+import { migrateStockToWarehousesData } from '../scripts/migrate-stock-warehouses';
 
 export interface ServerCatalogSnapshot {
   categories: Category[];
@@ -45,6 +57,9 @@ export interface ServerCatalogSnapshot {
   coupons: Coupon[];
   contractPrices: ContractPrice[];
   settings: SiteSettings;
+  warehouses?: Warehouse[];
+  stockLevels?: StockLevel[];
+  stockBatches?: StockBatchRecord[];
   updatedAt: string;
 }
 
@@ -78,13 +93,16 @@ export interface ServerPaymentSession {
   gateway: 'zarinpal' | 'idpay';
   mode: 'sandbox' | 'live';
   idempotencyKey: string;
-  status: 'initiated' | 'verified' | 'failed';
+  status: PaymentSessionStatus;
   sandboxTokenHash?: string;
+  redirectUrl?: string;
   ownerUid?: string;
   ownerMobile?: string;
   refId?: string;
+  expiresAt: string;
   createdAt: string;
   verifiedAt?: string;
+  webhookProcessedAt?: string;
 }
 
 export interface VerifiedOrderPaymentState {
@@ -98,24 +116,71 @@ export interface VerifiedOrderPaymentState {
   verifiedAt: string;
 }
 
+export interface ServerUserGroupRecord {
+  key: string;
+  uid?: string;
+  mobile?: string;
+  customerGroup: CustomerGroupCode;
+  b2bStatus: 'none' | 'pending' | 'approved' | 'rejected' | 'needs_info';
+  displayName?: string;
+  updatedAt: string;
+}
+
+export interface ServerAuditLogRecord {
+  id: string;
+  actorType: string;
+  actorId?: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  summary: string;
+  createdAt: string;
+}
+
 export interface PersistedServerData {
   catalogState: ServerCatalogSnapshot;
+  warehouses: Warehouse[];
+  stockLevels: Record<string, StockLevel>;
+  stockBatches: Record<string, StockBatchRecord>;
+  stockMovements: StockMovement[];
+  returns: Record<string, ReturnRequest>;
   otpChallenges: Record<string, OtpChallengeRecord>;
   otpVerifiedTokens: Record<string, OtpVerifiedTokenRecord>;
   mobileSessions: Record<string, MobileSessionRecord>;
   paymentSessions: Record<string, ServerPaymentSession>;
   paymentLedger: PaymentLedgerEntry[];
   verifiedOrderStatuses: Record<string, VerifiedOrderPaymentState>;
-  guestOrders: Record<string, Order>;
+  orders: Record<string, Order>;
+  proformas: Record<string, ProformaInvoice>;
+  userGroups: Record<string, ServerUserGroupRecord>;
+  paymentWebhookEvents: Record<string, string>;
+  auditLogs: ServerAuditLogRecord[];
+  guestOrders?: Record<string, Order>;
   rfqs: Record<string, RfqRequest>;
 }
 
+function cloneCatalogProducts(products: Product[]): Product[] {
+  return products.map((p) => ({
+    ...p,
+    variants: p.variants.map((v) => ({
+      ...v,
+      reserved: 0,
+      ...(v.batches ? { batches: v.batches.map((b) => ({ ...b })) } : {}),
+    })),
+  }));
+}
+
 function createInitialData(): PersistedServerData {
-  return {
+  const initialReturns: Record<string, ReturnRequest> = {};
+  for (const ret of SEED_RETURNS) {
+    initialReturns[ret.id] = { ...ret, items: ret.items.map((it) => ({ ...it })) };
+  }
+
+  const data: PersistedServerData = {
     catalogState: {
       categories: EXPANDED_CATEGORIES,
       brands: EXPANDED_BRANDS,
-      products: EXPANDED_PRODUCTS,
+      products: cloneCatalogProducts(EXPANDED_PRODUCTS),
       campaigns: SEED_CAMPAIGNS,
       bundles: SEED_BUNDLES,
       agents: SEED_AGENTS,
@@ -126,15 +191,30 @@ function createInitialData(): PersistedServerData {
       settings: SEED_SETTINGS,
       updatedAt: new Date().toISOString(),
     },
+    warehouses: SEED_WAREHOUSES.map((w) => ({ ...w })),
+    stockLevels: {},
+    stockBatches: {},
+    stockMovements: SEED_STOCK_MOVEMENTS.map((m) => ({
+      ...m,
+      warehouseId: m.warehouseId ?? 'wh_teh',
+    })),
+    returns: initialReturns,
     otpChallenges: {},
     otpVerifiedTokens: {},
     mobileSessions: {},
     paymentSessions: {},
     paymentLedger: [...SEED_PAYMENT_LEDGER],
     verifiedOrderStatuses: {},
-    guestOrders: {},
+    orders: {},
+    proformas: {},
+    userGroups: {},
+    paymentWebhookEvents: {},
+    auditLogs: [],
     rfqs: {},
   };
+
+  migrateStockToWarehousesData(data, { dryRun: false });
+  return data;
 }
 
 export interface ServerStore {
@@ -155,6 +235,15 @@ export function createServerStore(dataDir?: string): ServerStore {
       if (raw.trim()) {
         const parsed = JSON.parse(raw) as Partial<PersistedServerData>;
         const defaults = createInitialData();
+        const unifiedOrders: Record<string, Order> = { ...(parsed.orders ?? {}) };
+        if (parsed.guestOrders && typeof parsed.guestOrders === 'object') {
+          for (const legacyOrder of Object.values(parsed.guestOrders)) {
+            if (legacyOrder?.id && !unifiedOrders[legacyOrder.id]) {
+              const inferredSource = legacyOrder.source ?? (legacyOrder.userId?.startsWith('mobile:') ? 'otp' : 'guest');
+              unifiedOrders[legacyOrder.id] = { ...legacyOrder, source: inferredSource };
+            }
+          }
+        }
         data = {
           catalogState: {
             ...defaults.catalogState,
@@ -165,15 +254,28 @@ export function createServerStore(dataDir?: string): ServerStore {
               ? parsed.catalogState.contractPrices
               : defaults.catalogState.contractPrices,
           },
+          warehouses:
+            Array.isArray(parsed.warehouses) && parsed.warehouses.length > 0 ? parsed.warehouses : defaults.warehouses,
+          stockLevels: parsed.stockLevels && typeof parsed.stockLevels === 'object' ? parsed.stockLevels : {},
+          stockBatches: parsed.stockBatches && typeof parsed.stockBatches === 'object' ? parsed.stockBatches : {},
+          stockMovements: Array.isArray(parsed.stockMovements) ? parsed.stockMovements : defaults.stockMovements,
+          returns: parsed.returns && typeof parsed.returns === 'object' ? parsed.returns : defaults.returns,
           otpChallenges: parsed.otpChallenges ?? {},
           otpVerifiedTokens: parsed.otpVerifiedTokens ?? {},
           mobileSessions: parsed.mobileSessions ?? {},
           paymentSessions: parsed.paymentSessions ?? {},
           paymentLedger: Array.isArray(parsed.paymentLedger) ? parsed.paymentLedger : defaults.paymentLedger,
           verifiedOrderStatuses: parsed.verifiedOrderStatuses ?? {},
-          guestOrders: parsed.guestOrders ?? {},
+          orders: unifiedOrders,
+          proformas: parsed.proformas ?? {},
+          userGroups: parsed.userGroups ?? {},
+          paymentWebhookEvents: parsed.paymentWebhookEvents ?? {},
+          auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
+          ...(parsed.guestOrders ? { guestOrders: parsed.guestOrders } : {}),
           rfqs: parsed.rfqs ?? {},
         };
+
+        migrateStockToWarehousesData(data, { dryRun: false });
       }
     }
   } catch (err) {

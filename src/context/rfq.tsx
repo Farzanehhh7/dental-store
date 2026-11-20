@@ -128,6 +128,26 @@ export function RfqProvider({ children }: { children: React.ReactNode }) {
           medicalCouncilNo: item.medicalCouncilNo,
           updatedAt: serverTimestamp(),
         });
+        if (authUser) {
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          try {
+            const tok = await authUser.getIdToken();
+            if (tok) headers.Authorization = `Bearer ${tok}`;
+          } catch {
+            // Ignore token error
+          }
+          await fetch('/api/admin/users/group', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              uid: item.userId,
+              mobile: item.mobile,
+              customerGroup: item.requestedGroup,
+              b2bStatus: 'approved',
+              displayName: item.applicantName,
+            }),
+          }).catch(() => {});
+        }
       }
       await writeAudit('b2b.review', 'b2bVerification', id, `بررسی حساب B2B (${item.applicantName}): ${status}`);
       pushToast('وضعیت درخواست B2B بروزرسانی شد.', 'success');
