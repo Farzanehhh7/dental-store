@@ -185,6 +185,13 @@ export interface CatalogRepository {
     displayName?: string;
   }>;
   setUserGroup(record: ServerUserGroupRecord): Promise<void>;
+  saveCatalogCollections(patch: {
+    categories?: ServerCatalogSnapshot['categories'];
+    brands?: ServerCatalogSnapshot['brands'];
+    products?: ServerCatalogSnapshot['products'];
+    redirects?: ServerCatalogSnapshot['redirects'];
+    updatedAt?: string;
+  }): Promise<void>;
 }
 
 export interface ProformaRepository {

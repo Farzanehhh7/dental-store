@@ -207,6 +207,16 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
         );
       }
       if (['super_admin', 'admin', 'warehouse', 'sales_mgr', 'accountant'].includes(roleEffective)) {
+        void resolveAuthHeaders(authUser)
+          .then((headers) => (headers.Authorization ? fetch('/api/admin/stock-notifications', { headers }) : null))
+          .then((res) => (res && res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.ok && Array.isArray(data.notifications)) {
+              setStockNotifications((prev) => mergeById(prev, data.notifications as StockNotification[]));
+            }
+          })
+          .catch(() => {});
+
         unsubs.push(
           onSnapshot(
             collection(db, 'suppliers'),
@@ -217,9 +227,9 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
           onSnapshot(
             collection(db, 'stockNotifications'),
             (snap) =>
-              setStockNotifications(
+              setStockNotifications((prev) =>
                 mergeById(
-                  SEED_STOCK_NOTIFICATIONS,
+                  mergeById(SEED_STOCK_NOTIFICATIONS, prev),
                   snap.docs.map((d) => ({ ...(d.data() as StockNotification), id: d.id }))
                 )
               ),
@@ -377,23 +387,26 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   };
 
   const submitStockNotification: StoreContextValue['submitStockNotification'] = async (payload) => {
-    const id = `sn_${Date.now()}`;
-    const item: StockNotification = {
-      id,
-      productId: payload.productId,
-      ...(payload.variantId ? { variantId: payload.variantId } : {}),
-      productTitleFa: payload.productTitleFa,
-      mobile: payload.mobile,
-      ...(authUser ? { userId: authUser.uid } : {}),
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    };
     try {
-      await setDoc(doc(db, 'stockNotifications', id), item);
-      setStockNotifications((prev) => [item, ...prev]);
+      const res = await fetch('/api/stock-notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: payload.productId,
+          ...(payload.variantId ? { variantId: payload.variantId } : {}),
+          productTitleFa: payload.productTitleFa,
+          mobile: payload.mobile,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok || !data.notification) {
+        pushToast(data?.message || 'خطا در ثبت اطلاع‌رسانی موجودی.', 'error');
+        return;
+      }
+      setStockNotifications((prev) => mergeById(prev, [data.notification as StockNotification]));
       pushToast('شماره شما برای اطلاع‌رسانی موجودی ثبت شد.', 'success');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `stockNotifications/${id}`);
+    } catch {
+      pushToast('خطا در برقراری ارتباط با سرور برای ثبت اطلاع‌رسانی موجودی.', 'error');
     }
   };
 
@@ -794,12 +807,23 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   };
 
   const markStockNotificationSent = async (id: string) => {
-    if (!isAdmin) {
+    if (!isAdmin || !authUser) {
       pushToast(ADMIN_REQUIRED_MSG, 'error');
       return;
     }
     try {
+      const headers = await resolveAuthHeaders(authUser, '');
+      const res = await fetch(`/api/admin/stock-notifications/${encodeURIComponent(id)}/notified`, {
+        method: 'PATCH',
+        headers,
+      });
+      if (res.ok) {
+        setStockNotifications((prev) => prev.map((sn) => (sn.id === id ? { ...sn, status: 'notified' } : sn)));
+        pushToast('وضعیت اطلاع‌رسانی به «ارسال‌شده» تغییر یافت.', 'success');
+        return;
+      }
       await updateDoc(doc(db, 'stockNotifications', id), { status: 'notified' });
+      setStockNotifications((prev) => prev.map((sn) => (sn.id === id ? { ...sn, status: 'notified' } : sn)));
       pushToast('وضعیت اطلاع‌رسانی به «ارسال‌شده» تغییر یافت.', 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `stockNotifications/${id}`);

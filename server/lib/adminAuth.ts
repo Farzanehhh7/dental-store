@@ -1,16 +1,7 @@
 import type express from 'express';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { AdminRoleCode } from '../../src/types/domain';
-
-const VALID_ADMIN_ROLES: AdminRoleCode[] = [
-  'super_admin',
-  'admin',
-  'sales_mgr',
-  'warehouse',
-  'content',
-  'support',
-  'accountant',
-];
+import { hasAdminPermission, normalizeAdminRole, type AdminPermission } from './rbac';
 
 export function extractFirebaseBearerToken(req: express.Request): string | null {
   const authHeader = req.headers.authorization;
@@ -67,7 +58,8 @@ export async function verifyFirebaseUser(req: express.Request): Promise<Verified
 }
 
 export async function verifyFirebaseAdmin(
-  req: express.Request
+  req: express.Request,
+  requiredPermissionOrRoles?: AdminPermission | readonly AdminRoleCode[]
 ): Promise<{ user: VerifiedFirebaseUser; role: AdminRoleCode } | { errorStatus: number; message: string }> {
   const token = extractFirebaseBearerToken(req);
   if (!token) {
@@ -79,6 +71,10 @@ export async function verifyFirebaseAdmin(
     process.env.E2E_ADMIN_TEST_TOKEN.trim().length >= 24 &&
     token === process.env.E2E_ADMIN_TEST_TOKEN.trim()
   ) {
+    const role: AdminRoleCode = 'super_admin';
+    if (requiredPermissionOrRoles && !hasAdminPermission(role, requiredPermissionOrRoles)) {
+      return { errorStatus: 403, message: 'سطح دسترسی نقش مدیریتی شما برای این عملیات کافی نیست.' };
+    }
     return {
       user: {
         uid: 'e2e_test_admin',
@@ -87,7 +83,7 @@ export async function verifyFirebaseAdmin(
         displayName: 'مدیر تست E2E',
         idToken: token,
       },
-      role: 'super_admin',
+      role,
     };
   }
   const user = await verifyFirebaseIdToken(token);
@@ -111,9 +107,12 @@ export async function verifyFirebaseAdmin(
     const docJson = (await adminRes.json()) as {
       fields?: { role?: { stringValue?: string } };
     };
-    const role = docJson.fields?.role?.stringValue as AdminRoleCode | undefined;
-    if (!role || !VALID_ADMIN_ROLES.includes(role)) {
+    const role = normalizeAdminRole(docJson.fields?.role?.stringValue);
+    if (!role) {
       return { errorStatus: 403, message: 'نقش مدیریتی معتبر در admins یافت نشد.' };
+    }
+    if (requiredPermissionOrRoles && !hasAdminPermission(role, requiredPermissionOrRoles)) {
+      return { errorStatus: 403, message: 'سطح دسترسی نقش مدیریتی شما برای این عملیات کافی نیست.' };
     }
     return { user, role };
   } catch {

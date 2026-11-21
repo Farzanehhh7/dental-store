@@ -1,261 +1,882 @@
-import React, { useMemo, useState } from 'react';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { FileSpreadsheet } from 'lucide-react';
-import { exportRowsToXlsx } from '../../lib/excel';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
+  AlertCircle,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FileSpreadsheet,
+  RotateCcw,
+  Search,
+} from 'lucide-react';
+import { canSeeCostPrice } from '../../components/admin/rbac';
 import { useStore } from '../../context/StoreContext';
-import { formatJalaliDate, formatJalaliDateTime, formatMoney, toPersianDigits } from '../../lib/jalali';
-import { auditSeoHealth } from '../../lib/seo';
+import { downloadCsvFile } from '../../lib/csv';
+import { exportRowsToXlsx } from '../../lib/excel';
+import { formatMoney, toPersianDigits } from '../../lib/jalali';
+import {
+  REPORT_CATALOG,
+  getReportDefinition,
+  runReportById,
+  type ReportColumn,
+  type ReportDataset,
+  type ReportGroup,
+  type ReportParams,
+  type ReportResult,
+} from './reports';
 
-const REPORT_CATALOG: { id: string; group: string; title: string }[] = [
-  { id: 'sales_daily', group: 'فروش و سفارش', title: '۱. گزارش فروش روزانه و روند درآمد' },
-  { id: 'sales_by_category', group: 'فروش و سفارش', title: '۲. فروش به تفکیک دسته‌بندی تخصصی' },
-  { id: 'sales_by_brand', group: 'فروش و سفارش', title: '۳. عملکرد و سهم فروش برندها' },
-  { id: 'sales_by_sku', group: 'فروش و سفارش', title: '۴. پرفروش‌ترین SKUها و تنوع‌ها' },
-  { id: 'sales_by_group', group: 'فروش و سفارش', title: '۵. فروش به تفکیک گروه مشتری (عادی/کلینیک/عمده)' },
-  { id: 'sales_by_province', group: 'فروش و سفارش', title: '۶. پراکندگی جغرافیایی سفارش‌ها بر اساس استان' },
-  { id: 'orders_funnel', group: 'فروش و سفارش', title: '۷. قیف وضعیت سفارش‌ها و لغوشده‌ها' },
-  { id: 'coupon_effectiveness', group: 'فروش و سفارش', title: '۸. اثربخشی کدهای تخفیف و کمپین‌ها' },
-  { id: 'abandoned_recovery', group: 'فروش و سفارش', title: '۹. سبدهای رهاشده و نرخ بازیابی' },
-  { id: 'payment_methods', group: 'مالی و پرداخت', title: '۱۰. سهم روش‌های پرداخت (آنلاین / اعتبار / چک)' },
-  { id: 'tax_vat_ledger', group: 'مالی و پرداخت', title: '۱۱. گزارش فصلی مالیات بر ارزش افزوده (VAT)' },
-  { id: 'official_invoices', group: 'مالی و پرداخت', title: '۱۲. دفتر فاکتورهای رسمی صادرشده و ابطال‌شده' },
-  { id: 'credit_exposure', group: 'مالی و پرداخت', title: '۱۳. مانده اعتبار و اقساط سررسید مشتریان B2B' },
-  { id: 'refunds_rma', group: 'مالی و پرداخت', title: '۱۴. تحلیل مرجوعی‌ها و علل عودت کالا (RMA)' },
-  { id: 'proforma_conversion', group: 'مالی و پرداخت', title: '۱۵. نرخ تبدیل پیش‌فاکتور کلینیک به سفارش قطعی' },
-  { id: 'gross_margin', group: 'مالی و پرداخت', title: '۱۶. حاشیه سود ناخالص بر پایه قیمت خرید محرمانه' },
-  { id: 'stock_valuation', group: 'انبار و FEFO', title: '۱۷. ارزش‌گذاری ریالی موجودی انبار' },
-  { id: 'low_stock_alert', group: 'انبار و FEFO', title: '۱۸. کالاهای زیر نقطه سفارش (Low Stock)' },
-  { id: 'fefo_expiry', group: 'انبار و FEFO', title: '۱۹. بچ‌های نزدیک به انقضای FEFO (زیر ۹۰ روز)' },
-  { id: 'stock_movements', group: 'انبار و FEFO', title: '۲۰. گردش دفترکل ورود و خروج کالا' },
-  { id: 'dead_stock', group: 'انبار و FEFO', title: '۲۱. کالاهای راکد و بدون فروش اخیر' },
-  { id: 'b2b_pipeline', group: 'مشتریان و B2B', title: '۲۲. وضعیت درخواست‌های احراز هویت B2B' },
-  { id: 'top_clinics', group: 'مشتریان و B2B', title: '۲۳. مشتریان کلیدی و کلینیک‌های با LTV بالا' },
-  { id: 'customer_retention', group: 'مشتریان و B2B', title: '۲۴. خرید تکراری مصرفی کلینیک‌ها (Retention)' },
-  { id: 'support_sla', group: 'مشتریان و B2B', title: '۲۵. تیکت‌های پشتیبانی و زمان پاسخگویی' },
-  { id: 'consultations_winrate', group: 'مشتریان و B2B', title: '۲۶. قیف مشاوره تجهیزات سرمایه‌ای (یونیت/اتوکلاو)' },
-  { id: 'seo_health_audit', group: 'محتوا و سئو', title: '۲۷. گزارش خطاهای سئو و Schema JSON-LD' },
-  { id: 'not_found_redirects', group: 'محتوا و سئو', title: '۲۸. صفحات ۴۰۴ پرتکرار و کارکرد ریدایرکت‌ها' },
-  { id: 'catalog_qa_imed', group: 'محتوا و سئو', title: '۲۹. پوشش کد IMED، گواهینامه‌ها و نظرات' },
+const GROUP_ORDER: ReportGroup[] = [
+  'فروش و سفارش',
+  'مالی و پرداخت',
+  'انبار و FEFO',
+  'مشتریان و B2B',
+  'محتوا و سئو',
 ];
+
+const PAGE_LIMIT = 20;
 
 export function AdminReportsPage() {
   const {
+    authUser,
+    activeAdminRole,
     orders,
     invoices,
     proformas,
     returns,
     paymentPlans,
+    paymentLedger,
+    rfqs,
     products,
     productCosts,
     categories,
     brands,
+    campaigns,
+    coupons,
+    warehouses,
+    stockLevels,
+    stockBatches,
+    stockMovements,
     b2bVerifications,
+    tickets,
+    consultationRequests,
+    usersList,
+    blogPosts,
+    redirects,
     notFoundLogs,
+    reviews,
+    questions,
     settings,
     currency,
+    pushToast,
   } = useStore();
 
-  const [selectedReportId, setSelectedReportId] = useState(REPORT_CATALOG[0].id);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialReportId = searchParams.get('report') || REPORT_CATALOG[0].id;
 
-  const reportRows = useMemo((): Record<string, string | number>[] => {
-    switch (selectedReportId) {
-      case 'sales_by_brand':
-        return brands.map((b) => ({
-          برند: b.nameFa,
-          کشور: b.countryFa,
-          تعداد_کالا: products.filter((p) => p.brandId === b.id).length,
-          فروش_تعدادی: products.filter((p) => p.brandId === b.id).reduce((s, p) => s + p.soldCount, 0),
-        }));
-      case 'official_invoices':
-        return invoices.map((i) => ({
-          شماره_فاکتور: i.invoiceNo,
-          سفارش: i.orderNo,
-          مشتری: i.customerName,
-          مالیات: i.taxTotal,
-          جمع_کل: i.grandTotal,
-          وضعیت: i.status,
-        }));
-      case 'fefo_expiry':
-        return products.flatMap((p) =>
-          p.variants.flatMap((v) =>
-            (v.batches ?? []).map((b) => ({
-              محصول: p.titleFa,
-              کد_بچ: b.batchNo,
-              تاریخ_انقضا: formatJalaliDate(b.expiresAt),
-              موجودی_بچ: b.qtyOnHand,
-              قیمت_ویژه: b.specialPrice ?? 0,
-            }))
-          )
-        );
-      case 'gross_margin':
-        return products.map((p) => {
-          const v = p.variants[0];
-          const cost = productCosts.find((c) => c.productId === p.id)?.variantCosts[v?.id ?? ''] ?? 0;
-          const sell = v?.basePrice ?? 0;
-          return {
-            کالا: p.titleFa,
-            SKU: p.sku,
-            قیمت_فروش: sell,
-            بهای_تمام‌شده: cost,
-            سود_واحد: cost > 0 && sell > 0 ? sell - cost : 0,
-          };
-        });
-      case 'not_found_redirects':
-        return notFoundLogs.map((n) => ({
-          مسیر_۴۰۴: n.path,
-          تعداد_رخداد: n.hitCount,
-          آخرین_مشاهده: formatJalaliDateTime(n.lastSeenAt),
-        }));
-      case 'b2b_pipeline':
-        return b2bVerifications.map((b) => ({
-          متقاضی: b.applicantName,
-          مرکز: b.clinicName,
-          گروه: b.requestedGroup,
-          نظام_پزشکی: b.medicalCouncilNo,
-          وضعیت: b.status,
-        }));
-      case 'proforma_conversion':
-        return proformas.map((pf) => ({
-          شماره: pf.proformaNo,
-          مشتری: pf.contactName,
-          مبلغ: pf.grandTotal,
-          وضعیت: pf.status,
-        }));
-      case 'refunds_rma':
-        return returns.map((r) => ({
-          شماره: r.returnNo,
-          سفارش: r.orderNo,
-          علت: r.reasonFa,
-          مبلغ_عودت: r.refundAmount,
-          وضعیت: r.status,
-        }));
-      case 'credit_exposure':
-        return paymentPlans.map((pl) => ({
-          مشتری: pl.customerName,
-          نوع: pl.type,
-          اقساط: pl.installmentsCount,
-          مبلغ: pl.requestedAmount,
-          وضعیت: pl.status,
-        }));
-      case 'low_stock_alert':
-        return products.flatMap((p) =>
-          p.variants
-            .filter((v) => v.stockOnHand - v.reserved <= v.lowStockThreshold)
-            .map((v) => ({ کالا: p.titleFa, تنوع: v.labelFa, موجودی: v.stockOnHand, آستانه: v.lowStockThreshold }))
-        );
-      case 'seo_health_audit':
-        return auditSeoHealth(products, categories, []).map((f) => ({
-          قاعده: f.rule,
-          شدت: f.severity,
-          تعداد_مورد: f.affectedCount,
-        }));
-      default:
-        return orders.map((o) => ({
-          شماره_سفارش: o.orderNo,
-          مشتری: o.customerName,
-          گروه: o.customerGroup,
-          روش_پرداخت: o.paymentMethod,
-          مالیات: o.taxTotal,
-          جمع_کل: o.grandTotal,
-          وضعیت: o.status,
-        }));
-    }
-  }, [selectedReportId, orders, invoices, proformas, returns, paymentPlans, products, productCosts, categories, brands, b2bVerifications, notFoundLogs]);
+  const [selectedReportId, setSelectedReportId] = useState<string>(initialReportId);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [brandId, setBrandId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [warehouseId, setWarehouseId] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
 
-  const exportXlsx = async () => {
-    await exportRowsToXlsx(reportRows, 'Report', `dentalmarket-${selectedReportId}.xlsx`);
+  const [serverReport, setServerReport] = useState<ReportResult | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const activeDef = useMemo(() => getReportDefinition(selectedReportId), [selectedReportId]);
+
+  const localDataset: ReportDataset = useMemo(
+    () => ({
+      orders,
+      invoices,
+      proformas,
+      returns,
+      paymentPlans,
+      paymentLedger,
+      rfqs,
+      products,
+      productCosts,
+      categories,
+      brands,
+      campaigns,
+      coupons,
+      warehouses,
+      stockLevels,
+      stockBatches,
+      stockMovements,
+      b2bVerifications,
+      tickets,
+      consultationRequests,
+      usersList,
+      blogPosts,
+      redirects,
+      notFoundLogs,
+      reviews,
+      questions,
+      settings,
+    }),
+    [
+      orders,
+      invoices,
+      proformas,
+      returns,
+      paymentPlans,
+      paymentLedger,
+      rfqs,
+      products,
+      productCosts,
+      categories,
+      brands,
+      campaigns,
+      coupons,
+      warehouses,
+      stockLevels,
+      stockBatches,
+      stockMovements,
+      b2bVerifications,
+      tickets,
+      consultationRequests,
+      usersList,
+      blogPosts,
+      redirects,
+      notFoundLogs,
+      reviews,
+      questions,
+      settings,
+    ]
+  );
+
+  const queryParams: ReportParams = useMemo(
+    () => ({
+      from: fromDate.trim() || undefined,
+      to: toDate.trim() || undefined,
+      status: statusFilter.trim() || undefined,
+      brandId: brandId || undefined,
+      categoryId: categoryId || undefined,
+      warehouseId: warehouseId || undefined,
+      q: searchQuery.trim() || undefined,
+      page,
+      limit: PAGE_LIMIT,
+    }),
+    [fromDate, toDate, statusFilter, brandId, categoryId, warehouseId, searchQuery, page]
+  );
+
+  const handleSelectReport = (id: string) => {
+    setSelectedReportId(id);
+    setPage(1);
+    setStatusFilter('');
+    setFromDate('');
+    setToDate('');
+    setBrandId('');
+    setCategoryId('');
+    setWarehouseId('');
+    setSearchQuery('');
+    const next = new URLSearchParams(searchParams);
+    next.set('report', id);
+    setSearchParams(next, { replace: true });
   };
 
-  const salesByCategory = useMemo(() => {
-    const map = new Map<string, number>();
-    orders
-      .filter((o) => o.status !== 'cancelled')
-      .forEach((o) =>
-        o.items.forEach((it) => {
-          const prod = products.find((p) => p.id === it.productId);
-          const catName = categories.find((c) => c.id === prod?.primaryCategoryId)?.nameFa ?? 'سایر';
-          map.set(catName, (map.get(catName) ?? 0) + it.lineTotal);
-        })
-      );
-    return Array.from(map.entries()).map(([category, revenue]) => ({ category, revenue }));
-  }, [orders, products, categories]);
+  const resetFilters = () => {
+    setFromDate('');
+    setToDate('');
+    setStatusFilter('');
+    setBrandId('');
+    setCategoryId('');
+    setWarehouseId('');
+    setSearchQuery('');
+    setPage(1);
+  };
 
-  const headers = reportRows[0] ? Object.keys(reportRows[0]) : ['گزارش'];
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      if (!authUser) {
+        setServerReport(null);
+        setServerError(null);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setServerError(null);
+
+      try {
+        const token = await authUser.getIdToken();
+        const qs = new URLSearchParams();
+        if (queryParams.from) qs.set('from', queryParams.from);
+        if (queryParams.to) qs.set('to', queryParams.to);
+        if (queryParams.status) qs.set('status', queryParams.status);
+        if (queryParams.brandId) qs.set('brandId', queryParams.brandId);
+        if (queryParams.categoryId) qs.set('categoryId', queryParams.categoryId);
+        if (queryParams.warehouseId) qs.set('warehouseId', queryParams.warehouseId);
+        if (queryParams.q) qs.set('q', queryParams.q);
+        qs.set('page', String(queryParams.page ?? 1));
+        qs.set('limit', String(queryParams.limit ?? PAGE_LIMIT));
+
+        const res = await fetch(`/api/admin/reports/${encodeURIComponent(selectedReportId)}?${qs.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const payload = (await res.json()) as { ok?: boolean; report?: ReportResult; message?: string };
+
+        if (cancelled) return;
+        if (!res.ok || !payload.ok || !payload.report) {
+          setServerReport(null);
+          setServerError(payload.message || `خطا در دریافت گزارش (${res.status})`);
+        } else {
+          setServerReport(payload.report);
+          setServerError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setServerReport(null);
+          setServerError('ارتباط با سرور گزارش‌گیری برقرار نشد.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser, selectedReportId, queryParams]);
+
+  const activeOutcome = useMemo(() => {
+    if (authUser) {
+      if (serverError) {
+        return { ok: false as const, message: serverError };
+      }
+      if (serverReport) {
+        return { ok: true as const, report: serverReport };
+      }
+      return null;
+    }
+
+    if (activeDef?.sensitiveFinancial && !canSeeCostPrice(activeAdminRole)) {
+      return {
+        ok: false as const,
+        message: 'مشاهده گزارش بهای تمام‌شده و حاشیه سود محرمانه فقط برای مدیر یا حسابدار مجاز است.',
+      };
+    }
+
+    const res = runReportById(selectedReportId, localDataset, queryParams);
+    if (!res.ok) {
+      return { ok: false as const, message: res.message };
+    }
+    return { ok: true as const, report: res.report };
+  }, [authUser, serverError, serverReport, activeDef, activeAdminRole, selectedReportId, localDataset, queryParams]);
+
+  const fetchFullRowsForExport = async (): Promise<ReportResult | null> => {
+    if (authUser) {
+      const token = await authUser.getIdToken();
+      const qs = new URLSearchParams();
+      if (queryParams.from) qs.set('from', queryParams.from);
+      if (queryParams.to) qs.set('to', queryParams.to);
+      if (queryParams.status) qs.set('status', queryParams.status);
+      if (queryParams.brandId) qs.set('brandId', queryParams.brandId);
+      if (queryParams.categoryId) qs.set('categoryId', queryParams.categoryId);
+      if (queryParams.warehouseId) qs.set('warehouseId', queryParams.warehouseId);
+      if (queryParams.q) qs.set('q', queryParams.q);
+      qs.set('page', '1');
+      qs.set('limit', '5000');
+
+      const res = await fetch(`/api/admin/reports/${encodeURIComponent(selectedReportId)}?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = (await res.json()) as { ok?: boolean; report?: ReportResult; message?: string };
+      if (!res.ok || !payload.ok || !payload.report) {
+        pushToast(payload.message || 'خطا در تهیه خروجی گزارش.', 'error');
+        return null;
+      }
+      return payload.report;
+    }
+
+    const outcome = runReportById(selectedReportId, localDataset, { ...queryParams, page: 1, limit: 5000 });
+    if (!outcome.ok) {
+      pushToast(outcome.message, 'error');
+      return null;
+    }
+    return outcome.report;
+  };
+
+  const handleExportXlsx = async () => {
+    if (!activeOutcome || !activeOutcome.ok || !activeOutcome.report.available) return;
+    setExporting(true);
+    try {
+      const full = await fetchFullRowsForExport();
+      if (!full) return;
+      const exportRows = full.rows.map((r) => {
+        const mapped: Record<string, string | number> = {};
+        for (const col of full.columns) {
+          mapped[col.label] = r[col.key] ?? '';
+        }
+        return mapped;
+      });
+      if (full.totalsRow) {
+        const mappedTotal: Record<string, string | number> = {};
+        for (const col of full.columns) {
+          mappedTotal[col.label] = full.totalsRow[col.key] ?? '';
+        }
+        exportRows.push(mappedTotal);
+      }
+      await exportRowsToXlsx(exportRows, full.id.slice(0, 31), `dentalmarket-${full.id}.xlsx`);
+      pushToast('فایل اکسل گزارش با موفقیت ذخیره شد.', 'success');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    if (!activeOutcome || !activeOutcome.ok || !activeOutcome.report.available) return;
+    setExporting(true);
+    try {
+      const full = await fetchFullRowsForExport();
+      if (!full) return;
+      const headers = full.columns.map((c) => c.label);
+      const keys = full.columns.map((c) => c.key);
+      const matrix: Array<Array<string | number>> = full.rows.map((r) => keys.map((k) => r[k] ?? ''));
+      if (full.totalsRow) {
+        matrix.push(keys.map((k) => full.totalsRow?.[k] ?? ''));
+      }
+      downloadCsvFile(`dentalmarket-${full.id}.csv`, headers, matrix);
+      pushToast('فایل CSV گزارش با موفقیت ذخیره شد.', 'success');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const formatCellValue = (col: ReportColumn, raw: string | number | undefined): string => {
+    if (raw === undefined || raw === null || raw === '') return '—';
+    if (col.type === 'money') {
+      const num = Number(raw);
+      if (!Number.isFinite(num) || num === 0) return toPersianDigits('0');
+      return formatMoney(num, currency);
+    }
+    if (col.type === 'percent') {
+      const num = Number(raw);
+      return Number.isFinite(num) ? `${toPersianDigits(num)}٪` : String(raw);
+    }
+    if (col.type === 'number') {
+      const num = Number(raw);
+      return Number.isFinite(num) ? toPersianDigits(num.toLocaleString('en-US')) : String(raw);
+    }
+    if (col.type === 'date') {
+      return toPersianDigits(String(raw));
+    }
+    return toPersianDigits(String(raw));
+  };
+
+  const report = activeOutcome?.ok ? activeOutcome.report : null;
+  const visibleParams = activeDef?.params ?? [];
+  const supportsFilter = (key: NonNullable<typeof activeDef>['params'][number]) =>
+    visibleParams.includes(key);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap justify-between items-center gap-3">
-        <h1 className="text-xl font-extrabold">مرکز ۲۹ گزارش تحلیلی، مالی و انبارداری (§12)</h1>
-        <button
-          type="button"
-          onClick={exportXlsx}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand text-white text-xs font-bold"
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>خروجی واقعی Excel (.xlsx)</span>
-        </button>
+    <div className="space-y-5">
+      {/* Page Top Header */}
+      <div className="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-line dark:border-slate-800">
+        <div>
+          <h1 className="text-xl font-extrabold text-ink dark:text-slate-100">
+            مرکز گزارش‌های تحلیلی، مالی و انبارداری
+          </h1>
+          <p className="text-xs text-ink/60 dark:text-slate-400 mt-1">
+            تجمیع سرورمحور بر اساس اسناد واقعی فروش، درگاه پرداخت، انبارهای چندگانه و سئو
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={!report || !report.available || exporting}
+            onClick={handleExportCsv}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-line dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-ink dark:text-slate-200 hover:bg-surface/60 dark:hover:bg-slate-800 disabled:opacity-45 whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4" />
+            <span>خروجی CSV</span>
+          </button>
+          <button
+            type="button"
+            disabled={!report || !report.available || exporting}
+            onClick={handleExportXlsx}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand text-white text-xs font-bold hover:bg-brandDark disabled:opacity-45 whitespace-nowrap shrink-0"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>خروجی Excel (.xlsx)</span>
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 space-y-2 max-h-[520px] overflow-y-auto text-xs">
-          <p className="font-extrabold text-sm pb-2 border-b border-line dark:border-slate-800">فهرست ۲۹ گزارش استاندارد</p>
-          {REPORT_CATALOG.map((rep) => (
-            <button
-              key={rep.id}
-              type="button"
-              onClick={() => setSelectedReportId(rep.id)}
-              className={`w-full text-right p-2.5 rounded-xl transition-colors ${
-                selectedReportId === rep.id ? 'bg-brand text-white font-bold' : 'hover:bg-surface/60 dark:hover:bg-slate-800'
-              }`}
-            >
-              <span className="block">{rep.title}</span>
-              <span className={`text-[10px] ${selectedReportId === rep.id ? 'text-white/80' : 'text-ink/50'}`}>{rep.group}</span>
-            </button>
-          ))}
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Sidebar Registry */}
+        <aside className="lg:col-span-4 xl:col-span-3 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-3.5 space-y-4 max-h-[760px] overflow-y-auto">
+          <div className="flex items-center justify-between pb-2 border-b border-line dark:border-slate-800">
+            <span className="font-extrabold text-xs text-ink dark:text-slate-100">
+              فهرست ۲۹ گزارش استاندارد
+            </span>
+            <span className="text-[11px] font-bold text-ink/50 dark:text-slate-400 tabular-nums">
+              {toPersianDigits(REPORT_CATALOG.filter((r) => r.available).length)} / {toPersianDigits(REPORT_CATALOG.length)} فعال
+            </span>
+          </div>
 
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-            <h2 className="text-base font-extrabold">
-              {REPORT_CATALOG.find((r) => r.id === selectedReportId)?.title} ({toPersianDigits(reportRows.length)} ردیف)
-            </h2>
-            <div className="overflow-x-auto max-h-72 overflow-y-auto">
-              <table className="w-full text-xs">
-                <thead className="border-b border-line dark:border-slate-800 text-ink/60 sticky top-0 bg-white dark:bg-slate-900">
-                  <tr>
-                    {headers.map((h) => <th key={h} className="py-2 px-2 text-right">{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line dark:divide-slate-800">
-                  {reportRows.slice(0, 30).map((r, idx) => (
-                    <tr key={idx}>
-                      {headers.map((h) => (
-                        <td key={h} className="py-2 px-2 tabular-nums">
-                          {typeof r[h] === 'number' && String(h).includes('مبلغ') ? formatMoney(Number(r[h]), currency) : String(r[h] ?? '—')}
-                        </td>
+          {GROUP_ORDER.map((group) => {
+            const items = REPORT_CATALOG.filter((r) => r.group === group);
+            return (
+              <div key={group} className="space-y-1">
+                <p className="text-[11px] font-extrabold text-brand dark:text-sky-400 px-2 pt-1">
+                  {group}
+                </p>
+                {items.map((rep) => {
+                  const isActive = selectedReportId === rep.id;
+                  return (
+                    <button
+                      key={rep.id}
+                      type="button"
+                      onClick={() => handleSelectReport(rep.id)}
+                      className={`w-full text-right px-2.5 py-2 rounded-xl text-xs transition-colors flex items-center justify-between gap-2 ${
+                        isActive
+                          ? 'bg-brand text-white font-bold'
+                          : 'text-ink/85 dark:text-slate-200 hover:bg-surface/70 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <span className="leading-5">{rep.title}</span>
+                      {!rep.available && (
+                        <span
+                          className={`text-[10px] shrink-0 ${
+                            isActive ? 'text-amber-100' : 'text-amber-700 dark:text-amber-400'
+                          }`}
+                        >
+                          ناموجود
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </aside>
+
+        {/* Main Workspace */}
+        <section className="lg:col-span-8 xl:col-span-9 space-y-4">
+          {/* Active Report Header & Dynamic Filter Bar */}
+          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-[11px] font-bold text-ink/55 dark:text-slate-400">
+                  {activeDef?.group ?? 'گزارش سفارشی'}
+                </p>
+                <h2 className="text-base font-extrabold text-ink dark:text-slate-100 mt-0.5">
+                  {activeDef?.title ?? `شناسه نامعتبر: ${selectedReportId}`}
+                </h2>
+                {activeDef?.description && (
+                  <p className="text-xs text-ink/65 dark:text-slate-400 mt-1">{activeDef.description}</p>
+                )}
+              </div>
+              {report && (
+                <span className="text-xs font-bold text-ink/60 dark:text-slate-400 tabular-nums shrink-0">
+                  {toPersianDigits(report.allRowsCount)} ردیف کل
+                </span>
+              )}
+            </div>
+
+            {activeDef && activeDef.available && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-3 border-t border-line dark:border-slate-800 text-xs">
+                {supportsFilter('dateRange') && (
+                  <>
+                    <label className="space-y-1">
+                      <span className="block text-[11px] text-ink/60 dark:text-slate-400">از تاریخ (شمسی یا میلادی)</span>
+                      <input
+                        type="text"
+                        value={fromDate}
+                        onChange={(e) => {
+                          setFromDate(e.target.value);
+                          setPage(1);
+                        }}
+                        placeholder="مثلاً ۱۴۰۵/۰۱/۰۱"
+                        dir="ltr"
+                        className="w-full px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-ink dark:text-slate-100 tabular-nums"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[11px] text-ink/60 dark:text-slate-400">تا تاریخ (شمسی یا میلادی)</span>
+                      <input
+                        type="text"
+                        value={toDate}
+                        onChange={(e) => {
+                          setToDate(e.target.value);
+                          setPage(1);
+                        }}
+                        placeholder="مثلاً ۱۴۰۵/۱۲/۲۹"
+                        dir="ltr"
+                        className="w-full px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-ink dark:text-slate-100 tabular-nums"
+                      />
+                    </label>
+                  </>
+                )}
+
+                {supportsFilter('brandId') && (
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-ink/60 dark:text-slate-400">برند</span>
+                    <select
+                      value={brandId}
+                      onChange={(e) => {
+                        setBrandId(e.target.value);
+                        setPage(1);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-ink dark:text-slate-100"
+                    >
+                      <option value="">همه برندها</option>
+                      {brands.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.nameFa}
+                        </option>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    </select>
+                  </label>
+                )}
+
+                {supportsFilter('categoryId') && (
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-ink/60 dark:text-slate-400">دسته‌بندی</span>
+                    <select
+                      value={categoryId}
+                      onChange={(e) => {
+                        setCategoryId(e.target.value);
+                        setPage(1);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-ink dark:text-slate-100"
+                    >
+                      <option value="">همه دسته‌بندی‌ها</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.nameFa}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {supportsFilter('warehouseId') && (
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-ink/60 dark:text-slate-400">انبار</span>
+                    <select
+                      value={warehouseId}
+                      onChange={(e) => {
+                        setWarehouseId(e.target.value);
+                        setPage(1);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-ink dark:text-slate-100"
+                    >
+                      <option value="">همه انبارها</option>
+                      {warehouses.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.nameFa}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {supportsFilter('status') && (
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-ink/60 dark:text-slate-400">وضعیت (کد وضعیت)</span>
+                    <input
+                      type="text"
+                      value={statusFilter}
+                      onChange={(e) => {
+                        setStatusFilter(e.target.value);
+                        setPage(1);
+                      }}
+                      placeholder="مثلاً paid یا approved"
+                      dir="ltr"
+                      className="w-full px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-ink dark:text-slate-100"
+                    />
+                  </label>
+                )}
+
+                {supportsFilter('search') && (
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-ink/60 dark:text-slate-400">جستجو در ردیف‌ها</span>
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-ink/40 absolute right-2.5 top-2" />
+                      <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(e) => {
+                          setSearchQuery(e.target.value);
+                          setPage(1);
+                        }}
+                        placeholder="عبارت، کد SKU، نام..."
+                        className="w-full pr-8 pl-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-ink dark:text-slate-100"
+                      />
+                    </div>
+                  </label>
+                )}
+
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 text-ink/75 dark:text-slate-300 hover:bg-surface/60 dark:hover:bg-slate-800"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>پاک‌سازی فیلترها</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-            <h2 className="text-base font-extrabold">نمودار فروش دسته‌بندی‌ها (نرخ مالیات {toPersianDigits(settings.taxRatePercent)}٪)</h2>
-            <div className="h-56 w-full" dir="ltr">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={salesByCategory}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
-                  <XAxis dataKey="category" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => formatMoney(Number(v), currency)} />
-                  <Bar dataKey="revenue" fill="#17788C" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+          {/* State 1: Loading Skeleton */}
+          {loading && (
+            <div
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3"
+              aria-busy="true"
+            >
+              <div className="h-5 w-48 rounded bg-surface dark:bg-slate-800 animate-pulse" />
+              {[0, 1, 2, 3, 4].map((idx) => (
+                <div key={idx} className="h-10 w-full rounded-lg bg-surface/80 dark:bg-slate-800/80 animate-pulse" />
+              ))}
             </div>
-          </div>
-        </div>
+          )}
+
+          {/* State 2: Error / Unknown ID / Permission Denied */}
+          {!loading && activeOutcome && !activeOutcome.ok && (
+            <div className="bg-white dark:bg-slate-900 border border-red-300 dark:border-red-900 rounded-2xl p-6 flex items-start gap-3 text-sm">
+              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+              <div className="space-y-2">
+                <p className="font-extrabold text-red-700 dark:text-red-300">خطا در بارگذاری گزارش</p>
+                <p className="text-xs text-ink/75 dark:text-slate-300 leading-6">{activeOutcome.message}</p>
+                <button
+                  type="button"
+                  onClick={() => handleSelectReport(REPORT_CATALOG[0].id)}
+                  className="px-3.5 py-1.5 rounded-lg bg-brand text-white text-xs font-bold"
+                >
+                  بازگشت به گزارش فروش روزانه
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* State 3: Honest Unavailable Report */}
+          {!loading && report && !report.available && (
+            <div className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 rounded-2xl p-6 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1.5">
+                <h3 className="text-sm font-extrabold text-amber-800 dark:text-amber-300">
+                  این گزارش در دسترس نیست (Not Available)
+                </h3>
+                <p className="text-xs text-ink/80 dark:text-slate-300 leading-6">
+                  {report.unavailableReason || 'داده مبنای محاسبه این گزارش در سیستم ثبت نمی‌شود.'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* State 4 & 5: Available Report — KPI Summary, Chart, Data Grid & Pagination */}
+          {!loading && report && report.available && (
+            <>
+              {/* KPI Summary Strip */}
+              {report.summary.length > 0 && (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {report.summary.map((item) => {
+                    const toneClass =
+                      item.tone === 'good'
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : item.tone === 'warn'
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : item.tone === 'bad'
+                        ? 'text-red-700 dark:text-red-400'
+                        : 'text-ink dark:text-slate-100';
+
+                    let displayVal = String(item.value);
+                    if (item.type === 'money') {
+                      const n = Number(item.value);
+                      displayVal = n === 0 ? toPersianDigits('0') : formatMoney(n, currency);
+                    } else if (item.type === 'percent') {
+                      displayVal = `${toPersianDigits(item.value)}٪`;
+                    } else if (item.type === 'number') {
+                      const n = Number(item.value);
+                      displayVal = Number.isFinite(n) ? toPersianDigits(n.toLocaleString('en-US')) : String(item.value);
+                    } else {
+                      displayVal = toPersianDigits(String(item.value));
+                    }
+
+                    return (
+                      <div
+                        key={item.label}
+                        className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-3.5"
+                      >
+                        <p className="text-[11px] text-ink/60 dark:text-slate-400">{item.label}</p>
+                        <p className={`text-sm font-extrabold mt-1 tabular-nums ${toneClass}`}>{displayVal}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Data Table */}
+              <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
+                {report.rows.length === 0 ? (
+                  <div className="p-10 text-center space-y-3">
+                    <p className="text-sm font-bold text-ink/80 dark:text-slate-200">
+                      رکوردی مطابق با فیلترهای انتخابی یافت نشد.
+                    </p>
+                    <p className="text-xs text-ink/55 dark:text-slate-400">
+                      بازه تاریخ شمسی یا فیلترهای برند، دسته‌بندی و جستجو را تغییر دهید.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={resetFilters}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold text-ink dark:text-slate-200 hover:bg-surface/60 dark:hover:bg-slate-800"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>حذف فیلترها</span>
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto max-h-[420px]">
+                      <table className="w-full text-xs">
+                        <thead className="border-b border-line dark:border-slate-800 text-ink/65 dark:text-slate-400 sticky top-0 bg-paper dark:bg-slate-950">
+                          <tr>
+                            {report.columns.map((col) => (
+                              <th key={col.key} className="py-2.5 px-3 text-right font-bold whitespace-nowrap">
+                                {col.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-line dark:divide-slate-800">
+                          {report.rows.map((row, idx) => (
+                            <tr key={idx} className="hover:bg-surface/40 dark:hover:bg-slate-800/50">
+                              {report.columns.map((col) => (
+                                <td
+                                  key={col.key}
+                                  className="py-2.5 px-3 tabular-nums text-ink/90 dark:text-slate-200 whitespace-nowrap"
+                                >
+                                  {formatCellValue(col, row[col.key])}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                        {report.totalsRow && (
+                          <tfoot className="border-t-2 border-line dark:border-slate-700 bg-surface/70 dark:bg-slate-800/80 font-extrabold">
+                            <tr>
+                              {report.columns.map((col) => (
+                                <td
+                                  key={col.key}
+                                  className="py-2.5 px-3 tabular-nums text-ink dark:text-slate-100 whitespace-nowrap"
+                                >
+                                  {formatCellValue(col, report.totalsRow?.[col.key])}
+                                </td>
+                              ))}
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+
+                    {report.totalPages > 1 && (
+                      <div className="px-4 py-3 border-t border-line dark:border-slate-800 flex items-center justify-between text-xs">
+                        <span className="text-ink/60 dark:text-slate-400 tabular-nums">
+                          صفحه {toPersianDigits(report.page)} از {toPersianDigits(report.totalPages)} ({toPersianDigits(report.allRowsCount)} ردیف)
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={report.page <= 1}
+                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                            <span>قبلی</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={report.page >= report.totalPages}
+                            onClick={() => setPage((p) => Math.min(report.totalPages, p + 1))}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+                          >
+                            <span>بعدی</span>
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Dynamic Report Chart */}
+              {report.chart && report.chart.data.length > 0 && (
+                <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 space-y-3">
+                  <h3 className="text-sm font-extrabold text-ink dark:text-slate-100">{report.chart.title}</h3>
+                  <div className="h-60 w-full" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      {report.chart.type === 'line' ? (
+                        <LineChart data={report.chart.data}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
+                          <XAxis dataKey={report.chart.xKey} tick={{ fontSize: 11 }} />
+                          <YAxis tick={{ fontSize: 11 }} />
+                          <Tooltip
+                            formatter={(v) =>
+                              report.chart?.valueType === 'money'
+                                ? formatMoney(Number(v), currency)
+                                : toPersianDigits(String(v))
+                            }
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey={report.chart.yKey}
+                            stroke="#17788C"
+                            strokeWidth={2.5}
+                            dot={{ r: 3 }}
+                          />
+                        </LineChart>
+                      ) : (
+                        <BarChart data={report.chart.data}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
+                          <XAxis dataKey={report.chart.xKey} tick={{ fontSize: 11 }} />
+                          <YAxis tick={{ fontSize: 11 }} />
+                          <Tooltip
+                            formatter={(v) =>
+                              report.chart?.valueType === 'money'
+                                ? formatMoney(Number(v), currency)
+                                : toPersianDigits(String(v))
+                            }
+                          />
+                          <Bar dataKey={report.chart.yKey} fill="#17788C" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      )}
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </section>
       </div>
     </div>
   );

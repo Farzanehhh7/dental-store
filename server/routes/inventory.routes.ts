@@ -3,6 +3,7 @@ import express from 'express';
 import { extractOrderToken, resolveMobileSession, verifyFirebaseUser } from '../auth';
 import { verifyFirebaseAdmin } from '../lib/adminAuth';
 import type { ServerStore } from '../persistence';
+import type { RepositoryBundle } from '../repositories';
 import type { InventoryService } from '../services/inventoryService';
 import {
   batchSpecialPriceBodySchema,
@@ -17,17 +18,16 @@ import {
   warehouseUpsertBodySchema,
 } from '../validation';
 
-const INVENTORY_READ_ROLES = ['super_admin', 'admin', 'warehouse', 'sales_mgr', 'accountant'] as const;
-const INVENTORY_WRITE_ROLES = ['super_admin', 'admin', 'warehouse'] as const;
-const BATCH_PRICE_ROLES = ['super_admin', 'admin', 'warehouse', 'sales_mgr'] as const;
-const RETURN_PROCESS_ROLES = ['super_admin', 'admin', 'sales_mgr', 'warehouse', 'accountant'] as const;
-
-export function createInventoryRouter(store: ServerStore, inventoryService: InventoryService): express.Router {
+export function createInventoryRouter(
+  store: ServerStore,
+  inventoryService: InventoryService,
+  _repos?: RepositoryBundle
+): express.Router {
   const router = express.Router();
 
   // --- Admin Per-Warehouse Inventory Overview & Low-Stock Alerts ---
   router.get('/api/admin/inventory', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, INVENTORY_READ_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'inventory:read');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -45,7 +45,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
 
   // --- Receive or Adjust Stock with Mandatory Reason & Optional Batch ---
   router.post('/api/admin/inventory/adjust', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, INVENTORY_WRITE_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'inventory:write');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -81,7 +81,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
 
   // --- Physical Stocktake (Reconcile On-Hand Per Warehouse) ---
   router.post('/api/admin/inventory/stocktake', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, INVENTORY_WRITE_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'inventory:write');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -107,7 +107,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
 
   // --- Inter-Warehouse Transfer (Enforces Available = OnHand - Reserved) ---
   router.post('/api/admin/inventory/transfer', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, INVENTORY_WRITE_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'inventory:write');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -139,7 +139,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
 
   // --- Near-Expiry Batch Special Clearance Price ---
   router.post('/api/admin/inventory/batch-special-price', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, BATCH_PRICE_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'inventory:batch_price');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -151,6 +151,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
       variantId: parsed.variantId,
       batchId: parsed.batchId,
       specialPrice: parsed.specialPrice,
+      actorUid: adminCheck.user.uid,
       actorEmail: adminCheck.user.email || adminCheck.user.uid,
     });
     if (!result.ok) {
@@ -161,7 +162,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
 
   // --- Warehouse CRUD ---
   router.post('/api/admin/warehouses', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, INVENTORY_WRITE_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'inventory:write');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -184,7 +185,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
   });
 
   router.delete('/api/admin/warehouses/:id', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, INVENTORY_WRITE_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'inventory:write');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -198,7 +199,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
   // --- RMA Returns ---
   router.get('/api/returns', async (req, res) => {
     const fbUser = await verifyFirebaseUser(req);
-    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, RETURN_PROCESS_ROLES) : null;
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'returns:process') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
     const mobSession = resolveMobileSession(store, req);
 
@@ -219,7 +220,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
     if (!parsed) return;
 
     const fbUser = await verifyFirebaseUser(req);
-    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, RETURN_PROCESS_ROLES) : null;
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'returns:process') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
     const mobSession = resolveMobileSession(store, req);
     const orderToken = parsed.orderToken || extractOrderToken(req);
@@ -235,7 +236,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
         firebaseUid: fbUser?.uid,
         mobileSessionPhone: mobSession?.mobile,
         orderToken,
-        customerName: fbUser?.name || mobSession?.displayName,
+        customerName: fbUser?.displayName || mobSession?.displayName,
       },
     });
 
@@ -246,7 +247,7 @@ export function createInventoryRouter(store: ServerStore, inventoryService: Inve
   });
 
   router.post('/api/admin/returns/:id/process', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req, RETURN_PROCESS_ROLES);
+    const adminCheck = await verifyFirebaseAdmin(req, 'returns:process');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }

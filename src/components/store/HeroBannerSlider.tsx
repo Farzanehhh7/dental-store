@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Pause, Play, ShieldCheck } from '
 import { IMG_HERO_CLINIC } from '../../data/seed';
 import { toPersianDigits } from '../../lib/jalali';
 import { t } from '../../lib/i18n';
+import { buildResponsiveImageProps } from '../../lib/media';
 import { BannerItem } from '../../types/domain';
 
 const ACCENT_CLASSES: Record<'brand' | 'rose' | 'amber' | 'slate', { split: string; overlay: string }> = {
@@ -105,7 +106,12 @@ export function HeroSlideView({
             renderFallbackImage()
           ) : (
             <img
-              src={imageSrc}
+              {...buildResponsiveImageProps(imageSrc, {
+                widths: [640, 960, 1280],
+                sizes: '(max-width: 1024px) 100vw, 1280px',
+                eager: headingTag === 'h1',
+                fallback: IMG_HERO_CLINIC,
+              })}
               alt={banner.titleFa}
               width={1280}
               height={540}
@@ -210,7 +216,12 @@ export function HeroSlideView({
           renderFallbackImage()
         ) : (
           <img
-            src={imageSrc}
+            {...buildResponsiveImageProps(imageSrc, {
+              widths: [480, 768, 960],
+              sizes: '(max-width: 1024px) 100vw, 50vw',
+              eager: headingTag === 'h1',
+              fallback: IMG_HERO_CLINIC,
+            })}
             alt={banner.titleFa}
             width={960}
             height={540}

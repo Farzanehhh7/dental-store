@@ -178,7 +178,7 @@ export function AdminCategoriesPage() {
                   slug: `bundle-${Date.now()}`,
                   kind: 'starter_pack',
                   descriptionFa: '',
-                  imageUrl: '/src/assets/images/product_composite_kit_1794921818527.jpg',
+                  imageUrl: '/assets/images/product_composite_kit_1794921818527.jpg',
                   discountPercent: 10,
                   items: products.slice(0, 2).map((p) => ({ productId: p.id, variantId: p.variants[0]?.id ?? '', quantity: 1 })),
                   status: 'active',

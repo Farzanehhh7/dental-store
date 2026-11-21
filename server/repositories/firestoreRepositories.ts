@@ -1473,6 +1473,35 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
         );
       }
     },
+    async saveCatalogCollections(patch) {
+      const updatedAt = patch.updatedAt ?? new Date().toISOString();
+      if (patch.categories) {
+        fallbackStore.data.catalogState.categories = patch.categories;
+        for (const cat of patch.categories) {
+          await setDoc(db.collection('categories').doc(cat.id), cat as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.brands) {
+        fallbackStore.data.catalogState.brands = patch.brands;
+        for (const brand of patch.brands) {
+          await setDoc(db.collection('brands').doc(brand.id), brand as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.products) {
+        fallbackStore.data.catalogState.products = patch.products;
+        for (const prod of patch.products) {
+          await setDoc(db.collection('products').doc(prod.id), prod as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.redirects) {
+        fallbackStore.data.catalogState.redirects = patch.redirects;
+        for (const redir of patch.redirects) {
+          await setDoc(db.collection('redirects').doc(redir.id), redir as unknown as Record<string, unknown>, false);
+        }
+      }
+      fallbackStore.data.catalogState.updatedAt = updatedAt;
+      fallbackStore.save();
+    },
   };
 
   const proformas: ProformaRepository = {

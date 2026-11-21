@@ -218,7 +218,7 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
     if (!parsed) return;
 
     const fbUser = await verifyFirebaseUser(req);
-    const adminCheck = fbUser ? await verifyFirebaseAdmin(req) : null;
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'orders:update_status') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
     const mobSession = resolveMobileSession(store, req);
     const orderToken = parsed.orderToken || extractOrderToken(req);
@@ -279,7 +279,7 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
     if (!fbUser && !mobSession) {
       return res.status(401).json({ ok: false, message: 'احراز هویت الزامی است.' });
     }
-    const adminCheck = fbUser ? await verifyFirebaseAdmin(req) : null;
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'proforma:read_all') : null;
     if (adminCheck && !('errorStatus' in adminCheck)) {
       const proformas = await orderService.proformaRepo.listAll();
       return res.json({ ok: true, proformas });

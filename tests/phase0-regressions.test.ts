@@ -235,15 +235,22 @@ describe('Phase 0 Failing Regression Tests (Audit Verification — Expected RED)
     expect(res.status).not.toBe(404);
   });
 
-  it('[Claim 7] AdminReportsPage implements dedicated handlers for all 29 REPORT_CATALOG reports and passes blogPosts to auditSeoHealth', () => {
-    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/pages/admin/AdminReportsPage.tsx'), 'utf8');
-    const catalogIds = Array.from(src.matchAll(/\{\s*id:\s*'([a-z0-9_]+)',\s*group:/g)).map((m) => m[1]);
-    const switchCases = Array.from(src.matchAll(/case\s+'([a-z0-9_]+)':/g)).map((m) => m[1]);
+  it('[Claim 7] AdminReportsPage uses a dedicated 29-module registry with no raw-orders fallback and passes blogPosts to auditSeoHealth', async () => {
+    const { REPORT_CATALOG } = await import('../src/pages/admin/reports');
+    const pageSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/pages/admin/AdminReportsPage.tsx'), 'utf8');
+    const seoReportSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/pages/admin/reports/seo_health_audit.ts'),
+      'utf8'
+    );
 
-    expect(catalogIds).toHaveLength(29);
-    const missing = catalogIds.filter((id) => !switchCases.includes(id));
-    expect(missing).toEqual([]);
-    expect(src).not.toContain('auditSeoHealth(products, categories, [])');
+    expect(REPORT_CATALOG).toHaveLength(29);
+    for (const meta of REPORT_CATALOG) {
+      const modulePath = path.resolve(process.cwd(), 'src/pages/admin/reports', `${meta.id}.ts`);
+      expect(fs.existsSync(modulePath)).toBe(true);
+    }
+    expect(pageSrc).not.toContain('switch (selectedReportId)');
+    expect(pageSrc).not.toContain('auditSeoHealth(products, categories, [])');
+    expect(seoReportSrc).toContain('auditSeoHealth(filteredProducts, data.categories, data.blogPosts)');
   });
 
   it('[Claim 8] AdminImportExportPage branches validation and commit logic by templateKey', () => {
@@ -257,7 +264,7 @@ describe('Phase 0 Failing Regression Tests (Audit Verification — Expected RED)
   it('[Claim 9] firestore.rules forbids unauthenticated public create/update on notFoundLogs', () => {
     const rules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
     const block = rules.match(/match \/notFoundLogs\/\{logId\}[\s\S]*?\n    \}/)?.[0] || '';
-    expect(block).toMatch(/allow create,\s*update:\s*if\s*.*isAdmin\(\)/);
+    expect(block).toMatch(/allow create,\s*update:\s*if\s*(false|.*isAdmin\(\))/);
   });
 
   it('[Claim 11] /api/seo/sync rejects malformed catalog payloads instead of accepting arbitrary z.record objects', async () => {

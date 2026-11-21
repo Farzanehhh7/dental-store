@@ -236,14 +236,14 @@ service cloud.firestore {
     }
 
     match /categories/{categoryId} {
-      allow get: if isValidId(categoryId);
+      allow get: if isValidId(categoryId) && (resource == null || resource.data.isActive == true || isAdmin());
       allow list: if resource.data.isActive == true || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'content', 'sales_mgr']) && isValidId(categoryId) && incoming().nameFa is string && incoming().nameFa.size() <= 120;
       allow delete: if hasRole(['super_admin', 'admin']) && isValidId(categoryId);
     }
 
     match /brands/{brandId} {
-      allow get: if isValidId(brandId);
+      allow get: if isValidId(brandId) && (resource == null || resource.data.isActive == true || isAdmin());
       allow list: if resource.data.isActive == true || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'content', 'sales_mgr']) && isValidId(brandId) && incoming().nameFa is string && incoming().nameFa.size() <= 120;
       allow delete: if hasRole(['super_admin', 'admin']) && isValidId(brandId);
@@ -257,7 +257,7 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow get: if isValidId(productId);
+      allow get: if isValidId(productId) && (resource == null || resource.data.status in ['active', 'out_of_stock', 'coming_soon'] || isAdmin());
       allow list: if resource.data.status in ['active', 'out_of_stock', 'coming_soon'] || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'sales_mgr', 'warehouse', 'content']) && isValidId(productId) && incoming().titleFa is string && incoming().titleFa.size() <= 200;
       allow delete: if hasRole(['super_admin', 'admin']) && isValidId(productId);
@@ -271,56 +271,56 @@ service cloud.firestore {
     }
 
     match /campaigns/{campaignId} {
-      allow get: if isValidId(campaignId);
+      allow get: if isValidId(campaignId) && (resource == null || resource.data.status in ['active', 'scheduled'] || isAdmin());
       allow list: if resource.data.status in ['active', 'scheduled'] || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'sales_mgr']) && isValidId(campaignId) && incoming().nameFa is string && incoming().nameFa.size() <= 160;
       allow delete: if hasRole(['super_admin', 'admin', 'sales_mgr']) && isValidId(campaignId);
     }
 
     match /bundles/{bundleId} {
-      allow get: if isValidId(bundleId);
+      allow get: if isValidId(bundleId) && (resource == null || resource.data.status == 'active' || isAdmin());
       allow list: if resource.data.status == 'active' || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) && isValidId(bundleId) && incoming().nameFa is string && incoming().nameFa.size() <= 160;
       allow delete: if hasRole(['super_admin', 'admin', 'sales_mgr']) && isValidId(bundleId);
     }
 
     match /agents/{agentId} {
-      allow get: if isValidId(agentId);
+      allow get: if isValidId(agentId) && (resource == null || resource.data.isActive == true || isAdmin());
       allow list: if resource.data.isActive == true || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'content']) && isValidId(agentId) && incoming().nameFa is string && incoming().nameFa.size() <= 160;
       allow delete: if hasRole(['super_admin', 'admin', 'content']) && isValidId(agentId);
     }
 
     match /blogPosts/{postId} {
-      allow get: if isValidId(postId);
+      allow get: if isValidId(postId) && (resource == null || resource.data.status == 'published' || isAdmin());
       allow list: if resource.data.status == 'published' || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'content']) && isValidId(postId) && incoming().titleFa is string && incoming().titleFa.size() <= 200;
       allow delete: if hasRole(['super_admin', 'admin', 'content']) && isValidId(postId);
     }
 
     match /coupons/{couponId} {
-      allow get: if isValidId(couponId);
+      allow get: if isValidId(couponId) && (resource == null || resource.data.isActive == true || isAdmin());
       allow list: if resource.data.isActive == true || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'sales_mgr', 'accountant']) && isValidId(couponId) && incoming().code is string && incoming().code.size() <= 40;
       allow delete: if hasRole(['super_admin', 'admin', 'sales_mgr']) && isValidId(couponId);
     }
 
     match /pages/{pageId} {
-      allow get: if isValidId(pageId);
+      allow get: if isValidId(pageId) && (resource == null || resource.data.status == 'published' || isAdmin());
       allow list: if resource.data.status == 'published' || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'content']) && isValidId(pageId);
       allow delete: if hasRole(['super_admin', 'admin', 'content']) && isValidId(pageId);
     }
 
     match /banners/{bannerId} {
-      allow get: if isValidId(bannerId);
+      allow get: if isValidId(bannerId) && (resource == null || resource.data.isActive == true || isAdmin());
       allow list: if resource.data.isActive == true || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'content']) && isValidId(bannerId);
       allow delete: if hasRole(['super_admin', 'admin', 'content']) && isValidId(bannerId);
     }
 
     match /faqs/{faqId} {
-      allow get: if isValidId(faqId);
+      allow get: if isValidId(faqId) && (resource == null || resource.data.isActive == true || isAdmin());
       allow list: if resource.data.isActive == true || isAdmin();
       allow create, update: if hasRole(['super_admin', 'admin', 'content', 'support']) && isValidId(faqId);
       allow delete: if hasRole(['super_admin', 'admin', 'content']) && isValidId(faqId);
@@ -335,10 +335,7 @@ service cloud.firestore {
     match /notFoundLogs/{logId} {
       allow get: if isAdmin() && isValidId(logId);
       allow list: if isAdmin();
-      allow create, update: if isValidId(logId)
-        && incoming().keys().hasOnly(['id', 'path', 'hitCount', 'lastSeenAt'])
-        && incoming().path is string && incoming().path.size() <= 240
-        && incoming().hitCount is number;
+      allow create, update: if false;
       allow delete: if hasRole(['super_admin', 'admin', 'content']) && isValidId(logId);
     }
 
@@ -373,23 +370,14 @@ service cloud.firestore {
     match /stockNotifications/{notifId} {
       allow get: if hasRole(['super_admin', 'admin', 'warehouse', 'sales_mgr']) && isValidId(notifId);
       allow list: if hasRole(['super_admin', 'admin', 'warehouse', 'sales_mgr']);
-      allow create: if isValidId(notifId)
-        && incoming().keys().hasAll(['id', 'productId', 'productTitleFa', 'mobile', 'status', 'createdAt'])
-        && incoming().keys().hasOnly(['id', 'productId', 'variantId', 'productTitleFa', 'mobile', 'userId', 'status', 'createdAt'])
-        && incoming().mobile is string && incoming().mobile.size() >= 8 && incoming().mobile.size() <= 20
-        && incoming().status == 'pending';
+      allow create: if false;
       allow update, delete: if hasRole(['super_admin', 'admin', 'warehouse', 'sales_mgr']) && isValidId(notifId);
     }
 
     match /newsletterSubscribers/{subId} {
       allow get: if hasRole(['super_admin', 'admin', 'content', 'sales_mgr']) && isValidId(subId);
       allow list: if hasRole(['super_admin', 'admin', 'content', 'sales_mgr']);
-      allow create: if isValidId(subId)
-        && incoming().keys().hasAll(['id', 'contact', 'type', 'status', 'createdAt'])
-        && incoming().keys().hasOnly(['id', 'contact', 'type', 'status', 'createdAt'])
-        && incoming().contact is string && incoming().contact.size() >= 4 && incoming().contact.size() <= 160
-        && incoming().type in ['email', 'mobile']
-        && incoming().status == 'active';
+      allow create: if false;
       allow update, delete: if hasRole(['super_admin', 'admin', 'content']) && isValidId(subId);
     }
 
@@ -505,6 +493,10 @@ service cloud.firestore {
         hasRole(['super_admin', 'admin', 'support', 'sales_mgr']) || (
           isVerified() && existing().userId == request.auth.uid
           && existing().status != 'closed'
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().status in ['open', 'pending_staff']
+          && incoming().messages.size() >= existing().messages.size()
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly(['messages', 'status', 'updatedAt'])
         )

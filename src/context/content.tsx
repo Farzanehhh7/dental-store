@@ -144,7 +144,7 @@ export function ContentProvider({ children }: { children: React.ReactNode }) {
     orderPurchaseCheckerRef.current = checker;
   }, []);
 
-  // Authenticated admin-only catalog / pricing / SEO sync to Express server
+  // Authenticated admin-only catalog / pricing / SEO sync to Express server (compact <2MB payload)
   useEffect(() => {
     if (!isAdmin || !authUser) return;
     const timer = setTimeout(() => {
@@ -158,7 +158,7 @@ export function ContentProvider({ children }: { children: React.ReactNode }) {
             body: JSON.stringify({
               categories,
               brands,
-              products,
+              ...(products.length <= 400 ? { products } : {}),
               campaigns,
               bundles,
               agents,
@@ -301,20 +301,31 @@ export function ContentProvider({ children }: { children: React.ReactNode }) {
     };
   }, [connectionChecked, dbSynced, authReady, authUser, isAdmin]);
 
-  // Admin-only newsletter & 404 telemetry listeners
+  // Admin-only newsletter & 404 telemetry listeners (Express authoritative + Firestore fallback)
   useEffect(() => {
     if (!connectionChecked || !dbSynced || !authReady || !authUser || !isAdmin) return;
     const unsubs: (() => void)[] = [];
     const roleEffective = actualAdminRole ?? activeAdminRole;
+    let cancelled = false;
 
     if (['super_admin', 'admin', 'content', 'sales_mgr'].includes(roleEffective)) {
+      void resolveAuthHeaders(authUser)
+        .then((headers) => (headers.Authorization ? fetch('/api/admin/newsletter-subscribers', { headers }) : null))
+        .then((res) => (res && res.ok ? res.json() : null))
+        .then((data) => {
+          if (!cancelled && data?.ok && Array.isArray(data.subscribers)) {
+            setNewsletterSubscribers((prev) => mergeById(prev, data.subscribers as NewsletterSubscriber[]));
+          }
+        })
+        .catch(() => {});
+
       unsubs.push(
         onSnapshot(
           collection(db, 'newsletterSubscribers'),
           (snap) =>
-            setNewsletterSubscribers(
+            setNewsletterSubscribers((prev) =>
               mergeById(
-                SEED_NEWSLETTER_SUBSCRIBERS,
+                mergeById(SEED_NEWSLETTER_SUBSCRIBERS, prev),
                 snap.docs.map((d) => ({ ...(d.data() as NewsletterSubscriber), id: d.id }))
               )
             ),
@@ -323,18 +334,36 @@ export function ContentProvider({ children }: { children: React.ReactNode }) {
       );
     }
 
-    unsubs.push(
-      onSnapshot(
-        collection(db, 'notFoundLogs'),
-        (snap) =>
-          setNotFoundLogs(
-            mergeById(SEED_NOT_FOUND_LOGS, snap.docs.map((d) => ({ ...(d.data() as NotFoundLog), id: d.id })))
-          ),
-        (err) => handleListenerError(err, OperationType.LIST, 'notFoundLogs')
-      )
-    );
+    if (['super_admin', 'admin', 'content'].includes(roleEffective)) {
+      void resolveAuthHeaders(authUser)
+        .then((headers) => (headers.Authorization ? fetch('/api/admin/not-found-logs', { headers }) : null))
+        .then((res) => (res && res.ok ? res.json() : null))
+        .then((data) => {
+          if (!cancelled && data?.ok && Array.isArray(data.logs)) {
+            setNotFoundLogs((prev) => mergeById(prev, data.logs as NotFoundLog[]));
+          }
+        })
+        .catch(() => {});
 
-    return () => unsubs.forEach((u) => u());
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'notFoundLogs'),
+          (snap) =>
+            setNotFoundLogs((prev) =>
+              mergeById(
+                mergeById(SEED_NOT_FOUND_LOGS, prev),
+                snap.docs.map((d) => ({ ...(d.data() as NotFoundLog), id: d.id }))
+              )
+            ),
+          (err) => handleListenerError(err, OperationType.LIST, 'notFoundLogs')
+        )
+      );
+    }
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((u) => u());
+    };
   }, [connectionChecked, dbSynced, authReady, authUser, isAdmin, actualAdminRole, activeAdminRole]);
 
   const submitReview = async (productId: string, rating: number, title: string, body: string) => {
@@ -390,43 +419,40 @@ export function ContentProvider({ children }: { children: React.ReactNode }) {
       pushToast('ایمیل یا شماره موبایل معتبر وارد کنید.', 'error');
       return;
     }
-    const id = `sub_${Date.now()}`;
-    const item: NewsletterSubscriber = {
-      id,
-      contact: trimmed,
-      type: trimmed.includes('@') ? 'email' : 'mobile',
-      status: 'active',
-      createdAt: new Date().toISOString(),
-    };
     try {
-      await setDoc(doc(db, 'newsletterSubscribers', id), item);
-      setNewsletterSubscribers((prev) => [item, ...prev]);
+      const res = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contact: trimmed }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok || !data.subscriber) {
+        pushToast(data?.message || 'خطا در ثبت اشتراک خبرنامه.', 'error');
+        return;
+      }
+      setNewsletterSubscribers((prev) => mergeById(prev, [data.subscriber as NewsletterSubscriber]));
       pushToast('عضویت شما در خبرنامه تخصصی دنتال‌مارکت ثبت شد.', 'success');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `newsletterSubscribers/${id}`);
+    } catch {
+      pushToast('خطا در برقراری ارتباط با سرور برای عضویت خبرنامه.', 'error');
     }
   };
 
   const recordNotFoundHit = async (pathStr: string) => {
-    const safeId = `nf_${pathStr.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 60) || 'root'}`;
-    const existing = notFoundLogs.find((n) => n.path === pathStr);
-    const nextDoc: NotFoundLog = {
-      id: existing?.id ?? safeId,
-      path: pathStr.slice(0, 240),
-      hitCount: (existing?.hitCount ?? 0) + 1,
-      lastSeenAt: new Date().toISOString(),
-    };
-    setNotFoundLogs((prev) => {
-      const idx = prev.findIndex((x) => x.path === pathStr);
-      if (idx >= 0) {
-        const clone = [...prev];
-        clone[idx] = nextDoc;
-        return clone;
+    const cleanPath = pathStr.trim().slice(0, 240);
+    if (!cleanPath.startsWith('/')) return;
+    try {
+      const res = await fetch('/api/telemetry/404', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: cleanPath }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok && data.log) {
+        const nextDoc = data.log as NotFoundLog;
+        setNotFoundLogs((prev) => mergeById(prev, [nextDoc]));
       }
-      return [nextDoc, ...prev];
-    });
-    if (dbSynced) {
-      setDoc(doc(db, 'notFoundLogs', nextDoc.id), nextDoc).catch(() => {});
+    } catch {
+      // Non-fatal 404 telemetry failure
     }
   };
 

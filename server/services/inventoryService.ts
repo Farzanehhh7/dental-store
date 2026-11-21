@@ -231,9 +231,27 @@ export function createInventoryService(repos: RepositoryBundle) {
     variantId: string;
     batchId: string;
     specialPrice: number | null;
+    actorUid?: string;
     actorEmail: string;
   }) {
-    return repos.runTransaction(() => repos.stock.setBatchSpecialPrice(params));
+    return repos.runTransaction(async () => {
+      const res = await repos.stock.setBatchSpecialPrice(params);
+      if (res.ok && res.batch) {
+        await repos.audit.append({
+          id: `aud_${crypto.randomBytes(6).toString('hex')}`,
+          actorType: 'admin',
+          actorId: params.actorUid ?? params.actorEmail,
+          actorEmail: params.actorEmail,
+          action: 'inventory.batch_special_price',
+          entityType: 'stock_batch',
+          entityId: res.batch.id,
+          summary: `Updated batch ${res.batch.batchNo} specialPrice -> ${params.specialPrice ?? 'null'}`,
+          after: { specialPrice: params.specialPrice, batchNo: res.batch.batchNo },
+          createdAt: new Date().toISOString(),
+        });
+      }
+      return res;
+    });
   }
 
   async function saveWarehouse(warehouse: Warehouse, actorUid: string) {

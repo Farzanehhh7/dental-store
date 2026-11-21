@@ -4,6 +4,7 @@ import { Award, Clock, MapPin, PackagePlus, Phone, Printer, ShieldCheck } from '
 import ProductCard from '../components/store/ProductCard';
 import { useStore } from '../context/StoreContext';
 import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
+import { buildResponsiveImageProps } from '../lib/media';
 import { getProductPriceSummary } from '../lib/pricing';
 import {
   applySeoHead,
@@ -79,7 +80,13 @@ export function BrandsListPage() {
                 <div className="grid grid-cols-3 gap-2 pt-1">
                   {previewImgs.map((imgUrl, idx) => (
                     <div key={idx} className="aspect-[4/3] rounded-lg bg-white border border-line/70 dark:border-slate-700 overflow-hidden p-1.5">
-                      <img src={imgUrl} alt={brand.nameEn} loading="lazy" className="w-full h-full object-contain" />
+                      <img
+                        {...buildResponsiveImageProps(imgUrl, { widths: [160, 320], sizes: '120px' })}
+                        alt={brand.nameEn}
+                        width={120}
+                        height={90}
+                        className="w-full h-full object-contain"
+                      />
                     </div>
                   ))}
                 </div>
@@ -241,8 +248,14 @@ export function PackDetailPage() {
     <div className="max-w-6xl mx-auto px-4 lg:px-8 py-8 space-y-8">
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
         <img
-          src={bundle.imageUrl}
+          {...buildResponsiveImageProps(bundle.imageUrl, {
+            widths: [480, 800],
+            sizes: '(max-width: 1024px) 100vw, 42vw',
+            eager: true,
+          })}
           alt={bundle.nameFa}
+          width={640}
+          height={480}
           className="lg:col-span-5 w-full aspect-[4/3] object-cover rounded-xl bg-surface"
         />
         <div className="lg:col-span-7 space-y-4">
@@ -282,7 +295,13 @@ export function PackDetailPage() {
               to={`/product/${product.slug}`}
               className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-4 flex items-center gap-4 hover:border-brand transition-colors"
             >
-              <img src={product.imageUrl} alt={product.titleFa} className="w-20 h-16 object-cover rounded-lg bg-surface shrink-0" />
+              <img
+                {...buildResponsiveImageProps(product.imageUrl, { widths: [160, 320], sizes: '80px' })}
+                alt={product.titleFa}
+                width={80}
+                height={64}
+                className="w-20 h-16 object-cover rounded-lg bg-surface shrink-0"
+              />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-sm truncate">{product.titleFa}</p>
                 <p className="text-xs text-ink/60">
@@ -538,7 +557,16 @@ export function BlogListPage() {
             to={`/blog/${post.slug}`}
             className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden hover:border-brand transition-colors flex flex-col"
           >
-            <img src={post.imageUrl} alt={post.titleFa} className="aspect-[16/9] w-full object-cover bg-surface" />
+            <img
+              {...buildResponsiveImageProps(post.imageUrl, {
+                widths: [400, 640],
+                sizes: '(max-width: 768px) 100vw, 33vw',
+              })}
+              alt={post.titleFa}
+              width={640}
+              height={360}
+              className="aspect-[16/9] w-full object-cover bg-surface"
+            />
             <div className="p-5 space-y-2.5 flex-1 flex flex-col">
               <span className="text-[11px] font-bold text-brand dark:text-teal-300">
                 {post.categoryFa} · {formatJalaliDate(post.publishedAt)}
@@ -609,7 +637,17 @@ export function BlogPostPage() {
         </div>
       </div>
 
-      <img src={post.imageUrl} alt={post.titleFa} className="w-full aspect-[16/9] object-cover rounded-2xl bg-surface" />
+      <img
+        {...buildResponsiveImageProps(post.imageUrl, {
+          widths: [640, 960],
+          sizes: '(max-width: 1024px) 100vw, 896px',
+          eager: true,
+        })}
+        alt={post.titleFa}
+        width={960}
+        height={540}
+        className="w-full aspect-[16/9] object-cover rounded-2xl bg-surface"
+      />
 
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 lg:p-8 space-y-4 text-sm leading-8 text-ink/85 dark:text-slate-200 whitespace-pre-line">
         {post.bodyFa}

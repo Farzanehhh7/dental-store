@@ -5,6 +5,7 @@ import {
   EXPANDED_CATEGORIES,
   EXPANDED_PRODUCTS,
   SEED_CONTRACT_PRICES,
+  SEED_PAGES,
   SEED_PAYMENT_LEDGER,
   SEED_RETURNS,
   SEED_STOCK_MOVEMENTS,
@@ -29,6 +30,8 @@ import {
   ContractPrice,
   Coupon,
   CustomerGroupCode,
+  NewsletterSubscriber,
+  NotFoundLog,
   Order,
   PaymentLedgerEntry,
   PaymentSessionStatus,
@@ -37,13 +40,24 @@ import {
   RedirectRule,
   ReturnRequest,
   RfqRequest,
+  SitePage,
   SiteSettings,
   StockBatchRecord,
   StockLevel,
   StockMovement,
+  StockNotification,
   Warehouse,
 } from '../src/types/domain';
+import type { ImportJobRecord } from '../src/pages/admin/importExport/types';
 import { migrateStockToWarehousesData } from '../scripts/migrate-stock-warehouses';
+
+function normalizeCatalogImageUrl(url: string): string {
+  const clean = (url || '').trim();
+  if (clean.startsWith('/src/assets/images/')) {
+    return `/assets/images/${clean.slice('/src/assets/images/'.length)}`;
+  }
+  return clean;
+}
 
 export interface ServerCatalogSnapshot {
   categories: Category[];
@@ -53,6 +67,7 @@ export interface ServerCatalogSnapshot {
   bundles: Bundle[];
   agents: AgentBranch[];
   blogPosts: BlogPost[];
+  pages: SitePage[];
   redirects: RedirectRule[];
   coupons: Coupon[];
   contractPrices: ContractPrice[];
@@ -126,14 +141,34 @@ export interface ServerUserGroupRecord {
   updatedAt: string;
 }
 
+export interface OtpLockoutRecord {
+  lockedUntil: number;
+  failedAttempts: number;
+  reason?: string;
+}
+
+export interface UploadedFileRecord {
+  id: string;
+  storedName: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  purpose: 'b2b_doc' | 'catalog_asset' | 'banner' | 'certificate';
+  ownerUid: string;
+  createdAt: string;
+}
+
 export interface ServerAuditLogRecord {
   id: string;
   actorType: string;
   actorId?: string;
+  actorEmail?: string;
   action: string;
   entityType: string;
   entityId: string;
   summary: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -145,6 +180,8 @@ export interface PersistedServerData {
   stockMovements: StockMovement[];
   returns: Record<string, ReturnRequest>;
   otpChallenges: Record<string, OtpChallengeRecord>;
+  otpLockouts: Record<string, OtpLockoutRecord>;
+  otpPhoneSendHistory: Record<string, number[]>;
   otpVerifiedTokens: Record<string, OtpVerifiedTokenRecord>;
   mobileSessions: Record<string, MobileSessionRecord>;
   paymentSessions: Record<string, ServerPaymentSession>;
@@ -155,8 +192,13 @@ export interface PersistedServerData {
   userGroups: Record<string, ServerUserGroupRecord>;
   paymentWebhookEvents: Record<string, string>;
   auditLogs: ServerAuditLogRecord[];
+  notFoundLogs: Record<string, NotFoundLog>;
+  newsletterSubscribers: Record<string, NewsletterSubscriber>;
+  stockNotifications: Record<string, StockNotification>;
+  uploadedFiles: Record<string, UploadedFileRecord>;
   guestOrders?: Record<string, Order>;
   rfqs: Record<string, RfqRequest>;
+  importJobs: ImportJobRecord[];
 }
 
 function cloneCatalogProducts(products: Product[]): Product[] {
@@ -185,6 +227,7 @@ function createInitialData(): PersistedServerData {
       bundles: SEED_BUNDLES,
       agents: SEED_AGENTS,
       blogPosts: SEED_BLOG_POSTS,
+      pages: SEED_PAGES.map((p) => ({ ...p })),
       redirects: SEED_REDIRECTS,
       coupons: SEED_COUPONS,
       contractPrices: SEED_CONTRACT_PRICES,
@@ -200,6 +243,8 @@ function createInitialData(): PersistedServerData {
     })),
     returns: initialReturns,
     otpChallenges: {},
+    otpLockouts: {},
+    otpPhoneSendHistory: {},
     otpVerifiedTokens: {},
     mobileSessions: {},
     paymentSessions: {},
@@ -210,7 +255,12 @@ function createInitialData(): PersistedServerData {
     userGroups: {},
     paymentWebhookEvents: {},
     auditLogs: [],
+    notFoundLogs: {},
+    newsletterSubscribers: {},
+    stockNotifications: {},
+    uploadedFiles: {},
     rfqs: {},
+    importJobs: [],
   };
 
   migrateStockToWarehousesData(data, { dryRun: false });
@@ -248,6 +298,29 @@ export function createServerStore(dataDir?: string): ServerStore {
           catalogState: {
             ...defaults.catalogState,
             ...(parsed.catalogState ?? {}),
+            products: (Array.isArray(parsed.catalogState?.products)
+              ? parsed.catalogState.products
+              : defaults.catalogState.products
+            ).map((p) => ({
+              ...p,
+              imageUrl: normalizeCatalogImageUrl(p.imageUrl),
+              galleryUrls: Array.isArray(p.galleryUrls) ? p.galleryUrls.map(normalizeCatalogImageUrl) : [],
+            })),
+            bundles: (Array.isArray(parsed.catalogState?.bundles)
+              ? parsed.catalogState.bundles
+              : defaults.catalogState.bundles
+            ).map((b) => ({
+              ...b,
+              imageUrl: normalizeCatalogImageUrl(b.imageUrl),
+            })),
+            blogPosts: (Array.isArray(parsed.catalogState?.blogPosts)
+              ? parsed.catalogState.blogPosts
+              : defaults.catalogState.blogPosts
+            ).map((bp) => ({
+              ...bp,
+              imageUrl: normalizeCatalogImageUrl(bp.imageUrl),
+            })),
+            pages: Array.isArray(parsed.catalogState?.pages) ? parsed.catalogState.pages : defaults.catalogState.pages,
             settings: parsed.catalogState?.settings ?? defaults.catalogState.settings,
             coupons: Array.isArray(parsed.catalogState?.coupons) ? parsed.catalogState.coupons : defaults.catalogState.coupons,
             contractPrices: Array.isArray(parsed.catalogState?.contractPrices)
@@ -261,6 +334,8 @@ export function createServerStore(dataDir?: string): ServerStore {
           stockMovements: Array.isArray(parsed.stockMovements) ? parsed.stockMovements : defaults.stockMovements,
           returns: parsed.returns && typeof parsed.returns === 'object' ? parsed.returns : defaults.returns,
           otpChallenges: parsed.otpChallenges ?? {},
+          otpLockouts: parsed.otpLockouts ?? {},
+          otpPhoneSendHistory: parsed.otpPhoneSendHistory ?? {},
           otpVerifiedTokens: parsed.otpVerifiedTokens ?? {},
           mobileSessions: parsed.mobileSessions ?? {},
           paymentSessions: parsed.paymentSessions ?? {},
@@ -271,8 +346,13 @@ export function createServerStore(dataDir?: string): ServerStore {
           userGroups: parsed.userGroups ?? {},
           paymentWebhookEvents: parsed.paymentWebhookEvents ?? {},
           auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
+          notFoundLogs: parsed.notFoundLogs ?? {},
+          newsletterSubscribers: parsed.newsletterSubscribers ?? {},
+          stockNotifications: parsed.stockNotifications ?? {},
+          uploadedFiles: parsed.uploadedFiles ?? {},
           ...(parsed.guestOrders ? { guestOrders: parsed.guestOrders } : {}),
           rfqs: parsed.rfqs ?? {},
+          importJobs: Array.isArray(parsed.importJobs) ? parsed.importJobs : [],
         };
 
         migrateStockToWarehousesData(data, { dryRun: false });
@@ -297,6 +377,21 @@ export function createServerStore(dataDir?: string): ServerStore {
       for (const [k, v] of Object.entries(store.data.otpChallenges)) {
         if (v.expiresAt <= now) {
           delete store.data.otpChallenges[k];
+          changed = true;
+        }
+      }
+      for (const [k, v] of Object.entries(store.data.otpLockouts)) {
+        if (v.lockedUntil <= now) {
+          delete store.data.otpLockouts[k];
+          changed = true;
+        }
+      }
+      const sendCutoff = now - 15 * 60 * 1000;
+      for (const [k, stamps] of Object.entries(store.data.otpPhoneSendHistory)) {
+        const recent = stamps.filter((ts) => ts > sendCutoff);
+        if (recent.length !== stamps.length) {
+          if (recent.length === 0) delete store.data.otpPhoneSendHistory[k];
+          else store.data.otpPhoneSendHistory[k] = recent;
           changed = true;
         }
       }

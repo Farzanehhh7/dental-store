@@ -1,3 +1,4 @@
+import { normalizeAssetUrl } from './media';
 import { stripKashida } from './persian-search';
 import { getProductPriceSummary } from './pricing';
 import {
@@ -22,11 +23,46 @@ export interface SeoHeadInput {
   jsonLd?: Record<string, unknown>[];
 }
 
+export function resolveSeoOrigin(explicitOrigin?: string): string {
+  if (explicitOrigin && explicitOrigin.trim()) {
+    return explicitOrigin.trim().replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, '');
+  }
+  return 'https://dentalmarket.ir';
+}
+
+export function normalizeCanonicalPath(rawPath: string): string {
+  const input = (rawPath || '/').trim();
+  const [rawPathname, rawSearch] = input.split('?');
+  const withLeadingSlash = (rawPathname || '/').startsWith('/') ? rawPathname || '/' : `/${rawPathname || ''}`;
+  const collapsed = withLeadingSlash.replace(/\/{2,}/g, '/');
+  const trimmedTrailing = collapsed.length > 1 ? collapsed.replace(/\/+$/, '') : '/';
+
+  if (!rawSearch) return trimmedTrailing;
+  const params = new URLSearchParams(rawSearch);
+  const kept = new URLSearchParams();
+  for (const [k, v] of params.entries()) {
+    const lk = k.toLowerCase();
+    if (lk.startsWith('utm_') || lk === 'fbclid' || lk === 'gclid' || lk === 'yclid') {
+      continue;
+    }
+    if (lk === 'page' && v === '1') {
+      continue;
+    }
+    kept.append(k, v);
+  }
+  const qs = kept.toString();
+  return qs ? `${trimmedTrailing}?${qs}` : trimmedTrailing;
+}
+
 export function applySeoHead(input: SeoHeadInput): void {
   const cleanTitle = stripKashida(input.title).slice(0, 120);
   const cleanDesc = stripKashida(input.description).slice(0, 180);
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
-  const canonicalUrl = `${origin}${input.canonicalPath.startsWith('/') ? input.canonicalPath : `/${input.canonicalPath}`}`;
+  const origin = resolveSeoOrigin();
+  const canonicalPath = normalizeCanonicalPath(input.canonicalPath);
+  const canonicalUrl = `${origin}${canonicalPath}`;
 
   document.title = cleanTitle;
 
@@ -40,6 +76,18 @@ export function applySeoHead(input: SeoHeadInput): void {
     el.setAttribute('content', content);
   };
 
+  const setLink = (rel: string, href: string, hreflang?: string) => {
+    const selector = hreflang ? `link[rel="${rel}"][hreflang="${hreflang}"]` : `link[rel="${rel}"]`;
+    let el = document.querySelector(selector);
+    if (!el) {
+      el = document.createElement('link');
+      el.setAttribute('rel', rel);
+      if (hreflang) el.setAttribute('hreflang', hreflang);
+      document.head.appendChild(el);
+    }
+    el.setAttribute('href', href);
+  };
+
   setMeta('name', 'description', cleanDesc);
   setMeta('name', 'robots', input.robots);
   setMeta('property', 'og:title', cleanTitle);
@@ -47,19 +95,21 @@ export function applySeoHead(input: SeoHeadInput): void {
   setMeta('property', 'og:url', canonicalUrl);
   setMeta('property', 'og:locale', 'fa_IR');
   setMeta('property', 'og:type', input.ogType ?? 'website');
-  const ogImg = input.ogImage || '/og-default.svg';
+
+  const ogImg = normalizeAssetUrl(input.ogImage, '/og-default.svg');
   const absImg = ogImg.startsWith('http') ? ogImg : `${origin}${ogImg}`;
   setMeta('property', 'og:image', absImg);
   setMeta('property', 'og:image:width', '1200');
   setMeta('property', 'og:image:height', '630');
 
-  let canonicalEl = document.querySelector('link[rel="canonical"]');
-  if (!canonicalEl) {
-    canonicalEl = document.createElement('link');
-    canonicalEl.setAttribute('rel', 'canonical');
-    document.head.appendChild(canonicalEl);
-  }
-  canonicalEl.setAttribute('href', canonicalUrl);
+  setMeta('name', 'twitter:card', 'summary_large_image');
+  setMeta('name', 'twitter:title', cleanTitle);
+  setMeta('name', 'twitter:description', cleanDesc);
+  setMeta('name', 'twitter:image', absImg);
+
+  setLink('canonical', canonicalUrl);
+  setLink('alternate', canonicalUrl, 'fa-IR');
+  setLink('alternate', canonicalUrl, 'x-default');
 
   document.querySelectorAll('script[data-dental-jsonld="true"]').forEach((n) => n.remove());
   if (input.jsonLd && input.jsonLd.length > 0) {
@@ -73,8 +123,8 @@ export function applySeoHead(input: SeoHeadInput): void {
   }
 }
 
-export function buildHomeJsonLd(settings: SiteSettings) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+export function buildHomeJsonLd(settings: SiteSettings, explicitOrigin?: string) {
+  const origin = resolveSeoOrigin(explicitOrigin);
   return [
     {
       '@context': 'https://schema.org',
@@ -104,8 +154,8 @@ export function buildHomeJsonLd(settings: SiteSettings) {
   ];
 }
 
-export function buildBreadcrumbJsonLd(items: { name: string; path: string }[]) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+export function buildBreadcrumbJsonLd(items: { name: string; path: string }[], explicitOrigin?: string) {
+  const origin = resolveSeoOrigin(explicitOrigin);
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
@@ -113,7 +163,7 @@ export function buildBreadcrumbJsonLd(items: { name: string; path: string }[]) {
       '@type': 'ListItem',
       position: idx + 1,
       name: item.name,
-      item: `${origin}${item.path}`,
+      item: `${origin}${normalizeCanonicalPath(item.path)}`,
     })),
   };
 }
@@ -134,8 +184,8 @@ export function buildFaqJsonLd(faqs: { q: string; a: string }[]) {
   };
 }
 
-export function buildBrandJsonLd(brand: Brand) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+export function buildBrandJsonLd(brand: Brand, explicitOrigin?: string) {
+  const origin = resolveSeoOrigin(explicitOrigin);
   return {
     '@context': 'https://schema.org',
     '@type': 'Brand',
@@ -146,8 +196,8 @@ export function buildBrandJsonLd(brand: Brand) {
   };
 }
 
-export function buildStaticPageJsonLd(slug: string, title: string, settings: SiteSettings) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+export function buildStaticPageJsonLd(slug: string, title: string, settings: SiteSettings, explicitOrigin?: string) {
+  const origin = resolveSeoOrigin(explicitOrigin);
   const type = slug === 'about' ? 'AboutPage' : slug === 'contact' ? 'ContactPage' : 'WebPage';
   return {
     '@context': 'https://schema.org',
@@ -162,14 +212,15 @@ export function buildStaticPageJsonLd(slug: string, title: string, settings: Sit
   };
 }
 
-export function buildBundleJsonLd(bundle: Bundle, discountedPrice: number) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+export function buildBundleJsonLd(bundle: Bundle, discountedPrice: number, explicitOrigin?: string) {
+  const origin = resolveSeoOrigin(explicitOrigin);
+  const normImg = normalizeAssetUrl(bundle.imageUrl);
   return {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: bundle.nameFa,
     description: bundle.descriptionFa,
-    image: bundle.imageUrl.startsWith('http') ? bundle.imageUrl : `${origin}${bundle.imageUrl}`,
+    image: normImg.startsWith('http') ? normImg : `${origin}${normImg}`,
     sku: bundle.id.toUpperCase(),
     url: `${origin}/pack/${bundle.slug}`,
     offers:
@@ -196,11 +247,13 @@ export function buildProductJsonLd(
   brand: Brand | undefined,
   campaigns: Campaign[],
   settings: SiteSettings,
-  attributes: AttributeDef[] = []
+  attributes: AttributeDef[] = [],
+  explicitOrigin?: string
 ) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+  const origin = resolveSeoOrigin(explicitOrigin);
   const summary = getProductPriceSummary(product, { campaigns, settings });
-  const absImg = product.imageUrl.startsWith('http') ? product.imageUrl : `${origin}${product.imageUrl}`;
+  const normImg = normalizeAssetUrl(product.imageUrl);
+  const absImg = normImg.startsWith('http') ? normImg : `${origin}${normImg}`;
 
   const additionalProperty = Object.entries(product.attributes || {}).map(([code, raw]) => {
     const def = attributes.find((a) => a.code === code);
@@ -280,15 +333,19 @@ export function buildProductJsonLd(
   return schema;
 }
 
-export function buildBlogPostJsonLd(post: BlogPost, settings: SiteSettings) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dentalmarket.ir';
+export function buildBlogPostJsonLd(post: BlogPost, settings: SiteSettings, explicitOrigin?: string) {
+  const origin = resolveSeoOrigin(explicitOrigin);
+  const normImg = normalizeAssetUrl(post.imageUrl);
+  const absImg = normImg.startsWith('http') ? normImg : `${origin}${normImg}`;
   return {
     '@context': 'https://schema.org',
-    '@type': 'BlogPosting',
+    '@type': 'Article',
     headline: post.titleFa,
-    image: post.imageUrl.startsWith('http') ? post.imageUrl : `${origin}${post.imageUrl}`,
+    description: post.metaDescription || post.excerptFa,
+    image: absImg,
     datePublished: post.publishedAt,
     dateModified: post.updatedAt,
+    mainEntityOfPage: `${origin}/blog/${post.slug}`,
     author: { '@type': 'Person', name: post.authorName },
     publisher: { '@type': 'Organization', name: settings.storeNameFa },
   };

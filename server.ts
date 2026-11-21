@@ -5,14 +5,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import helmet from 'helmet';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import cors from 'cors';
-import { assertSessionSecretConfigured } from './server/auth';
+import { validateServerEnv } from './server/config/env';
 import {
   DEFAULT_PORT,
-  envPositiveInt,
+  getOrigin,
   parseAllowedOrigins,
   parseForwardedForIp,
   parseTrustProxySetting,
 } from './server/lib/http';
+import { renderSeoHtmlResponse } from './server/lib/ssrHtml';
 import { createServerStore } from './server/persistence';
 import { createRepositories } from './server/repositories';
 import { createAdminRouter } from './server/routes/admin.routes';
@@ -20,8 +21,10 @@ import { createAuthRouter } from './server/routes/auth.routes';
 import { createCatalogRouter } from './server/routes/catalog.routes';
 import { createCheckoutRouter } from './server/routes/checkout.routes';
 import { createFilesRouter } from './server/routes/files.routes';
+import { createImportExportRouter } from './server/routes/importExport.routes';
 import { createInventoryRouter } from './server/routes/inventory.routes';
 import { createPaymentsRouter } from './server/routes/payments.routes';
+import { createReportsRouter } from './server/routes/reports.routes';
 import { createRfqRouter } from './server/routes/rfq.routes';
 import { createRedirectsMiddleware, createSeoRouter } from './server/routes/seo.routes';
 import { createInventoryService } from './server/services/inventoryService';
@@ -36,18 +39,34 @@ export interface CreateServerAppOptions {
 }
 
 export async function createServerApp(options: CreateServerAppOptions = {}) {
-  assertSessionSecretConfigured();
+  const env = validateServerEnv(process.env);
 
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = env.NODE_ENV === 'production';
   const attachVite = options.attachVite ?? true;
-  const store = createServerStore(options.dataDir);
+  const distDir = path.resolve(__dirname, 'dist');
+  const distIndexPath = path.join(distDir, 'index.html');
+  const rootIndexPath = path.resolve(__dirname, 'index.html');
+  let cachedProdTemplate: string | null = null;
+  const getTemplateHtml = (): string => {
+    if (isProd && fs.existsSync(distIndexPath)) {
+      if (!cachedProdTemplate) {
+        cachedProdTemplate = fs.readFileSync(distIndexPath, 'utf8');
+      }
+      return cachedProdTemplate;
+    }
+    if (fs.existsSync(rootIndexPath)) {
+      return fs.readFileSync(rootIndexPath, 'utf8');
+    }
+    return '<!doctype html><html lang="fa" dir="rtl"><head><title>دنتال‌مارکت</title></head><body><div id="root"></div></body></html>';
+  };
+  const store = createServerStore(options.dataDir ?? env.DATA_DIR);
   const repos = createRepositories(store);
   const orderService = createOrderService(repos);
   const paymentService = createPaymentService(repos);
   const inventoryService = createInventoryService(repos);
   const app = express();
 
-  const trustProxy = parseTrustProxySetting(process.env.TRUST_PROXY);
+  const trustProxy = parseTrustProxySetting(env.TRUST_PROXY);
   if (trustProxy !== false) {
     app.set('trust proxy', trustProxy);
   }
@@ -57,6 +76,8 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
       crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
       crossOriginEmbedderPolicy: false,
       xFrameOptions: isProd ? { action: 'sameorigin' } : false,
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+      strictTransportSecurity: isProd ? { maxAge: 31536000, includeSubDomains: true } : false,
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
@@ -86,8 +107,16 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     })
   );
 
-  const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
-  const siteOrigin = process.env.SITE_URL?.trim().replace(/\/$/, '') || '';
+  app.use((_req, res, next) => {
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=(), payment=(self), usb=(), interest-cohort=()'
+    );
+    next();
+  });
+
+  const allowedOrigins = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+  const siteOrigin = env.SITE_URL?.trim().replace(/\/$/, '') || '';
   app.use(
     cors((req, callback) => {
       const originHeader = req.headers.origin;
@@ -118,10 +147,11 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     })
   );
 
-  const rateLimitWindowMs = envPositiveInt('RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000);
-  const otpRateLimitMax = envPositiveInt('RATE_LIMIT_OTP_MAX', 10);
-  const orderPaymentRateLimitMax = envPositiveInt('RATE_LIMIT_ORDER_PAYMENT_MAX', 30);
-  const globalApiRateLimitMax = envPositiveInt('RATE_LIMIT_GLOBAL_MAX', 300);
+  const rateLimitWindowMs = env.RATE_LIMIT_WINDOW_MS;
+  const otpRateLimitMax = env.RATE_LIMIT_OTP_MAX;
+  const orderPaymentRateLimitMax = env.RATE_LIMIT_ORDER_PAYMENT_MAX;
+  const telemetryRateLimitMax = env.RATE_LIMIT_TELEMETRY_MAX;
+  const globalApiRateLimitMax = env.RATE_LIMIT_GLOBAL_MAX;
 
   const makeRateLimiter = (max: number, message: string, skip?: (req: express.Request) => boolean) =>
     rateLimit({
@@ -164,6 +194,13 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     )
   );
   app.use(
+    ['/api/telemetry', '/api/newsletter/subscribe', '/api/stock-notifications'],
+    makeRateLimiter(
+      telemetryRateLimitMax,
+      'تعداد درخواست‌های ارسالی در این بازه زمانی بیش از حد مجاز است.'
+    )
+  );
+  app.use(
     '/api',
     makeRateLimiter(
       globalApiRateLimitMax,
@@ -172,7 +209,10 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
         req.path === '/health' ||
         req.path.startsWith('/auth/otp') ||
         req.path.startsWith('/payments') ||
-        req.path.startsWith('/orders')
+        req.path.startsWith('/orders') ||
+        req.path.startsWith('/telemetry') ||
+        req.path.startsWith('/newsletter') ||
+        req.path.startsWith('/stock-notifications')
     )
   );
 
@@ -187,24 +227,30 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     },
   });
   app.use((req, res, next) => {
-    if (req.path === '/api/seo/sync') {
+    if (
+      req.path === '/api/seo/sync' ||
+      req.path === '/api/files/upload' ||
+      req.path.startsWith('/api/admin/import/')
+    ) {
       return next();
     }
     return jsonParser1mb(req, res, next);
   });
 
-  app.use(createRedirectsMiddleware(store));
+  app.use(createRedirectsMiddleware(store, repos, getTemplateHtml));
 
   // Mount domain routers
-  app.use(createSeoRouter(store));
-  app.use(createCatalogRouter(store));
-  app.use(createAdminRouter(store, orderService, paymentService));
-  app.use(createFilesRouter(store));
+  app.use(createSeoRouter(store, repos));
+  app.use(createCatalogRouter(store, repos));
+  app.use(createAdminRouter(store, orderService, paymentService, repos));
+  app.use(createReportsRouter(store, repos));
+  app.use(createImportExportRouter(store, repos));
+  app.use(createFilesRouter(store, { dataDir: options.dataDir ?? env.DATA_DIR, repos }));
   app.use(createAuthRouter(store));
   app.use(createCheckoutRouter(store, orderService));
-  app.use(createInventoryRouter(store, inventoryService));
+  app.use(createInventoryRouter(store, inventoryService, repos));
   app.use(createPaymentsRouter(store, paymentService));
-  app.use(createRfqRouter(store));
+  app.use(createRfqRouter(store, repos));
 
   // Clean JSON error handler for malformed / oversized API bodies
   app.use('/api', (err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -218,7 +264,24 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     return next(err);
   });
 
-  // Vite dev middleware or production static frontend assets
+  const renderSsrPage: express.RequestHandler = async (req, res, next) => {
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || req.path.startsWith('/api/')) {
+      return next();
+    }
+    const qIdx = req.originalUrl.indexOf('?');
+    const search = qIdx >= 0 ? req.originalUrl.slice(qIdx) : '';
+    const catalog = await repos.catalog.getSnapshot();
+    const { statusCode, html } = renderSeoHtmlResponse({
+      templateHtml: getTemplateHtml(),
+      pathname: req.path,
+      search,
+      origin: getOrigin(req),
+      catalog,
+    });
+    return res.status(statusCode).type('text/html; charset=utf-8').send(html);
+  };
+
+  // Vite dev middleware or production static frontend assets + SSR head/body injection
   if (attachVite) {
     if (!isProd) {
       const { createServer: createViteServer } = await import('vite');
@@ -227,24 +290,54 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
           middlewareMode: true,
           ...(process.env.NODE_ENV === 'test' ? { hmr: false } : {}),
         },
-        appType: 'spa',
+        appType: 'custom',
       });
       app.use(vite.middlewares);
+      app.use(async (req, res, next) => {
+        if ((req.method !== 'GET' && req.method !== 'HEAD') || req.path.startsWith('/api/')) {
+          return next();
+        }
+        try {
+          const qIdx = req.originalUrl.indexOf('?');
+          const search = qIdx >= 0 ? req.originalUrl.slice(qIdx) : '';
+          const catalog = await repos.catalog.getSnapshot();
+          const ssr = renderSeoHtmlResponse({
+            templateHtml: getTemplateHtml(),
+            pathname: req.path,
+            search,
+            origin: getOrigin(req),
+            catalog,
+          });
+          const transformed = await vite.transformIndexHtml(req.originalUrl, ssr.html);
+          return res.status(ssr.statusCode).type('text/html; charset=utf-8').send(transformed);
+        } catch (err) {
+          vite.ssrFixStacktrace(err as Error);
+          return next(err);
+        }
+      });
     } else {
-      const distDir = path.resolve(__dirname, 'dist');
+      const publicImagesDir = path.resolve(__dirname, 'public/assets/images');
       const srcImagesDir = path.resolve(__dirname, 'src/assets/images');
+      if (fs.existsSync(publicImagesDir)) {
+        app.use('/assets/images', express.static(publicImagesDir));
+      }
       if (fs.existsSync(srcImagesDir)) {
         app.use('/src/assets/images', express.static(srcImagesDir));
       }
-      app.use(express.static(distDir));
-      app.use((_req, res) => {
-        res.sendFile(path.join(distDir, 'index.html'));
-      });
+      app.use(express.static(distDir, { index: false }));
+      app.use(renderSsrPage);
     }
+  } else {
+    // Headless mode (e.g., Supertest integration tests): still serve SSR HTML + SEO tags + status codes
+    const publicDir = path.resolve(__dirname, 'public');
+    if (fs.existsSync(publicDir)) {
+      app.use(express.static(publicDir, { index: false }));
+    }
+    app.use(renderSsrPage);
   }
 
   // Background payment expiry sweep (unref'd so tests/graceful exit are never blocked)
-  const sweepIntervalMs = envPositiveInt('PAYMENT_EXPIRY_SWEEP_INTERVAL_MS', 60_000);
+  const sweepIntervalMs = env.PAYMENT_EXPIRY_SWEEP_INTERVAL_MS;
   const expiryTimer = setInterval(() => {
     paymentService.runExpirySweep().catch((err) => {
       console.warn('[payment-expiry] sweep failed:', err);

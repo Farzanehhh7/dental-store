@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { GitCompareArrows, Heart, ShoppingBag, Star } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { formatMoney, toPersianDigits } from '../../lib/jalali';
+import { buildResponsiveImageProps } from '../../lib/media';
 import { getProductPriceSummary } from '../../lib/pricing';
 import { Product } from '../../types/domain';
 import CountdownTimer from './CountdownTimer';
@@ -52,11 +53,13 @@ export default function ProductCard({ product }: { product: Product }) {
       >
         {!imgFailed && product.imageUrl ? (
           <img
-            src={product.imageUrl}
+            {...buildResponsiveImageProps(product.imageUrl, {
+              widths: [320, 480, 720],
+              sizes: '(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw',
+            })}
             alt={product.titleFa}
             width={400}
             height={300}
-            loading="lazy"
             referrerPolicy="no-referrer"
             onError={() => setImgFailed(true)}
             className={`w-full h-full transition-transform duration-300 group-hover:scale-[1.03] ${

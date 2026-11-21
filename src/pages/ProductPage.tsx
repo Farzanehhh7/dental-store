@@ -22,6 +22,7 @@ import CountdownTimer from '../components/store/CountdownTimer';
 import { useStore } from '../context/StoreContext';
 import { trackEcommerceEvent } from '../lib/analytics';
 import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
+import { buildResponsiveImageProps } from '../lib/media';
 import { resolveVariantPrice } from '../lib/pricing';
 import { applySeoHead, buildBreadcrumbJsonLd, buildFaqJsonLd, buildProductJsonLd } from '../lib/seo';
 
@@ -273,7 +274,11 @@ export default function ProductPage() {
             ) : (
               <>
                 <img
-                  src={activeImage || product.imageUrl}
+                  {...buildResponsiveImageProps(activeImage || product.imageUrl, {
+                    widths: [480, 640, 960],
+                    sizes: '(max-width: 1024px) 100vw, 42vw',
+                    eager: true,
+                  })}
                   alt={product.titleFa}
                   width={640}
                   height={480}
@@ -306,8 +311,13 @@ export default function ProductPage() {
                   }`}
                 >
                   <img
-                    src={url}
+                    {...buildResponsiveImageProps(url, {
+                      widths: [160, 320],
+                      sizes: '80px',
+                    })}
                     alt={`${product.titleFa} - ${idx + 1}`}
+                    width={80}
+                    height={64}
                     className={`w-full h-full ${url.startsWith('/assets/products/') ? 'object-contain p-1' : 'object-cover'}`}
                   />
                 </button>

@@ -8,6 +8,7 @@ import { useStore } from '../context/StoreContext';
 import { IMG_HERO_CLINIC } from '../data/seed';
 import { t } from '../lib/i18n';
 import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
+import { buildResponsiveImageProps } from '../lib/media';
 import { applySeoHead, buildHomeJsonLd } from '../lib/seo';
 import { getProductPriceSummary, resolveVariantPrice } from '../lib/pricing';
 
@@ -301,7 +302,10 @@ export default function Home() {
                 >
                   <Link to={`/pack/${bundle.slug}`} className="shrink-0">
                     <img
-                      src={bundle.imageUrl}
+                      {...buildResponsiveImageProps(bundle.imageUrl, {
+                        widths: [320, 480],
+                        sizes: '(max-width: 640px) 100vw, 180px',
+                      })}
                       alt={bundle.nameFa}
                       width={180}
                       height={135}
@@ -388,11 +392,13 @@ export default function Home() {
                   className="border border-line dark:border-slate-800 rounded-lg overflow-hidden hover:border-brand transition-colors flex flex-col"
                 >
                   <img
-                    src={post.imageUrl}
+                    {...buildResponsiveImageProps(post.imageUrl, {
+                      widths: [360, 640],
+                      sizes: '(max-width: 640px) 100vw, 360px',
+                    })}
                     alt={post.titleFa}
                     width={360}
                     height={200}
-                    loading="lazy"
                     className="w-full h-36 object-cover bg-surface"
                   />
                   <div className="p-4 flex-1 flex flex-col gap-2">

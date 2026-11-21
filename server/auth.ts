@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type express from 'express';
+import { validateServerEnv } from './config/env';
 import { ServerStore } from './persistence';
 
 const NON_PROD_EPHEMERAL_SECRET = crypto.randomBytes(32).toString('hex');
@@ -16,14 +17,7 @@ export function normalizeMobile(raw: string): string {
 }
 
 export function assertSessionSecretConfigured(): void {
-  if (process.env.NODE_ENV === 'production') {
-    const configured = process.env.SESSION_SECRET?.trim() || '';
-    if (configured.length < 32) {
-      throw new Error(
-        'SESSION_SECRET is required and must be at least 32 characters long when NODE_ENV=production.'
-      );
-    }
-  }
+  validateServerEnv(process.env);
 }
 
 export function getSessionSecret(): string {

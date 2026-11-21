@@ -1233,6 +1233,14 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
       }
       persistIfOutsideTx();
     },
+    async saveCatalogCollections(patch) {
+      if (patch.categories) store.data.catalogState.categories = patch.categories;
+      if (patch.brands) store.data.catalogState.brands = patch.brands;
+      if (patch.products) store.data.catalogState.products = patch.products;
+      if (patch.redirects) store.data.catalogState.redirects = patch.redirects;
+      store.data.catalogState.updatedAt = patch.updatedAt ?? new Date().toISOString();
+      persistIfOutsideTx();
+    },
   };
 
   const proformas: ProformaRepository = {

@@ -166,7 +166,7 @@ export function createPaymentsRouter(store: ServerStore, paymentService: Payment
 
   // --- Admin Payment Ledger ---
   router.get('/api/payments/ledger', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req);
+    const adminCheck = await verifyFirebaseAdmin(req, 'payments:ledger');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }

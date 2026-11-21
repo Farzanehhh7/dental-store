@@ -4,6 +4,7 @@ import type { ProformaInvoice, RfqRequest } from '../../src/types/domain';
 import { normalizeMobile, resolveMobileSession } from '../auth';
 import { verifyFirebaseAdmin, verifyFirebaseUser } from '../lib/adminAuth';
 import type { ServerStore } from '../persistence';
+import type { RepositoryBundle } from '../repositories';
 import {
   parseRequestBody,
   parseRequestQuery,
@@ -15,7 +16,7 @@ import {
   rfqRespondBodySchema,
 } from '../validation';
 
-export function createRfqRouter(store: ServerStore): express.Router {
+export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): express.Router {
   const router = express.Router();
 
   router.get('/api/rfq', async (req, res) => {
@@ -24,7 +25,7 @@ export function createRfqRouter(store: ServerStore): express.Router {
 
     const mob = resolveMobileSession(store, req);
     const fbUser = await verifyFirebaseUser(req);
-    const adminCheck = fbUser ? await verifyFirebaseAdmin(req) : null;
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'rfq:read_all') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
 
     const all = Object.values(store.data.rfqs)
@@ -60,7 +61,8 @@ export function createRfqRouter(store: ServerStore): express.Router {
     const note = parsed.note;
     const targetUnitPrice = parsed.targetUnitPrice;
 
-    const product = store.data.catalogState.products.find((p) => p.id === productId);
+    const catalog = repos ? await repos.catalog.getSnapshot() : store.data.catalogState;
+    const product = catalog.products.find((p) => p.id === productId);
     const variant = product?.variants.find((v) => v.id === variantId) ?? product?.variants[0];
     if (!product || !variant) {
       return res.status(400).json({ ok: false, message: 'محصول انتخاب‌شده یافت نشد.' });
@@ -110,7 +112,7 @@ export function createRfqRouter(store: ServerStore): express.Router {
 
     const mob = resolveMobileSession(store, req);
     const fbUser = await verifyFirebaseUser(req);
-    const adminCheck = fbUser ? await verifyFirebaseAdmin(req) : null;
+    const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'rfq:quote') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
     const isOwner = Boolean(
       (fbUser && rfq.userId === fbUser.uid) || (mob && normalizeMobile(rfq.customerMobile) === mob.mobile)
@@ -124,6 +126,7 @@ export function createRfqRouter(store: ServerStore): express.Router {
     if (!parsed) return;
 
     const now = new Date().toISOString();
+    const prevStatus = rfq.status;
     rfq.messages.push({
       id: `rfqm_${crypto.randomBytes(5).toString('hex')}`,
       authorName: isAdmin ? 'کارشناس فروش کلینیکی' : rfq.customerName,
@@ -136,11 +139,27 @@ export function createRfqRouter(store: ServerStore): express.Router {
     rfq.updatedAt = now;
     store.save();
 
+    if (isAdmin && adminCheck && !('errorStatus' in adminCheck) && repos) {
+      await repos.audit.append({
+        id: `aud_${crypto.randomBytes(6).toString('hex')}`,
+        actorType: 'admin',
+        actorId: adminCheck.user.uid,
+        actorEmail: adminCheck.user.email || adminCheck.user.uid,
+        action: 'rfq.staff_message',
+        entityType: 'rfq',
+        entityId: rfq.id,
+        summary: `Staff replied on RFQ ${rfq.rfqNo}`,
+        before: { status: prevStatus },
+        after: { status: rfq.status },
+        createdAt: now,
+      });
+    }
+
     return res.json({ ok: true, rfq });
   });
 
   router.post('/api/rfq/:id/quote', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req);
+    const adminCheck = await verifyFirebaseAdmin(req, 'rfq:quote');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -152,6 +171,7 @@ export function createRfqRouter(store: ServerStore): express.Router {
     if (!parsed) return;
 
     const { quotedUnitPrice, validDays, note } = parsed;
+    const beforeState = { status: rfq.status, quotedUnitPrice: rfq.quotedUnitPrice ?? null };
 
     const now = new Date().toISOString();
     rfq.quotedUnitPrice = quotedUnitPrice;
@@ -168,6 +188,22 @@ export function createRfqRouter(store: ServerStore): express.Router {
     });
     rfq.updatedAt = now;
     store.save();
+
+    if (repos) {
+      await repos.audit.append({
+        id: `aud_${crypto.randomBytes(6).toString('hex')}`,
+        actorType: 'admin',
+        actorId: adminCheck.user.uid,
+        actorEmail: adminCheck.user.email || adminCheck.user.uid,
+        action: 'rfq.quoted',
+        entityType: 'rfq',
+        entityId: rfq.id,
+        summary: `Quoted RFQ ${rfq.rfqNo} at ${quotedUnitPrice} unitPrice`,
+        before: beforeState,
+        after: { status: rfq.status, quotedUnitPrice: rfq.quotedUnitPrice, quotedTotal: rfq.quotedTotal },
+        createdAt: now,
+      });
+    }
 
     return res.json({ ok: true, rfq });
   });
@@ -209,7 +245,7 @@ export function createRfqRouter(store: ServerStore): express.Router {
   });
 
   router.post('/api/rfq/:id/convert', async (req, res) => {
-    const adminCheck = await verifyFirebaseAdmin(req);
+    const adminCheck = await verifyFirebaseAdmin(req, 'rfq:convert');
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
@@ -225,9 +261,11 @@ export function createRfqRouter(store: ServerStore): express.Router {
       return res.status(400).json({ ok: false, message: 'ابتدا باید قیمت واحد پیشنهادی ثبت شود.' });
     }
 
+    const catalog = repos ? await repos.catalog.getSnapshot() : store.data.catalogState;
+    const beforeState = { status: rfq.status, proformaId: rfq.proformaId ?? null };
     const now = new Date().toISOString();
     const subtotal = unitPrice * rfq.quantity;
-    const taxTotal = Math.round((subtotal * store.data.catalogState.settings.taxRatePercent) / 100);
+    const taxTotal = Math.round((subtotal * catalog.settings.taxRatePercent) / 100);
     const proforma: ProformaInvoice = {
       id: `pf_rfq_${crypto.randomBytes(5).toString('hex')}`,
       proformaNo: `PF-${crypto.randomInt(10000, 100000)}`,
@@ -245,7 +283,7 @@ export function createRfqRouter(store: ServerStore): express.Router {
         {
           productId: rfq.productId,
           variantId: rfq.variantId,
-          sku: store.data.catalogState.products.find((p) => p.id === rfq.productId)?.sku || 'RFQ-SKU',
+          sku: catalog.products.find((p) => p.id === rfq.productId)?.sku || 'RFQ-SKU',
           titleFa: rfq.productTitleFa,
           variantLabelFa: rfq.variantLabelFa,
           quantity: rfq.quantity,
@@ -264,6 +302,24 @@ export function createRfqRouter(store: ServerStore): express.Router {
     rfq.status = 'converted';
     rfq.proformaId = proforma.id;
     rfq.updatedAt = now;
+    if (repos) {
+      await repos.proformas.save(proforma);
+      await repos.audit.append({
+        id: `aud_${crypto.randomBytes(6).toString('hex')}`,
+        actorType: 'admin',
+        actorId: adminCheck.user.uid,
+        actorEmail: adminCheck.user.email || adminCheck.user.uid,
+        action: 'rfq.converted_to_proforma',
+        entityType: 'rfq',
+        entityId: rfq.id,
+        summary: `Converted RFQ ${rfq.rfqNo} to proforma ${proforma.proformaNo}`,
+        before: beforeState,
+        after: { status: rfq.status, proformaId: proforma.id },
+        createdAt: now,
+      });
+    } else {
+      store.data.proformas[proforma.id] = proforma;
+    }
     store.save();
 
     return res.json({ ok: true, rfq, proforma });

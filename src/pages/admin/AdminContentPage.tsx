@@ -295,7 +295,7 @@ export function AdminContentPage() {
       categoryFa: postForm.categoryFa,
       excerptFa: postForm.excerptFa,
       bodyFa: postForm.bodyFa,
-      imageUrl: '/src/assets/images/hero_dental_clinic_1794921818923.jpg',
+      imageUrl: '/assets/images/hero_dental_clinic_1794921818923.jpg',
       authorName: 'دکتر سارا احمدی',
       authorRole: 'متخصص دندانپزشکی ترمیمی',
       reviewedBy: 'هیئت علمی دنتال‌مارکت',

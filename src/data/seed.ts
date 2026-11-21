@@ -22,11 +22,11 @@ import {
   SupportTicket,
 } from '../types/domain';
 
-export const IMG_HERO_CLINIC = '/src/assets/images/hero_dental_clinic_1794921818923.jpg';
-export const IMG_GLOVES = '/src/assets/images/product_nitrile_gloves_1794921818815.jpg';
-export const IMG_COMPOSITE = '/src/assets/images/product_composite_kit_1794921818527.jpg';
-export const IMG_ROTARY = '/src/assets/images/product_rotary_endo_1794921819567.jpg';
-export const IMG_EQUIPMENT = '/src/assets/images/product_dental_unit_equip_1794921819515.jpg';
+export const IMG_HERO_CLINIC = '/assets/images/hero_dental_clinic_1794921818923.jpg';
+export const IMG_GLOVES = '/assets/images/product_nitrile_gloves_1794921818815.jpg';
+export const IMG_COMPOSITE = '/assets/images/product_composite_kit_1794921818527.jpg';
+export const IMG_ROTARY = '/assets/images/product_rotary_endo_1794921819567.jpg';
+export const IMG_EQUIPMENT = '/assets/images/product_dental_unit_equip_1794921819515.jpg';
 
 const nowIso = new Date().toISOString();
 const plusDaysIso = (days: number) => new Date(Date.now() + days * 86400000).toISOString();

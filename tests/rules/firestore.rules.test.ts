@@ -631,4 +631,78 @@ describe('Firestore Security Rules (security_spec.md Dirty Dozen & Invariants)',
       })
     );
   });
+
+  it('[Phase 4] enforces server-only telemetry/subscriptions, locks productCosts & auditLogs from public/non-admin, and blocks role escalation', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'admins', 'warehouse_1'), { role: 'warehouse' });
+      await setDoc(doc(db, 'admins', 'accountant_1'), { role: 'accountant' });
+      await setDoc(doc(db, 'productCosts', 'prod-1'), {
+        productId: 'prod-1',
+        variantCosts: { 'var-1': 450000 },
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      });
+      await setDoc(doc(db, 'notFoundLogs', 'nf_1'), {
+        id: 'nf_1',
+        path: '/missing-item',
+        hitCount: 2,
+        lastSeenAt: '2026-01-01T00:00:00.000Z',
+      });
+    });
+
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const userADb = testEnv.authenticatedContext('user_a', { email_verified: true }).firestore();
+    const warehouseDb = testEnv.authenticatedContext('warehouse_1', { email_verified: true }).firestore();
+    const accountantDb = testEnv.authenticatedContext('accountant_1', { email_verified: true }).firestore();
+    const adminDb = testEnv.authenticatedContext('admin_1', { email_verified: true }).firestore();
+
+    // 1. notFoundLogs, newsletterSubscribers, stockNotifications are not client-creatable/updatable
+    await assertFails(
+      setDoc(doc(anonDb, 'notFoundLogs', 'nf_anon'), { id: 'nf_anon', path: '/x', hitCount: 1, lastSeenAt: 'now' })
+    );
+    await assertFails(
+      setDoc(doc(userADb, 'notFoundLogs', 'nf_user'), { id: 'nf_user', path: '/x', hitCount: 1, lastSeenAt: 'now' })
+    );
+    await assertFails(
+      updateDoc(doc(adminDb, 'notFoundLogs', 'nf_1'), { hitCount: 99 })
+    );
+    await assertFails(
+      setDoc(doc(anonDb, 'newsletterSubscribers', 'sub_anon'), {
+        id: 'sub_anon',
+        contact: 'spam@example.com',
+        type: 'email',
+        status: 'active',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      })
+    );
+    await assertFails(
+      setDoc(doc(anonDb, 'stockNotifications', 'sn_anon'), {
+        id: 'sn_anon',
+        productId: 'prod-1',
+        productTitleFa: 'کامپوزیت',
+        mobile: '09123456789',
+        status: 'pending',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      })
+    );
+
+    // 2. productCosts blocked for anon, regular users, and warehouse role; allowed for accountant/admin
+    await assertFails(getDoc(doc(anonDb, 'productCosts', 'prod-1')));
+    await assertFails(getDoc(doc(userADb, 'productCosts', 'prod-1')));
+    await assertFails(getDoc(doc(warehouseDb, 'productCosts', 'prod-1')));
+    await assertSucceeds(getDoc(doc(accountantDb, 'productCosts', 'prod-1')));
+    await assertSucceeds(getDoc(doc(adminDb, 'productCosts', 'prod-1')));
+
+    // 3. auditLogs blocked for anon and regular users
+    await assertFails(getDoc(doc(anonDb, 'auditLogs', 'log-1')));
+    await assertFails(getDoc(doc(userADb, 'auditLogs', 'log-1')));
+    await assertFails(getDocs(collection(userADb, 'auditLogs')));
+
+    // 4. orders client write denied even for verified admin (must go through Express server)
+    await assertFails(setDoc(doc(adminDb, 'orders', 'ord_client_admin'), makeOrderPayload({ id: 'ord_client_admin' })));
+    await assertFails(setDoc(doc(anonDb, 'orders', 'ord_client_anon'), makeOrderPayload({ id: 'ord_client_anon' })));
+
+    // 5. Role escalation denied: warehouse admin cannot promote self in /admins/{uid}
+    await assertFails(setDoc(doc(warehouseDb, 'admins', 'warehouse_1'), { role: 'super_admin' }));
+  });
 });
