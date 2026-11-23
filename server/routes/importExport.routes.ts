@@ -244,13 +244,14 @@ export function createImportExportRouter(store: ServerStore, repos: RepositoryBu
       return res.status(auth.errorStatus).json({ ok: false, message: auth.message });
     }
 
-    const jobs = store.data.importJobs.map((j) => toJobSummaryDto(j));
+    const jobList = await repos.engagement.listImportJobs(100);
+    const jobs = jobList.map((j) => toJobSummaryDto(j));
     return res.json({ ok: true, jobs });
   });
 
   router.post('/api/admin/import/jobs/:id/rollback', async (req, res) => {
     const jobId = String(req.params.id ?? '').trim();
-    const existing = store.data.importJobs.find((j) => j.id === jobId);
+    const existing = await repos.engagement.getImportJob(jobId);
     const auth = await authorizeTemplateAccess(req, existing?.templateKey);
     if ('errorStatus' in auth) {
       return res.status(auth.errorStatus).json({ ok: false, message: auth.message });

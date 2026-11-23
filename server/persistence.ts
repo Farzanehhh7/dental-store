@@ -269,107 +269,226 @@ function createInitialData(): PersistedServerData {
 
 export interface ServerStore {
   readonly filePath: string;
+  readonly persistenceMode: 'file' | 'memory';
   data: PersistedServerData;
   save(): void;
+  flush(): Promise<void>;
+  dispose(): Promise<void>;
+  getWriteStats(): { scheduledSaves: number; completedFlushes: number; dirty: boolean };
   pruneExpired(): void;
 }
 
-export function createServerStore(dataDir?: string): ServerStore {
+export interface CreateServerStoreOptions {
+  persistenceMode?: 'file' | 'memory';
+  writeDebounceMs?: number;
+}
+
+const activeStoresByFilePath = new Map<string, Set<ServerStore>>();
+
+export async function flushPendingStoresForDir(dataDir?: string): Promise<void> {
   const resolvedDir = path.resolve(process.cwd(), dataDir || process.env.DATA_DIR || '.data');
   const filePath = path.join(resolvedDir, 'store.json');
+  const stores = activeStoresByFilePath.get(filePath);
+  if (!stores || stores.size === 0) return;
+  await Promise.all(Array.from(stores).map((s) => s.flush()));
+}
+
+export function createServerStore(dataDir?: string, options?: CreateServerStoreOptions): ServerStore {
+  const resolvedDir = path.resolve(process.cwd(), dataDir || process.env.DATA_DIR || '.data');
+  const filePath = path.join(resolvedDir, 'store.json');
+  const envDriver = (process.env.STORAGE_DRIVER || 'file').trim().toLowerCase();
+  const persistenceMode: 'file' | 'memory' =
+    options?.persistenceMode ?? (envDriver === 'firestore' ? 'memory' : 'file');
+
+  const rawDebounce =
+    options?.writeDebounceMs ??
+    (process.env.STORE_WRITE_DEBOUNCE_MS !== undefined ? Number(process.env.STORE_WRITE_DEBOUNCE_MS) : 80);
+  const writeDebounceMs = Number.isFinite(rawDebounce) && rawDebounce >= 0 ? Math.floor(rawDebounce) : 80;
 
   let data = createInitialData();
-  try {
-    if (fs.existsSync(filePath)) {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      if (raw.trim()) {
-        const parsed = JSON.parse(raw) as Partial<PersistedServerData>;
-        const defaults = createInitialData();
-        const unifiedOrders: Record<string, Order> = { ...(parsed.orders ?? {}) };
-        if (parsed.guestOrders && typeof parsed.guestOrders === 'object') {
-          for (const legacyOrder of Object.values(parsed.guestOrders)) {
-            if (legacyOrder?.id && !unifiedOrders[legacyOrder.id]) {
-              const inferredSource = legacyOrder.source ?? (legacyOrder.userId?.startsWith('mobile:') ? 'otp' : 'guest');
-              unifiedOrders[legacyOrder.id] = { ...legacyOrder, source: inferredSource };
+  if (persistenceMode === 'file') {
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        if (raw.trim()) {
+          const parsed = JSON.parse(raw) as Partial<PersistedServerData>;
+          const defaults = createInitialData();
+          const unifiedOrders: Record<string, Order> = { ...(parsed.orders ?? {}) };
+          if (parsed.guestOrders && typeof parsed.guestOrders === 'object') {
+            for (const legacyOrder of Object.values(parsed.guestOrders)) {
+              if (legacyOrder?.id && !unifiedOrders[legacyOrder.id]) {
+                const inferredSource = legacyOrder.source ?? (legacyOrder.userId?.startsWith('mobile:') ? 'otp' : 'guest');
+                unifiedOrders[legacyOrder.id] = { ...legacyOrder, source: inferredSource };
+              }
             }
           }
-        }
-        data = {
-          catalogState: {
-            ...defaults.catalogState,
-            ...(parsed.catalogState ?? {}),
-            products: (Array.isArray(parsed.catalogState?.products)
-              ? parsed.catalogState.products
-              : defaults.catalogState.products
-            ).map((p) => ({
-              ...p,
-              imageUrl: normalizeCatalogImageUrl(p.imageUrl),
-              galleryUrls: Array.isArray(p.galleryUrls) ? p.galleryUrls.map(normalizeCatalogImageUrl) : [],
-            })),
-            bundles: (Array.isArray(parsed.catalogState?.bundles)
-              ? parsed.catalogState.bundles
-              : defaults.catalogState.bundles
-            ).map((b) => ({
-              ...b,
-              imageUrl: normalizeCatalogImageUrl(b.imageUrl),
-            })),
-            blogPosts: (Array.isArray(parsed.catalogState?.blogPosts)
-              ? parsed.catalogState.blogPosts
-              : defaults.catalogState.blogPosts
-            ).map((bp) => ({
-              ...bp,
-              imageUrl: normalizeCatalogImageUrl(bp.imageUrl),
-            })),
-            pages: Array.isArray(parsed.catalogState?.pages) ? parsed.catalogState.pages : defaults.catalogState.pages,
-            settings: parsed.catalogState?.settings ?? defaults.catalogState.settings,
-            coupons: Array.isArray(parsed.catalogState?.coupons) ? parsed.catalogState.coupons : defaults.catalogState.coupons,
-            contractPrices: Array.isArray(parsed.catalogState?.contractPrices)
-              ? parsed.catalogState.contractPrices
-              : defaults.catalogState.contractPrices,
-          },
-          warehouses:
-            Array.isArray(parsed.warehouses) && parsed.warehouses.length > 0 ? parsed.warehouses : defaults.warehouses,
-          stockLevels: parsed.stockLevels && typeof parsed.stockLevels === 'object' ? parsed.stockLevels : {},
-          stockBatches: parsed.stockBatches && typeof parsed.stockBatches === 'object' ? parsed.stockBatches : {},
-          stockMovements: Array.isArray(parsed.stockMovements) ? parsed.stockMovements : defaults.stockMovements,
-          returns: parsed.returns && typeof parsed.returns === 'object' ? parsed.returns : defaults.returns,
-          otpChallenges: parsed.otpChallenges ?? {},
-          otpLockouts: parsed.otpLockouts ?? {},
-          otpPhoneSendHistory: parsed.otpPhoneSendHistory ?? {},
-          otpVerifiedTokens: parsed.otpVerifiedTokens ?? {},
-          mobileSessions: parsed.mobileSessions ?? {},
-          paymentSessions: parsed.paymentSessions ?? {},
-          paymentLedger: Array.isArray(parsed.paymentLedger) ? parsed.paymentLedger : defaults.paymentLedger,
-          verifiedOrderStatuses: parsed.verifiedOrderStatuses ?? {},
-          orders: unifiedOrders,
-          proformas: parsed.proformas ?? {},
-          userGroups: parsed.userGroups ?? {},
-          paymentWebhookEvents: parsed.paymentWebhookEvents ?? {},
-          auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
-          notFoundLogs: parsed.notFoundLogs ?? {},
-          newsletterSubscribers: parsed.newsletterSubscribers ?? {},
-          stockNotifications: parsed.stockNotifications ?? {},
-          uploadedFiles: parsed.uploadedFiles ?? {},
-          ...(parsed.guestOrders ? { guestOrders: parsed.guestOrders } : {}),
-          rfqs: parsed.rfqs ?? {},
-          importJobs: Array.isArray(parsed.importJobs) ? parsed.importJobs : [],
-        };
+          data = {
+            catalogState: {
+              ...defaults.catalogState,
+              ...(parsed.catalogState ?? {}),
+              products: (Array.isArray(parsed.catalogState?.products)
+                ? parsed.catalogState.products
+                : defaults.catalogState.products
+              ).map((p) => ({
+                ...p,
+                imageUrl: normalizeCatalogImageUrl(p.imageUrl),
+                galleryUrls: Array.isArray(p.galleryUrls) ? p.galleryUrls.map(normalizeCatalogImageUrl) : [],
+              })),
+              bundles: (Array.isArray(parsed.catalogState?.bundles)
+                ? parsed.catalogState.bundles
+                : defaults.catalogState.bundles
+              ).map((b) => ({
+                ...b,
+                imageUrl: normalizeCatalogImageUrl(b.imageUrl),
+              })),
+              blogPosts: (Array.isArray(parsed.catalogState?.blogPosts)
+                ? parsed.catalogState.blogPosts
+                : defaults.catalogState.blogPosts
+              ).map((bp) => ({
+                ...bp,
+                imageUrl: normalizeCatalogImageUrl(bp.imageUrl),
+              })),
+              pages: Array.isArray(parsed.catalogState?.pages) ? parsed.catalogState.pages : defaults.catalogState.pages,
+              settings: parsed.catalogState?.settings ?? defaults.catalogState.settings,
+              coupons: Array.isArray(parsed.catalogState?.coupons) ? parsed.catalogState.coupons : defaults.catalogState.coupons,
+              contractPrices: Array.isArray(parsed.catalogState?.contractPrices)
+                ? parsed.catalogState.contractPrices
+                : defaults.catalogState.contractPrices,
+            },
+            warehouses:
+              Array.isArray(parsed.warehouses) && parsed.warehouses.length > 0 ? parsed.warehouses : defaults.warehouses,
+            stockLevels: parsed.stockLevels && typeof parsed.stockLevels === 'object' ? parsed.stockLevels : {},
+            stockBatches: parsed.stockBatches && typeof parsed.stockBatches === 'object' ? parsed.stockBatches : {},
+            stockMovements: Array.isArray(parsed.stockMovements) ? parsed.stockMovements : defaults.stockMovements,
+            returns: parsed.returns && typeof parsed.returns === 'object' ? parsed.returns : defaults.returns,
+            otpChallenges: parsed.otpChallenges ?? {},
+            otpLockouts: parsed.otpLockouts ?? {},
+            otpPhoneSendHistory: parsed.otpPhoneSendHistory ?? {},
+            otpVerifiedTokens: parsed.otpVerifiedTokens ?? {},
+            mobileSessions: parsed.mobileSessions ?? {},
+            paymentSessions: parsed.paymentSessions ?? {},
+            paymentLedger: Array.isArray(parsed.paymentLedger) ? parsed.paymentLedger : defaults.paymentLedger,
+            verifiedOrderStatuses: parsed.verifiedOrderStatuses ?? {},
+            orders: unifiedOrders,
+            proformas: parsed.proformas ?? {},
+            userGroups: parsed.userGroups ?? {},
+            paymentWebhookEvents: parsed.paymentWebhookEvents ?? {},
+            auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
+            notFoundLogs: parsed.notFoundLogs ?? {},
+            newsletterSubscribers: parsed.newsletterSubscribers ?? {},
+            stockNotifications: parsed.stockNotifications ?? {},
+            uploadedFiles: parsed.uploadedFiles ?? {},
+            ...(parsed.guestOrders ? { guestOrders: parsed.guestOrders } : {}),
+            rfqs: parsed.rfqs ?? {},
+            importJobs: Array.isArray(parsed.importJobs) ? parsed.importJobs : [],
+          };
 
-        migrateStockToWarehousesData(data, { dryRun: false });
+          migrateStockToWarehousesData(data, { dryRun: false });
+        }
+      }
+    } catch (err) {
+      console.warn('Warning: failed to load persisted server store, using fresh defaults:', err);
+    }
+  }
+
+  let dirty = false;
+  let disposed = false;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let writeChain: Promise<void> = Promise.resolve();
+  let scheduledSaves = 0;
+  let completedFlushes = 0;
+  let tmpSeq = 0;
+
+  const performAtomicWrite = async (): Promise<void> => {
+    if (persistenceMode !== 'file') {
+      dirty = false;
+      return;
+    }
+    // Loop ensures any mutations made while an async write is in flight get written in the next batch
+    while (dirty) {
+      dirty = false;
+      const serialized = JSON.stringify(store.data, null, 2);
+      const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${++tmpSeq}.tmp`;
+      await fs.promises.mkdir(resolvedDir, { recursive: true });
+      try {
+        await fs.promises.writeFile(tmpPath, serialized, 'utf8');
+        await fs.promises.rename(tmpPath, filePath);
+        completedFlushes += 1;
+      } catch (err) {
+        try {
+          await fs.promises.unlink(tmpPath);
+        } catch {
+          // Ignore temp file cleanup error
+        }
+        throw err;
       }
     }
-  } catch (err) {
-    console.warn('Warning: failed to load persisted server store, using fresh defaults:', err);
-  }
+  };
+
+  const enqueueWrite = (): Promise<void> => {
+    writeChain = writeChain.then(performAtomicWrite, performAtomicWrite);
+    return writeChain;
+  };
 
   const store: ServerStore = {
     filePath,
+    persistenceMode,
     data,
     save() {
-      fs.mkdirSync(resolvedDir, { recursive: true });
-      const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tmpPath, JSON.stringify(store.data, null, 2), 'utf8');
-      fs.renameSync(tmpPath, filePath);
+      if (persistenceMode !== 'file' || disposed) return;
+      dirty = true;
+      scheduledSaves += 1;
+      if (debounceTimer) return;
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        if (!dirty || disposed) return;
+        enqueueWrite().catch((err) => {
+          console.warn('[persistence] async debounced store flush failed:', err);
+        });
+      }, writeDebounceMs);
+      debounceTimer.unref();
+    },
+    async flush() {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      if (persistenceMode !== 'file') {
+        dirty = false;
+        return;
+      }
+      if (!dirty) {
+        await writeChain.catch(() => {});
+        return;
+      }
+      await enqueueWrite();
+    },
+    async dispose() {
+      disposed = true;
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      try {
+        if (persistenceMode === 'file' && dirty) {
+          await enqueueWrite();
+        } else {
+          await writeChain.catch(() => {});
+        }
+      } finally {
+        const set = activeStoresByFilePath.get(filePath);
+        if (set) {
+          set.delete(store);
+          if (set.size === 0) activeStoresByFilePath.delete(filePath);
+        }
+      }
+    },
+    getWriteStats() {
+      return {
+        scheduledSaves,
+        completedFlushes,
+        dirty,
+      };
     },
     pruneExpired() {
       const now = Date.now();
@@ -411,5 +530,15 @@ export function createServerStore(dataDir?: string): ServerStore {
     },
   };
 
+  if (persistenceMode === 'file') {
+    let set = activeStoresByFilePath.get(filePath);
+    if (!set) {
+      set = new Set<ServerStore>();
+      activeStoresByFilePath.set(filePath, set);
+    }
+    set.add(store);
+  }
+
   return store;
 }
+

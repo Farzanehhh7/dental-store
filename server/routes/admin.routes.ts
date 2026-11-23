@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { Order, OrderStatus } from '../../src/types/domain';
 import { verifyFirebaseAdmin } from '../lib/adminAuth';
 import type { ServerCatalogSnapshot, ServerStore } from '../persistence';
-import type { RepositoryBundle } from '../repositories';
+import type { CatalogSnapshotPatch, RepositoryBundle } from '../repositories';
+import { createFileRepositories } from '../repositories/fileRepositories';
 import type { OrderService } from '../services/orderService';
 import type { PaymentService } from '../services/paymentService';
 import {
@@ -32,6 +33,7 @@ export function createAdminRouter(
 ): express.Router {
   const router = express.Router();
   const jsonParser2mb = express.json({ limit: '2mb' });
+  const activeRepos = repos ?? createFileRepositories(store);
 
   // --- Unified Admin Orders List (Pagination, Status, Source, Search, Jalali Date Range) ---
   router.get('/api/admin/orders', async (req, res) => {
@@ -227,9 +229,7 @@ export function createAdminRouter(
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
-    const subscribers = Object.values(store.data.newsletterSubscribers).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    const subscribers = await activeRepos.engagement.listNewsletterSubscribers();
     return res.json({ ok: true, subscribers });
   });
 
@@ -238,9 +238,7 @@ export function createAdminRouter(
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
-    const notifications = Object.values(store.data.stockNotifications).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    const notifications = await activeRepos.engagement.listStockNotifications();
     return res.json({ ok: true, notifications });
   });
 
@@ -250,29 +248,27 @@ export function createAdminRouter(
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
     const id = String(req.params.id || '').trim();
-    const record = store.data.stockNotifications[id];
+    const record = await activeRepos.engagement.getStockNotification(id);
     if (!record) {
       return res.status(404).json({ ok: false, message: 'درخواست اطلاع‌رسانی موجودی یافت نشد.' });
     }
     const prevStatus = record.status;
-    record.status = 'notified';
-    store.save();
-    if (repos) {
-      await repos.audit.append({
-        id: `aud_${crypto.randomBytes(6).toString('hex')}`,
-        actorType: 'admin',
-        actorId: adminCheck.user.uid,
-        actorEmail: adminCheck.user.email || adminCheck.user.uid,
-        action: 'stock_notification.notified',
-        entityType: 'stock_notification',
-        entityId: id,
-        summary: `Marked stock notification ${id} notified`,
-        before: { status: prevStatus },
-        after: { status: 'notified' },
-        createdAt: new Date().toISOString(),
-      });
-    }
-    return res.json({ ok: true, notification: record });
+    const updated = { ...record, status: 'notified' as const };
+    await activeRepos.engagement.saveStockNotification(updated);
+    await activeRepos.audit.append({
+      id: `aud_${crypto.randomBytes(6).toString('hex')}`,
+      actorType: 'admin',
+      actorId: adminCheck.user.uid,
+      actorEmail: adminCheck.user.email || adminCheck.user.uid,
+      action: 'stock_notification.notified',
+      entityType: 'stock_notification',
+      entityId: id,
+      summary: `Marked stock notification ${id} notified`,
+      before: { status: prevStatus },
+      after: { status: 'notified' },
+      createdAt: new Date().toISOString(),
+    });
+    return res.json({ ok: true, notification: updated });
   });
 
   // --- Authenticated Admin Catalog / SEO / Pricing Sync Hook (Strict Zod + 2MB Cap) ---
@@ -288,81 +284,81 @@ export function createAdminRouter(
     const { categories, brands, products, campaigns, bundles, agents, blogPosts, pages, redirects, coupons, contractPrices, settings } =
       body;
     const updatedSections: string[] = [];
+    const patch: CatalogSnapshotPatch = {};
 
     if (Array.isArray(categories) && categories.length > 0) {
-      store.data.catalogState.categories = categories as unknown as ServerCatalogSnapshot['categories'];
+      patch.categories = categories as unknown as ServerCatalogSnapshot['categories'];
       updatedSections.push('categories');
     }
     if (Array.isArray(brands) && brands.length > 0) {
-      store.data.catalogState.brands = brands as unknown as ServerCatalogSnapshot['brands'];
+      patch.brands = brands as unknown as ServerCatalogSnapshot['brands'];
       updatedSections.push('brands');
     }
     if (Array.isArray(products) && products.length > 0) {
-      store.data.catalogState.products = products as unknown as ServerCatalogSnapshot['products'];
+      patch.products = products as unknown as ServerCatalogSnapshot['products'];
       updatedSections.push('products');
     }
     if (Array.isArray(campaigns)) {
-      store.data.catalogState.campaigns = campaigns as unknown as ServerCatalogSnapshot['campaigns'];
+      patch.campaigns = campaigns as unknown as ServerCatalogSnapshot['campaigns'];
       updatedSections.push('campaigns');
     }
     if (Array.isArray(bundles)) {
-      store.data.catalogState.bundles = bundles as unknown as ServerCatalogSnapshot['bundles'];
+      patch.bundles = bundles as unknown as ServerCatalogSnapshot['bundles'];
       updatedSections.push('bundles');
     }
     if (Array.isArray(agents)) {
-      store.data.catalogState.agents = agents as unknown as ServerCatalogSnapshot['agents'];
+      patch.agents = agents as unknown as ServerCatalogSnapshot['agents'];
       updatedSections.push('agents');
     }
     if (Array.isArray(blogPosts)) {
-      store.data.catalogState.blogPosts = blogPosts as unknown as ServerCatalogSnapshot['blogPosts'];
+      patch.blogPosts = blogPosts as unknown as ServerCatalogSnapshot['blogPosts'];
       updatedSections.push('blogPosts');
     }
     if (Array.isArray(pages)) {
-      store.data.catalogState.pages = pages as unknown as ServerCatalogSnapshot['pages'];
+      patch.pages = pages as unknown as ServerCatalogSnapshot['pages'];
       updatedSections.push('pages');
     }
     if (Array.isArray(redirects)) {
-      store.data.catalogState.redirects = redirects as unknown as ServerCatalogSnapshot['redirects'];
+      patch.redirects = redirects as unknown as ServerCatalogSnapshot['redirects'];
       updatedSections.push('redirects');
     }
     if (Array.isArray(coupons)) {
-      store.data.catalogState.coupons = coupons as unknown as ServerCatalogSnapshot['coupons'];
+      patch.coupons = coupons as unknown as ServerCatalogSnapshot['coupons'];
       updatedSections.push('coupons');
     }
     if (Array.isArray(contractPrices)) {
-      store.data.catalogState.contractPrices = contractPrices as unknown as ServerCatalogSnapshot['contractPrices'];
+      patch.contractPrices = contractPrices as unknown as ServerCatalogSnapshot['contractPrices'];
       updatedSections.push('contractPrices');
     }
     if (settings && typeof settings === 'object' && typeof settings.id === 'string' && settings.id) {
-      store.data.catalogState.settings = settings as unknown as ServerCatalogSnapshot['settings'];
+      patch.settings = settings as unknown as ServerCatalogSnapshot['settings'];
       updatedSections.push('settings');
     }
 
     const nowIso = new Date().toISOString();
-    store.data.catalogState.updatedAt = nowIso;
-    store.save();
+    patch.updatedAt = nowIso;
+    await activeRepos.catalog.saveCatalogCollections(patch);
+    const snapshotAfter = await activeRepos.catalog.getSnapshot();
 
-    if (repos) {
-      await repos.audit.append({
-        id: `aud_${crypto.randomBytes(6).toString('hex')}`,
-        actorType: 'admin',
-        actorId: adminCheck.user.uid,
-        actorEmail: adminCheck.user.email || adminCheck.user.uid,
-        action: 'catalog.seo_sync',
-        entityType: 'catalog',
-        entityId: 'site_catalog',
-        summary: `SEO/Catalog sync by ${adminCheck.role} (${updatedSections.join(', ') || 'noop'})`,
-        after: { updatedSections },
-        createdAt: nowIso,
-      });
-    }
+    await activeRepos.audit.append({
+      id: `aud_${crypto.randomBytes(6).toString('hex')}`,
+      actorType: 'admin',
+      actorId: adminCheck.user.uid,
+      actorEmail: adminCheck.user.email || adminCheck.user.uid,
+      action: 'catalog.seo_sync',
+      entityType: 'catalog',
+      entityId: 'site_catalog',
+      summary: `SEO/Catalog sync by ${adminCheck.role} (${updatedSections.join(', ') || 'noop'})`,
+      after: { updatedSections },
+      createdAt: nowIso,
+    });
 
     return res.json({
       ok: true,
       syncedBy: adminCheck.user.uid,
       role: adminCheck.role,
-      products: store.data.catalogState.products.length,
-      redirects: store.data.catalogState.redirects.length,
+      products: snapshotAfter.products.length,
+      redirects: snapshotAfter.redirects.length,
     });
   });
 

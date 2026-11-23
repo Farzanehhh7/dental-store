@@ -59,12 +59,24 @@ describe('Phase 7 — Real SPA SEO, SSR Metadata, Sitemaps & Asset Delivery', ()
       expect(html).toContain(`<link rel="canonical" href="http://dentalmarket.example/product/${product.slug}" />`);
       expect(html).toContain('<meta property="og:type" content="product" />');
       expect(html).toContain('"@type":"Product"');
+      expect(html).toContain('"offers":{');
+      expect(html).toContain('"availability":"https://schema.org/');
+      expect(html).toContain('"brand":{"@type":"Brand"');
       expect(html).toContain('"@type":"BreadcrumbList"');
       expect(html).toContain(`"sku":"${product.sku}"`);
       expect(html).toContain('aria-label="breadcrumb"');
       expect(html).toContain(`<h1>${product.titleFa}</h1>`);
       expect(html).toContain(product.sku);
       expect(html).toContain('/assets/');
+
+      const utmProductRes = await request(app)
+        .get(`/product/${product.slug}?utm_source=instagram&fbclid=abc`)
+        .set('Host', 'dentalmarket.example');
+      expect(utmProductRes.status).toBe(200);
+      expect(utmProductRes.text).toContain(
+        `<link rel="canonical" href="http://dentalmarket.example/product/${product.slug}" />`
+      );
+      expect(utmProductRes.text).not.toContain('utm_source=instagram');
     });
 
     it('renders category page and enforces noindex, follow when filter query params are applied', async () => {
@@ -95,6 +107,7 @@ describe('Phase 7 — Real SPA SEO, SSR Metadata, Sitemaps & Asset Delivery', ()
       const pageRes = await request(app).get('/page/about');
       expect(pageRes.status).toBe(200);
       expect(pageRes.text).toContain('"@type":"AboutPage"');
+      expect(pageRes.text).toContain('"@type":"BreadcrumbList"');
       expect(pageRes.text).toContain('<h1>درباره دنتال‌مارکت</h1>');
     });
 

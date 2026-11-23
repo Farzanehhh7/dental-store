@@ -154,19 +154,36 @@ export function parseCookies(req: express.Request): Record<string, string> {
   return result;
 }
 
-export function createMobileSession(store: ServerStore, mobile: string, displayName?: string) {
+import type { AuthSessionRepository, RepositoryBundle } from './repositories/interfaces';
+
+type AuthSessionTarget = ServerStore | AuthSessionRepository | RepositoryBundle;
+
+function resolveAuthRepoTarget(target: AuthSessionTarget): AuthSessionRepository | null {
+  if ('authSessions' in target) return target.authSessions;
+  if ('getMobileSession' in target) return target;
+  return null;
+}
+
+export async function createMobileSession(target: AuthSessionTarget, mobile: string, displayName?: string) {
   const token = `dm_mob_${crypto.randomBytes(24).toString('hex')}`;
   const tokenHash = hashToken(token);
   const now = Date.now();
   const expiresAt = now + 7 * 24 * 60 * 60 * 1000;
-  store.data.mobileSessions[tokenHash] = {
+  const record = {
     tokenHash,
     mobile,
     displayName,
     createdAt: new Date(now).toISOString(),
     expiresAt,
   };
-  store.save();
+  const authRepo = resolveAuthRepoTarget(target);
+  if (authRepo) {
+    await authRepo.saveMobileSession(record);
+  } else {
+    const store = target as ServerStore;
+    store.data.mobileSessions[tokenHash] = record;
+    store.save();
+  }
   return {
     token,
     session: {
@@ -193,10 +210,27 @@ export function extractMobileTokenFromRequest(req: express.Request): string | nu
   return null;
 }
 
-export function resolveMobileSession(store: ServerStore, req: express.Request) {
+export async function resolveMobileSession(target: AuthSessionTarget, req: express.Request) {
   const rawToken = extractMobileTokenFromRequest(req);
   if (!rawToken) return null;
   const tokenHash = hashToken(rawToken);
+  const authRepo = resolveAuthRepoTarget(target);
+  if (authRepo) {
+    const record = await authRepo.getMobileSession(tokenHash);
+    if (!record) return null;
+    if (Date.now() > record.expiresAt) {
+      await authRepo.deleteMobileSession(tokenHash);
+      return null;
+    }
+    return {
+      token: rawToken,
+      tokenHash,
+      mobile: record.mobile,
+      displayName: record.displayName,
+      expiresAt: new Date(record.expiresAt).toISOString(),
+    };
+  }
+  const store = target as ServerStore;
   const record = store.data.mobileSessions[tokenHash];
   if (!record) return null;
   if (Date.now() > record.expiresAt) {

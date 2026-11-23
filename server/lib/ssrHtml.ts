@@ -489,7 +489,9 @@ function resolveRouteSeo(input: {
     const catParam = cleanPath.startsWith('/blog/category/')
       ? decodeURIComponent(cleanPath.slice('/blog/category/'.length))
       : '';
-    const filtered = catParam ? published.filter((p) => p.categoryFa === catParam) : published;
+    const filtered = catParam
+      ? published.filter((p) => p.categoryFa === catParam || p.categorySlug === catParam)
+      : published;
     return {
       statusCode: 200,
       title: `مجله تخصصی دندانپزشکی${catParam ? ` — ${catParam}` : ''} | ${settings.storeNameFa}`,

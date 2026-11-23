@@ -5,11 +5,13 @@ import express from 'express';
 import { SEED_PAGES } from '../../src/data/expandedCatalog';
 import { normalizeAssetUrl } from '../../src/lib/media';
 import { normalizeCanonicalPath } from '../../src/lib/seo';
+import { validateServerEnv } from '../config/env';
 import { verifyFirebaseAdmin } from '../lib/adminAuth';
 import { escapeXml, getOrigin } from '../lib/http';
 import { render410HtmlResponse } from '../lib/ssrHtml';
 import type { ServerStore } from '../persistence';
 import type { RepositoryBundle } from '../repositories';
+import { createFileRepositories } from '../repositories/fileRepositories';
 import {
   newsletterSubscribeBodySchema,
   parseRequestBody,
@@ -80,27 +82,58 @@ function normalizeTelemetryPath(rawPath: string): string | null {
   return collapsed.slice(0, 240);
 }
 
+export interface RedirectsMiddlewareWithLifecycle extends express.RequestHandler {
+  flushHits(): Promise<void>;
+  stopFlushTimer(): void;
+  getPendingHitCount(): number;
+}
+
 export function createRedirectsMiddleware(
   store: ServerStore,
   repos?: RepositoryBundle,
   getTemplateHtml: () => string = loadDefaultTemplateHtml
-): express.RequestHandler {
-  // Non-blocking debounced persistence for redirect hit counters (Claim 14)
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  const scheduleHitFlush = () => {
-    if (flushTimer) return;
-    flushTimer = setTimeout(() => {
-      flushTimer = null;
-      try {
-        store.save();
-      } catch (err) {
-        console.warn('[redirects] deferred hitCount flush failed:', err);
+): RedirectsMiddlewareWithLifecycle {
+  const env = validateServerEnv(process.env);
+  const pendingHitDeltas = new Map<string, number>();
+
+  const flushHits = async (): Promise<void> => {
+    if (pendingHitDeltas.size === 0) return;
+    const deltasObj: Record<string, number> = {};
+    for (const [id, delta] of pendingHitDeltas.entries()) {
+      if (delta > 0) deltasObj[id] = delta;
+    }
+    pendingHitDeltas.clear();
+    if (Object.keys(deltasObj).length === 0) return;
+
+    try {
+      if (repos) {
+        await repos.catalog.incrementRedirectHits(deltasObj);
+      } else {
+        let updated = false;
+        for (const [id, delta] of Object.entries(deltasObj)) {
+          const target = store.data.catalogState.redirects.find((r) => r.id === id);
+          if (target) {
+            target.hitCount = (target.hitCount || 0) + delta;
+            updated = true;
+          }
+        }
+        if (updated) store.save();
       }
-    }, 1000);
-    flushTimer.unref();
+    } catch (err) {
+      // Restore deltas on transient failure so hits are not lost
+      for (const [id, delta] of Object.entries(deltasObj)) {
+        pendingHitDeltas.set(id, (pendingHitDeltas.get(id) ?? 0) + delta);
+      }
+      console.warn('[redirects] periodic hitCount flush failed:', err);
+    }
   };
 
-  return async (req, res, next) => {
+  const flushInterval = setInterval(() => {
+    flushHits().catch(() => {});
+  }, env.COUNTER_FLUSH_INTERVAL_MS);
+  flushInterval.unref();
+
+  const handler: express.RequestHandler = async (req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return next();
     }
@@ -130,8 +163,7 @@ export function createRedirectsMiddleware(
       snapshot.redirects.find((r) => r.fromPath === safeNormalizedPath);
 
     if (match) {
-      match.hitCount = (match.hitCount || 0) + 1;
-      scheduleHitFlush();
+      pendingHitDeltas.set(match.id, (pendingHitDeltas.get(match.id) ?? 0) + 1);
       if (match.statusCode === 410) {
         const html = render410HtmlResponse({
           templateHtml: getTemplateHtml(),
@@ -153,6 +185,16 @@ export function createRedirectsMiddleware(
 
     return next();
   };
+
+  return Object.assign(handler, {
+    flushHits,
+    stopFlushTimer: () => clearInterval(flushInterval),
+    getPendingHitCount: () => {
+      let sum = 0;
+      for (const v of pendingHitDeltas.values()) sum += v;
+      return sum;
+    },
+  });
 }
 
 function buildProductsSitemapXml(
@@ -186,9 +228,23 @@ function buildProductsSitemapXml(
   ].join('\n');
 }
 
-export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): express.Router {
+export interface SeoRouterWithLifecycle extends express.Router {
+  flushCounters(): Promise<void>;
+  stopTimers(): void;
+}
+
+export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): SeoRouterWithLifecycle {
   const router = express.Router();
-  const getCatalog = () => (repos ? repos.catalog.getSnapshot() : Promise.resolve(store.data.catalogState));
+  const activeRepos = repos ?? createFileRepositories(store);
+  const env = validateServerEnv(process.env);
+  const getCatalog = () => activeRepos.catalog.getSnapshot();
+
+  const telemetryFlushInterval = setInterval(() => {
+    activeRepos.engagement.flush404Hits().catch((err) => {
+      console.warn('[telemetry-404] periodic flush failed:', err);
+    });
+  }, env.COUNTER_FLUSH_INTERVAL_MS);
+  telemetryFlushInterval.unref();
 
   // --- Dynamic robots.txt (§17.11) ---
   router.get('/robots.txt', (req, res) => {
@@ -400,7 +456,7 @@ export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): e
   });
 
   // --- Server-Side 404 Telemetry Aggregation (Replaces Public Firestore Write) ---
-  router.post('/api/telemetry/404', (req, res) => {
+  router.post('/api/telemetry/404', async (req, res) => {
     const parsed = parseRequestBody(telemetry404BodySchema, req, res);
     if (!parsed) return;
 
@@ -411,17 +467,8 @@ export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): e
 
     const key = crypto.createHash('sha256').update(normalizedPath).digest('hex').slice(0, 16);
     const id = `nf_${key}`;
-    const existing = store.data.notFoundLogs[id];
     const nowIso = new Date().toISOString();
-
-    const nextLog = {
-      id,
-      path: normalizedPath,
-      hitCount: (existing?.hitCount ?? 0) + 1,
-      lastSeenAt: nowIso,
-    };
-    store.data.notFoundLogs[id] = nextLog;
-    store.save();
+    const nextLog = await activeRepos.engagement.record404Hit(id, normalizedPath, nowIso);
 
     return res.json({ ok: true, log: nextLog });
   });
@@ -431,14 +478,12 @@ export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): e
     if ('errorStatus' in adminCheck) {
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
-    const logs = Object.values(store.data.notFoundLogs).sort(
-      (a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime()
-    );
+    const logs = await activeRepos.engagement.list404Logs();
     return res.json({ ok: true, logs });
   });
 
   // --- Server-Side Newsletter Subscription ---
-  router.post('/api/newsletter/subscribe', (req, res) => {
+  router.post('/api/newsletter/subscribe', async (req, res) => {
     const parsed = parseRequestBody(newsletterSubscribeBodySchema, req, res);
     if (!parsed) return;
 
@@ -451,9 +496,7 @@ export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): e
       return res.status(400).json({ ok: false, message: 'شماره موبایل یا ایمیل معتبر وارد کنید.' });
     }
 
-    const existing = Object.values(store.data.newsletterSubscribers).find(
-      (s) => s.contact.toLowerCase() === clean
-    );
+    const existing = await activeRepos.engagement.findNewsletterByContact(clean);
     if (existing) {
       return res.json({ ok: true, subscriber: existing, existing: true });
     }
@@ -466,13 +509,12 @@ export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): e
       status: 'active' as const,
       createdAt: new Date().toISOString(),
     };
-    store.data.newsletterSubscribers[id] = item;
-    store.save();
+    await activeRepos.engagement.saveNewsletterSubscriber(item);
     return res.status(201).json({ ok: true, subscriber: item });
   });
 
   // --- Server-Side Stock Back-In-Stock Notification ---
-  router.post('/api/stock-notifications', (req, res) => {
+  router.post('/api/stock-notifications', async (req, res) => {
     const parsed = parseRequestBody(stockNotificationBodySchema, req, res);
     if (!parsed) return;
 
@@ -491,10 +533,12 @@ export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): e
       status: 'pending' as const,
       createdAt: new Date().toISOString(),
     };
-    store.data.stockNotifications[id] = item;
-    store.save();
+    await activeRepos.engagement.saveStockNotification(item);
     return res.status(201).json({ ok: true, notification: item });
   });
 
-  return router;
+  return Object.assign(router, {
+    flushCounters: () => activeRepos.engagement.flush404Hits(),
+    stopTimers: () => clearInterval(telemetryFlushInterval),
+  });
 }

@@ -51,6 +51,10 @@ export const serverEnvSchema = z.object({
   OTP_LOCKOUT_SECONDS: optionalBoundedInt(60, 86_400, 900),
   OTP_PHONE_WINDOW_MAX: optionalBoundedInt(1, 50, 5),
   UPLOAD_MAX_BYTES: optionalBoundedInt(1024, 20 * 1024 * 1024, 5 * 1024 * 1024),
+  STORE_WRITE_DEBOUNCE_MS: optionalBoundedInt(0, 60_000, 80),
+  COUNTER_FLUSH_INTERVAL_MS: optionalBoundedInt(100, 300_000, 2_000),
+  CATALOG_CACHE_MAX_ENTRIES: optionalBoundedInt(10, 5_000, 250),
+  CATALOG_CACHE_TTL_MS: optionalBoundedInt(0, 3_600_000, 60_000),
 });
 
 export type ValidatedServerEnv = z.infer<typeof serverEnvSchema>;

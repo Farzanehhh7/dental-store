@@ -5,6 +5,7 @@ import ProductCard from '../components/store/ProductCard';
 import { useStore } from '../context/StoreContext';
 import { trackEcommerceEvent } from '../lib/analytics';
 import { toPersianDigits } from '../lib/jalali';
+import { buildResponsiveImageProps } from '../lib/media';
 import { scoreSearchMatch } from '../lib/persian-search';
 import { getProductPriceSummary } from '../lib/pricing';
 import { applySeoHead } from '../lib/seo';
@@ -22,13 +23,22 @@ export function SearchPage() {
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
   const verticalParam = (params.get('vertical') ?? '') as '' | VerticalType;
+  const brandParam = params.get('brand') ?? '';
+  const inStockParam = params.get('inStock') === '1' || params.get('inStock') === 'true';
   const discountParam = params.get('discount') === '1' || params.get('discount') === 'true';
   const pageParam = Math.max(1, Number(params.get('page') || 1) || 1);
 
   const [input, setInput] = useState(q);
   const { products, brands, categories, campaigns, currency, contractPrices, authUser, customerGroup, settings, submitStockRequest } = useStore();
   const [reqForm, setReqForm] = useState({ contactName: '', mobile: '', titleText: q, brandText: '', description: '' });
-  const [serverData, setServerData] = useState<{ items: Product[]; total: number; totalPages: number } | null>(null);
+  const [serverData, setServerData] = useState<{
+    items: Product[];
+    total: number;
+    totalPages: number;
+    facets?: {
+      brands?: Array<{ id: string; slug: string; nameFa: string; count: number }>;
+    };
+  } | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -50,6 +60,8 @@ export function SearchPage() {
     const qs = new URLSearchParams({
       ...(q.trim() ? { q: q.trim() } : {}),
       ...(verticalParam ? { vertical: verticalParam } : {}),
+      ...(brandParam ? { brand: brandParam } : {}),
+      ...(inStockParam ? { inStock: '1' } : {}),
       ...(discountParam ? { discount: '1', sort: 'discount' } : {}),
       group: customerGroup,
       page: String(pageParam),
@@ -63,6 +75,7 @@ export function SearchPage() {
             items: data.items as Product[],
             total: Number(data.total ?? data.items.length),
             totalPages: Number(data.totalPages ?? 1),
+            facets: data.facets,
           });
         }
       })
@@ -71,13 +84,17 @@ export function SearchPage() {
       })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [q, verticalParam, discountParam, pageParam, customerGroup]);
+  }, [q, verticalParam, brandParam, inStockParam, discountParam, pageParam, customerGroup]);
 
   const localResults = useMemo(() => {
     const filtered = products.filter((p) => {
       if (p.status !== 'active') return false;
       if (verticalParam && p.vertical !== verticalParam) return false;
-      if (discountParam) {
+      if (brandParam) {
+        const br = brands.find((b) => b.id === brandParam || b.slug === brandParam);
+        if (p.brandId !== (br?.id ?? brandParam)) return false;
+      }
+      if (inStockParam || discountParam) {
         const summary = getProductPriceSummary(p, {
           customerGroup,
           campaigns,
@@ -86,7 +103,8 @@ export function SearchPage() {
           contractPrices,
           userId: authUser?.uid,
         });
-        if (summary.discountPercent <= 0) return false;
+        if (inStockParam && !summary.inStock) return false;
+        if (discountParam && summary.discountPercent <= 0) return false;
       }
       return true;
     });
@@ -104,16 +122,26 @@ export function SearchPage() {
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.product);
-  }, [q, verticalParam, discountParam, products, brands, categories, customerGroup, campaigns, currency, settings, contractPrices, authUser?.uid]);
+  }, [q, verticalParam, brandParam, inStockParam, discountParam, products, brands, categories, customerGroup, campaigns, currency, settings, contractPrices, authUser?.uid]);
 
   const displayItems = serverData ? serverData.items : localResults.slice((pageParam - 1) * 24, pageParam * 24);
   const totalCount = serverData ? serverData.total : localResults.length;
   const totalPages = serverData ? serverData.totalPages : Math.max(1, Math.ceil(localResults.length / 24));
+  const brandFacets = serverData?.facets?.brands ?? [];
 
-  const updateQuery = (nextQ: string, nextVertical: '' | VerticalType, nextPage = 1, nextDiscount = discountParam) => {
+  const updateQuery = (
+    nextQ: string,
+    nextVertical: '' | VerticalType,
+    nextPage = 1,
+    nextDiscount = discountParam,
+    nextBrand = brandParam,
+    nextInStock = inStockParam
+  ) => {
     const next: Record<string, string> = {};
     if (nextQ.trim()) next.q = nextQ.trim();
     if (nextVertical) next.vertical = nextVertical;
+    if (nextBrand) next.brand = nextBrand;
+    if (nextInStock) next.inStock = '1';
     if (nextDiscount) next.discount = '1';
     if (nextPage > 1) next.page = String(nextPage);
     setParams(next);
@@ -121,7 +149,7 @@ export function SearchPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    updateQuery(input, verticalParam, 1, discountParam);
+    updateQuery(input, verticalParam, 1, discountParam, brandParam, inStockParam);
   };
 
   const handleRequestSubmit = async (e: React.FormEvent) => {
@@ -134,7 +162,7 @@ export function SearchPage() {
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
         <h1 className="text-2xl font-extrabold">جستجو در کاتالوگ تجهیزات و مواد</h1>
-        <form onSubmit={handleSearch} className="flex flex-wrap gap-2 max-w-3xl">
+        <form onSubmit={handleSearch} className="flex flex-wrap gap-2 max-w-4xl">
           <input
             type="search"
             value={input}
@@ -144,7 +172,7 @@ export function SearchPage() {
           />
           <select
             value={verticalParam}
-            onChange={(e) => updateQuery(input, e.target.value as '' | VerticalType, 1, discountParam)}
+            onChange={(e) => updateQuery(input, e.target.value as '' | VerticalType, 1)}
             aria-label="فیلتر حوزه تخصصی"
             className="px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
           >
@@ -152,6 +180,30 @@ export function SearchPage() {
               <option key={v.id || 'all'} value={v.id}>{v.label}</option>
             ))}
           </select>
+          {brandFacets.length > 0 && (
+            <select
+              value={brandParam}
+              onChange={(e) => updateQuery(input, verticalParam, 1, discountParam, e.target.value)}
+              aria-label="فیلتر برند"
+              className="px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
+            >
+              <option value="">همه برندها</option>
+              {brandFacets.map((b) => (
+                <option key={b.id} value={b.slug}>
+                  {b.nameFa} ({toPersianDigits(b.count)})
+                </option>
+              ))}
+            </select>
+          )}
+          <label className="inline-flex items-center gap-2 px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold cursor-pointer">
+            <input
+              type="checkbox"
+              checked={inStockParam}
+              onChange={(e) => updateQuery(input, verticalParam, 1, discountParam, brandParam, e.target.checked)}
+              className="accent-brand"
+            />
+            <span>فقط موجود</span>
+          </label>
           <label className="inline-flex items-center gap-2 px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold cursor-pointer">
             <input
               type="checkbox"
@@ -290,7 +342,16 @@ export function ComparePage() {
                 {items.map((p) => (
                   <th key={p.id} className="p-4 min-w-[220px] align-top">
                     <div className="space-y-2">
-                      <img src={p.imageUrl} alt={p.titleFa} className="w-full h-32 object-cover rounded-lg bg-surface" />
+                      <img
+                        {...buildResponsiveImageProps(p.imageUrl, {
+                          widths: [240, 480],
+                          sizes: '220px',
+                        })}
+                        alt={p.titleFa}
+                        width={240}
+                        height={160}
+                        className="w-full h-32 object-cover rounded-lg bg-surface"
+                      />
                       <Link to={`/product/${p.slug}`} className="block font-bold hover:text-brand">{p.titleFa}</Link>
                       <button
                         type="button"

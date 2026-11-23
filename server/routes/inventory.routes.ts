@@ -21,9 +21,10 @@ import {
 export function createInventoryRouter(
   store: ServerStore,
   inventoryService: InventoryService,
-  _repos?: RepositoryBundle
+  repos?: RepositoryBundle
 ): express.Router {
   const router = express.Router();
+  const authTarget = repos ?? store;
 
   // --- Admin Per-Warehouse Inventory Overview & Low-Stock Alerts ---
   router.get('/api/admin/inventory', async (req, res) => {
@@ -201,7 +202,7 @@ export function createInventoryRouter(
     const fbUser = await verifyFirebaseUser(req);
     const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'returns:process') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
 
     if (!isAdmin && !fbUser && !mobSession) {
       return res.status(401).json({ ok: false, message: 'برای مشاهده درخواست‌های مرجوعی وارد شوید.' });
@@ -222,7 +223,7 @@ export function createInventoryRouter(
     const fbUser = await verifyFirebaseUser(req);
     const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'returns:process') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
     const orderToken = parsed.orderToken || extractOrderToken(req);
 
     const result = await inventoryService.submitReturn({

@@ -17,7 +17,8 @@
     "test": "vitest run --exclude \"tests/rules/**\" --exclude \"tests/e2e/**\"",
     "test:watch": "vitest --exclude \"tests/rules/**\" --exclude \"tests/e2e/**\"",
     "test:rules": "firebase emulators:exec --only firestore \"vitest run tests/rules\"",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "load:baseline": "tsx scripts/load/autocannon-baseline.mjs"
   },
   "dependencies": {
     "@tanstack/react-table": "^9.3.1",

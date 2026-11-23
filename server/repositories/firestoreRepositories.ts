@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getApp, getApps, initializeApp } from 'firebase-admin/app';
-import { Firestore, Transaction, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, Firestore, Transaction, getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { SEED_WAREHOUSES } from '../../src/data/expandedCatalog';
 import {
   CustomerGroupCode,
+  NewsletterSubscriber,
+  NotFoundLog,
   Order,
   OrderBatchAllocation,
   PaymentLedgerEntry,
@@ -13,31 +15,43 @@ import {
   ProductVariant,
   ProformaInvoice,
   ReturnRequest,
+  RfqRequest,
   StockBatch,
   StockBatchRecord,
   StockLevel,
   StockMovement,
+  StockNotification,
   Warehouse,
 } from '../../src/types/domain';
+import type { ImportJobRecord } from '../../src/pages/admin/importExport/types';
 import { normalizeMobile } from '../auth';
 import {
+  MobileSessionRecord,
+  OtpChallengeRecord,
+  OtpLockoutRecord,
+  OtpVerifiedTokenRecord,
   ServerAuditLogRecord,
   ServerCatalogSnapshot,
   ServerPaymentSession,
   ServerStore,
   ServerUserGroupRecord,
+  UploadedFileRecord,
   VerifiedOrderPaymentState,
 } from '../persistence';
 import { stripUndefinedDeep } from './dateUtils';
 import { filterAndPaginateOrders } from './fileRepositories';
 import {
   AuditRepository,
+  AuthSessionRepository,
   CatalogRepository,
+  CatalogSnapshotPatch,
+  EngagementRepository,
   OrderRepository,
   PaymentRepository,
   ProformaRepository,
   RepositoryBundle,
   ReturnRepository,
+  RfqRepository,
   StockAdjustParams,
   StockItemDelta,
   StockMovementContext,
@@ -64,9 +78,22 @@ function getAdminFirestore(): Firestore {
  * Primary production adapter backed by Firebase Admin Firestore SDK.
  * Enabled via STORAGE_DRIVER=firestore when running in a project where the service account has Firestore permissions.
  */
-export function createFirestoreRepositories(fallbackStore: ServerStore): RepositoryBundle {
-  const db = getAdminFirestore();
+export function createFirestoreRepositories(fallbackStore: ServerStore, customDb?: Firestore): RepositoryBundle {
+  const db = customDb ?? getAdminFirestore();
   const txStorage = new AsyncLocalStorage<Transaction>();
+  let catalogVersion = 1;
+  const catalogListeners = new Set<() => void>();
+
+  const notifyCatalogChanged = () => {
+    catalogVersion += 1;
+    for (const listener of catalogListeners) {
+      try {
+        listener();
+      } catch {
+        // Listener error ignored
+      }
+    }
+  };
 
   const currentTx = (): Transaction | undefined => txStorage.getStore();
 
@@ -523,6 +550,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
         await setDoc(ref, { ...product, updatedAt: nowIso } as unknown as Record<string, unknown>, true);
       }
 
+      notifyCatalogChanged();
       return { ok: true, allocationsByItem };
     },
 
@@ -640,6 +668,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
       for (const { ref, product } of productsMap.values()) {
         await setDoc(ref, { ...product, updatedAt: nowIso } as unknown as Record<string, unknown>, true);
       }
+      notifyCatalogChanged();
     },
 
     async releaseItems(items: StockItemDelta[], ctx?: StockMovementContext) {
@@ -749,6 +778,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
       for (const { ref, product } of productsMap.values()) {
         await setDoc(ref, { ...product, updatedAt: nowIso } as unknown as Record<string, unknown>, true);
       }
+      notifyCatalogChanged();
     },
 
     async incrementCouponUsage(couponCode: string) {
@@ -903,6 +933,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
         createdAt: nowIso,
       });
 
+      notifyCatalogChanged();
       return { ok: true, stockLevel: lvl, ...(touchedBatch ? { batch: touchedBatch } : {}), movement };
     },
 
@@ -998,6 +1029,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
         createdAt: nowIso,
       });
 
+      notifyCatalogChanged();
       return { ok: true, stockLevel: lvl, movement };
     },
 
@@ -1166,6 +1198,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
 
       await setDoc(db.collection('stockBatches').doc(batch.id), batch as unknown as Record<string, unknown>, true);
       await setDoc(entry.ref, { ...entry.product, updatedAt: nowIso } as unknown as Record<string, unknown>, true);
+      notifyCatalogChanged();
       return { ok: true, batch };
     },
 
@@ -1473,7 +1506,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
         );
       }
     },
-    async saveCatalogCollections(patch) {
+    async saveCatalogCollections(patch: CatalogSnapshotPatch) {
       const updatedAt = patch.updatedAt ?? new Date().toISOString();
       if (patch.categories) {
         fallbackStore.data.catalogState.categories = patch.categories;
@@ -1493,14 +1526,82 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
           await setDoc(db.collection('products').doc(prod.id), prod as unknown as Record<string, unknown>, false);
         }
       }
+      if (patch.campaigns) {
+        fallbackStore.data.catalogState.campaigns = patch.campaigns;
+        for (const c of patch.campaigns) {
+          await setDoc(db.collection('campaigns').doc(c.id), c as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.bundles) {
+        fallbackStore.data.catalogState.bundles = patch.bundles;
+        for (const b of patch.bundles) {
+          await setDoc(db.collection('bundles').doc(b.id), b as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.agents) {
+        fallbackStore.data.catalogState.agents = patch.agents;
+        for (const a of patch.agents) {
+          await setDoc(db.collection('agents').doc(a.id), a as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.blogPosts) {
+        fallbackStore.data.catalogState.blogPosts = patch.blogPosts;
+        for (const bp of patch.blogPosts) {
+          await setDoc(db.collection('blogPosts').doc(bp.id), bp as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.pages) {
+        fallbackStore.data.catalogState.pages = patch.pages;
+        for (const pg of patch.pages) {
+          await setDoc(db.collection('pages').doc(pg.id), pg as unknown as Record<string, unknown>, false);
+        }
+      }
       if (patch.redirects) {
         fallbackStore.data.catalogState.redirects = patch.redirects;
         for (const redir of patch.redirects) {
           await setDoc(db.collection('redirects').doc(redir.id), redir as unknown as Record<string, unknown>, false);
         }
       }
+      if (patch.coupons) {
+        fallbackStore.data.catalogState.coupons = patch.coupons;
+        for (const cpn of patch.coupons) {
+          await setDoc(db.collection('coupons').doc(cpn.id), cpn as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.contractPrices) {
+        fallbackStore.data.catalogState.contractPrices = patch.contractPrices;
+        for (const cp of patch.contractPrices) {
+          await setDoc(db.collection('contractPrices').doc(cp.id), cp as unknown as Record<string, unknown>, false);
+        }
+      }
+      if (patch.settings) {
+        fallbackStore.data.catalogState.settings = patch.settings;
+        await setDoc(
+          db.collection('settings').doc(patch.settings.id || 'site_settings'),
+          patch.settings as unknown as Record<string, unknown>,
+          true
+        );
+      }
       fallbackStore.data.catalogState.updatedAt = updatedAt;
-      fallbackStore.save();
+      notifyCatalogChanged();
+    },
+    async incrementRedirectHits(deltas: Record<string, number>) {
+      const entries = Object.entries(deltas).filter(([, d]) => Number.isFinite(d) && d > 0);
+      if (entries.length === 0) return;
+      const batch = db.batch();
+      for (const [id, delta] of entries) {
+        const inc = Math.floor(delta);
+        const target = fallbackStore.data.catalogState.redirects.find((r) => r.id === id);
+        if (target) {
+          target.hitCount = (target.hitCount || 0) + inc;
+        }
+        batch.set(
+          db.collection('redirects').doc(id),
+          { hitCount: FieldValue.increment(inc) },
+          { merge: true }
+        );
+      }
+      await batch.commit();
     },
   };
 
@@ -1536,6 +1637,236 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
     },
   };
 
+  // Ephemeral Auth/OTP/Session storage with Firestore TTL (`ttlExpireAt`) + runtime expiry enforcement
+  const authSessions: AuthSessionRepository = {
+    async getOtpChallenge(mobile) {
+      const ref = db.collection('otpChallenges').doc(mobile);
+      const snap = await ref.get();
+      if (!snap.exists) return null;
+      const rec = snap.data() as OtpChallengeRecord;
+      if (Date.now() > rec.expiresAt) {
+        await ref.delete().catch(() => {});
+        return null;
+      }
+      return rec;
+    },
+    async setOtpChallenge(mobile, record) {
+      await db
+        .collection('otpChallenges')
+        .doc(mobile)
+        .set(stripUndefinedDeep({ ...record, ttlExpireAt: new Date(record.expiresAt) }));
+    },
+    async deleteOtpChallenge(mobile) {
+      await db.collection('otpChallenges').doc(mobile).delete().catch(() => {});
+    },
+    async getOtpLockout(mobile) {
+      const ref = db.collection('otpLockouts').doc(mobile);
+      const snap = await ref.get();
+      if (!snap.exists) return null;
+      const rec = snap.data() as OtpLockoutRecord;
+      if (Date.now() >= rec.lockedUntil) {
+        await ref.delete().catch(() => {});
+        return null;
+      }
+      return rec;
+    },
+    async setOtpLockout(mobile, record) {
+      await db
+        .collection('otpLockouts')
+        .doc(mobile)
+        .set(stripUndefinedDeep({ ...record, ttlExpireAt: new Date(record.lockedUntil) }));
+    },
+    async deleteOtpLockout(mobile) {
+      await db.collection('otpLockouts').doc(mobile).delete().catch(() => {});
+    },
+    async getPhoneSendHistory(mobile, cutoffMs) {
+      const ref = db.collection('otpPhoneSendHistory').doc(mobile);
+      const snap = await ref.get();
+      if (!snap.exists) return [];
+      const data = snap.data() as { timestamps?: number[] };
+      return Array.isArray(data.timestamps) ? data.timestamps.filter((ts) => ts > cutoffMs) : [];
+    },
+    async setPhoneSendHistory(mobile, timestamps, ttlExpiresAtMs) {
+      const ref = db.collection('otpPhoneSendHistory').doc(mobile);
+      if (timestamps.length === 0) {
+        await ref.delete().catch(() => {});
+        return;
+      }
+      await ref.set({ timestamps, ttlExpireAt: new Date(ttlExpiresAtMs) });
+    },
+    async getVerifiedToken(tokenHash) {
+      const ref = db.collection('otpVerifiedTokens').doc(tokenHash);
+      const snap = await ref.get();
+      if (!snap.exists) return null;
+      const rec = snap.data() as OtpVerifiedTokenRecord;
+      if (Date.now() > rec.expiresAt) {
+        await ref.delete().catch(() => {});
+        return null;
+      }
+      return rec;
+    },
+    async saveVerifiedToken(record) {
+      await db
+        .collection('otpVerifiedTokens')
+        .doc(record.tokenHash)
+        .set(stripUndefinedDeep({ ...record, ttlExpireAt: new Date(record.expiresAt) }));
+    },
+    async consumeVerifiedToken(tokenHash, consumedAt) {
+      await db
+        .collection('otpVerifiedTokens')
+        .doc(tokenHash)
+        .set({ consumedAt }, { merge: true });
+    },
+    async getMobileSession(tokenHash) {
+      const ref = db.collection('mobileSessions').doc(tokenHash);
+      const snap = await ref.get();
+      if (!snap.exists) return null;
+      const rec = snap.data() as MobileSessionRecord;
+      if (Date.now() > rec.expiresAt) {
+        await ref.delete().catch(() => {});
+        return null;
+      }
+      return rec;
+    },
+    async saveMobileSession(record) {
+      await db
+        .collection('mobileSessions')
+        .doc(record.tokenHash)
+        .set(stripUndefinedDeep({ ...record, ttlExpireAt: new Date(record.expiresAt) }));
+    },
+    async deleteMobileSession(tokenHash) {
+      await db.collection('mobileSessions').doc(tokenHash).delete().catch(() => {});
+    },
+    async pruneExpired() {
+      const now = Date.now();
+      const targets: Array<{ col: string; field: string }> = [
+        { col: 'otpChallenges', field: 'expiresAt' },
+        { col: 'otpLockouts', field: 'lockedUntil' },
+        { col: 'otpVerifiedTokens', field: 'expiresAt' },
+        { col: 'mobileSessions', field: 'expiresAt' },
+      ];
+      for (const t of targets) {
+        const snap = await db.collection(t.col).where(t.field, '<=', now).limit(100).get();
+        if (!snap.empty) {
+          const batch = db.batch();
+          snap.docs.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+    },
+  };
+
+  const rfqs: RfqRepository = {
+    async getById(id) {
+      const snap = await db.collection('rfqRequests').doc(id).get();
+      return snap.exists ? (snap.data() as RfqRequest) : null;
+    },
+    async list(filter) {
+      let q: FirebaseFirestore.Query = db.collection('rfqRequests');
+      if (filter?.status) q = q.where('status', '==', filter.status);
+      const snap = await q.get();
+      let items = snap.docs
+        .map((d) => d.data() as RfqRequest)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      if (filter?.limit && filter.limit > 0) {
+        items = items.slice(0, filter.limit);
+      }
+      return items;
+    },
+    async save(rfq) {
+      await setDoc(db.collection('rfqRequests').doc(rfq.id), rfq as unknown as Record<string, unknown>, true);
+    },
+  };
+
+  // In-memory 404 counter buffer flushed periodically using atomic FieldValue.increment
+  const pending404Deltas = new Map<string, { id: string; path: string; delta: number; lastSeenAt: string }>();
+  const engagement: EngagementRepository = {
+    async record404Hit(id, hitPath, lastSeenAt) {
+      const cur = pending404Deltas.get(id);
+      const delta = (cur?.delta ?? 0) + 1;
+      pending404Deltas.set(id, { id, path: hitPath, delta, lastSeenAt });
+      const snap = await db.collection('notFoundLogs').doc(id).get();
+      const baseHits = snap.exists ? Number((snap.data() as NotFoundLog).hitCount || 0) : 0;
+      return {
+        id,
+        path: hitPath,
+        hitCount: baseHits + delta,
+        lastSeenAt,
+      };
+    },
+    async flush404Hits() {
+      if (pending404Deltas.size === 0) return;
+      const entries = Array.from(pending404Deltas.values());
+      pending404Deltas.clear();
+      const batch = db.batch();
+      for (const item of entries) {
+        batch.set(
+          db.collection('notFoundLogs').doc(item.id),
+          {
+            id: item.id,
+            path: item.path,
+            hitCount: FieldValue.increment(item.delta),
+            lastSeenAt: item.lastSeenAt,
+          },
+          { merge: true }
+        );
+      }
+      await batch.commit();
+    },
+    async list404Logs() {
+      await engagement.flush404Hits();
+      const snap = await db.collection('notFoundLogs').get();
+      return snap.docs
+        .map((d) => d.data() as NotFoundLog)
+        .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
+    },
+    async findNewsletterByContact(contact) {
+      const clean = contact.trim().toLowerCase();
+      const snap = await db.collection('newsletterSubscribers').where('contact', '==', clean).limit(1).get();
+      return snap.empty ? null : (snap.docs[0].data() as NewsletterSubscriber);
+    },
+    async saveNewsletterSubscriber(sub) {
+      await setDoc(db.collection('newsletterSubscribers').doc(sub.id), sub as unknown as Record<string, unknown>, true);
+    },
+    async listNewsletterSubscribers() {
+      const snap = await db.collection('newsletterSubscribers').get();
+      return snap.docs
+        .map((d) => d.data() as NewsletterSubscriber)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    },
+    async getStockNotification(id) {
+      const snap = await db.collection('stockNotifications').doc(id).get();
+      return snap.exists ? (snap.data() as StockNotification) : null;
+    },
+    async saveStockNotification(item) {
+      await setDoc(db.collection('stockNotifications').doc(item.id), item as unknown as Record<string, unknown>, true);
+    },
+    async listStockNotifications() {
+      const snap = await db.collection('stockNotifications').get();
+      return snap.docs
+        .map((d) => d.data() as StockNotification)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    },
+    async getUploadedFile(id) {
+      const snap = await db.collection('uploadedFiles').doc(id).get();
+      return snap.exists ? (snap.data() as UploadedFileRecord) : null;
+    },
+    async saveUploadedFile(record) {
+      await setDoc(db.collection('uploadedFiles').doc(record.id), record as unknown as Record<string, unknown>, false);
+    },
+    async getImportJob(id) {
+      const snap = await db.collection('importJobs').doc(id).get();
+      return snap.exists ? (snap.data() as ImportJobRecord) : null;
+    },
+    async listImportJobs(limit = 100) {
+      const snap = await db.collection('importJobs').orderBy('createdAt', 'desc').limit(limit).get();
+      return snap.docs.map((d) => d.data() as ImportJobRecord);
+    },
+    async saveImportJob(job) {
+      await setDoc(db.collection('importJobs').doc(job.id), job as unknown as Record<string, unknown>, true);
+    },
+  };
+
   async function runTransaction<T>(fn: () => Promise<T>): Promise<T> {
     if (txStorage.getStore()) {
       return fn();
@@ -1552,6 +1883,15 @@ export function createFirestoreRepositories(fallbackStore: ServerStore): Reposit
     catalog,
     proformas,
     audit,
+    authSessions,
+    rfqs,
+    engagement,
+    getCatalogVersion: () => catalogVersion,
+    onCatalogChange: (listener) => {
+      catalogListeners.add(listener);
+      return () => catalogListeners.delete(listener);
+    },
+    notifyCatalogChanged,
     runTransaction,
   };
 }

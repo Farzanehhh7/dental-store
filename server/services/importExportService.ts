@@ -622,11 +622,7 @@ export async function commitImportService(
       changeset: Array.from(changesetMap.values()),
     };
 
-    store.data.importJobs.unshift(jobRecord);
-    if (store.data.importJobs.length > 100) {
-      store.data.importJobs.length = 100;
-    }
-    store.save();
+    await repos.engagement.saveImportJob(jobRecord);
 
     await repos.audit.append({
       id: `aud_imp_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`,
@@ -644,6 +640,8 @@ export async function commitImportService(
       },
       createdAt: nowIso,
     });
+
+    await store.flush();
 
     return {
       ok: true,
@@ -665,7 +663,7 @@ export async function rollbackImportJobService(
   }
 ): Promise<{ ok: true; job: ImportJobSummaryDto } | { ok: false; status: number; message: string }> {
   return repos.runTransaction(async () => {
-    const job = store.data.importJobs.find((j) => j.id === params.jobId);
+    const job = await repos.engagement.getImportJob(params.jobId);
     if (!job) {
       return { ok: false, status: 404, message: 'عملیات ورود داده مورد نظر یافت نشد.' };
     }
@@ -773,7 +771,7 @@ export async function rollbackImportJobService(
     job.status = 'rolled_back';
     job.rolledBackAt = nowIso;
     job.rolledBackBy = params.actorEmail;
-    store.save();
+    await repos.engagement.saveImportJob(job);
 
     await repos.audit.append({
       id: `aud_rb_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`,
@@ -787,6 +785,7 @@ export async function rollbackImportJobService(
       createdAt: nowIso,
     });
 
+    await store.flush();
     return { ok: true, job: toJobSummaryDto(job) };
   });
 }

@@ -74,10 +74,18 @@ if (isCli) {
   const dataDirArg = args.find((a) => a.startsWith('--data-dir='))?.split('=')[1];
   const store = createServerStore(dataDirArg);
   const report = migrateGuestOrdersStore(store, { dryRun });
-  console.log(
-    JSON.stringify({
-      ok: true,
-      ...report,
+  store
+    .flush()
+    .then(() => {
+      console.log(
+        JSON.stringify({
+          ok: true,
+          ...report,
+        })
+      );
     })
-  );
+    .catch((err) => {
+      console.error('Migration flush failed:', err);
+      process.exit(1);
+    });
 }

@@ -14,7 +14,7 @@ import {
   parseTrustProxySetting,
 } from './server/lib/http';
 import { renderSeoHtmlResponse } from './server/lib/ssrHtml';
-import { createServerStore } from './server/persistence';
+import { createServerStore, flushPendingStoresForDir } from './server/persistence';
 import { createRepositories } from './server/repositories';
 import { createAdminRouter } from './server/routes/admin.routes';
 import { createAuthRouter } from './server/routes/auth.routes';
@@ -59,7 +59,9 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     }
     return '<!doctype html><html lang="fa" dir="rtl"><head><title>دنتال‌مارکت</title></head><body><div id="root"></div></body></html>';
   };
-  const store = createServerStore(options.dataDir ?? env.DATA_DIR);
+  const targetDataDir = options.dataDir ?? env.DATA_DIR;
+  await flushPendingStoresForDir(targetDataDir);
+  const store = createServerStore(targetDataDir);
   const repos = createRepositories(store);
   const orderService = createOrderService(repos);
   const paymentService = createPaymentService(repos);
@@ -237,19 +239,21 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     return jsonParser1mb(req, res, next);
   });
 
-  app.use(createRedirectsMiddleware(store, repos, getTemplateHtml));
+  const redirectsMiddleware = createRedirectsMiddleware(store, repos, getTemplateHtml);
+  const seoRouter = createSeoRouter(store, repos);
+  app.use(redirectsMiddleware);
 
   // Mount domain routers
-  app.use(createSeoRouter(store, repos));
+  app.use(seoRouter);
   app.use(createCatalogRouter(store, repos));
   app.use(createAdminRouter(store, orderService, paymentService, repos));
   app.use(createReportsRouter(store, repos));
   app.use(createImportExportRouter(store, repos));
-  app.use(createFilesRouter(store, { dataDir: options.dataDir ?? env.DATA_DIR, repos }));
-  app.use(createAuthRouter(store));
-  app.use(createCheckoutRouter(store, orderService));
+  app.use(createFilesRouter(store, { dataDir: targetDataDir, repos }));
+  app.use(createAuthRouter(store, repos));
+  app.use(createCheckoutRouter(store, orderService, repos));
   app.use(createInventoryRouter(store, inventoryService, repos));
-  app.use(createPaymentsRouter(store, paymentService));
+  app.use(createPaymentsRouter(store, paymentService, repos));
   app.use(createRfqRouter(store, repos));
 
   // Clean JSON error handler for malformed / oversized API bodies
@@ -345,6 +349,13 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
   }, sweepIntervalMs);
   expiryTimer.unref();
 
+  const stopExpiryJob = () => {
+    clearInterval(expiryTimer);
+    redirectsMiddleware.stopFlushTimer();
+    seoRouter.stopTimers();
+    store.dispose().catch(() => {});
+  };
+
   return {
     app,
     store,
@@ -352,7 +363,7 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     orderService,
     paymentService,
     inventoryService,
-    stopExpiryJob: () => clearInterval(expiryTimer),
+    stopExpiryJob,
   };
 }
 
@@ -364,13 +375,24 @@ const isMainEntry =
 
 if (isMainEntry && !process.env.VITEST) {
   createServerApp()
-    .then(({ app }) => {
-      app.listen(DEFAULT_PORT, '0.0.0.0', () => {
+    .then(({ app, stopExpiryJob, store }) => {
+      const server = app.listen(DEFAULT_PORT, '0.0.0.0', () => {
         console.log(
           `DentalMarket server listening on http://0.0.0.0:${DEFAULT_PORT} (${
             process.env.NODE_ENV === 'production' ? 'production' : 'development'
           })`
         );
+      });
+      const shutdown = async () => {
+        stopExpiryJob();
+        await store.flush().catch(() => {});
+        server.close(() => process.exit(0));
+      };
+      process.once('SIGTERM', () => {
+        shutdown().catch(() => process.exit(1));
+      });
+      process.once('SIGINT', () => {
+        shutdown().catch(() => process.exit(1));
       });
     })
     .catch((err) => {

@@ -197,9 +197,10 @@ if (isMainEntry && !process.env.VITEST) {
   const dataDir = dataDirArg ? dataDirArg.slice('--data-dir='.length) : undefined;
 
   import('../server/persistence')
-    .then(({ createServerStore }) => {
+    .then(async ({ createServerStore }) => {
       const store = createServerStore(dataDir);
       const report = migrateStockToWarehousesStore(store, { dryRun });
+      await store.flush();
       console.log(JSON.stringify(report, null, 2));
     })
     .catch((err) => {

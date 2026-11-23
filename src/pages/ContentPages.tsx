@@ -16,6 +16,7 @@ import {
   buildFaqJsonLd,
   buildStaticPageJsonLd,
 } from '../lib/seo';
+import type { Product } from '../types/domain';
 
 export function BrandsListPage() {
   const { brands, products, settings } = useStore();
@@ -112,8 +113,14 @@ export function BrandsListPage() {
 
 export function BrandDetailPage() {
   const { slug } = useParams();
-  const { brands, products, settings } = useStore();
+  const { brands, products, customerGroup, settings } = useStore();
   const brand = brands.find((b) => b.slug === slug);
+  const [serverBrandState, setServerBrandState] = useState<{
+    items: Product[];
+    nextCursor: string | null;
+    hasMore: boolean;
+  } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     if (!brand) return;
@@ -133,6 +140,59 @@ export function BrandDetailPage() {
     });
   }, [brand, settings.storeNameFa]);
 
+  useEffect(() => {
+    if (!brand) {
+      setServerBrandState(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    const qs = new URLSearchParams({
+      brand: brand.slug,
+      group: customerGroup,
+      limit: '24',
+    });
+    fetch(`/api/catalog/products?${qs.toString()}`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.ok && Array.isArray(data.items)) {
+          setServerBrandState({
+            items: data.items as Product[],
+            nextCursor: typeof data.nextCursor === 'string' ? data.nextCursor : null,
+            hasMore: Boolean(data.hasMore),
+          });
+        }
+      })
+      .catch(() => {
+        // Fallback to local store catalog
+      });
+    return () => ctrl.abort();
+  }, [brand, customerGroup]);
+
+  const handleLoadMoreBrand = async () => {
+    if (!brand || !serverBrandState?.nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const qs = new URLSearchParams({
+        brand: brand.slug,
+        group: customerGroup,
+        cursor: serverBrandState.nextCursor,
+        limit: '24',
+      });
+      const res = await fetch(`/api/catalog/products?${qs.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.ok && Array.isArray(data.items)) {
+        setServerBrandState((prev) => ({
+          items: [...(prev?.items ?? []), ...(data.items as Product[])],
+          nextCursor: typeof data.nextCursor === 'string' ? data.nextCursor : null,
+          hasMore: Boolean(data.hasMore),
+        }));
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   if (!brand) {
     return (
       <div className="max-w-4xl mx-auto p-12 text-center space-y-4">
@@ -142,13 +202,14 @@ export function BrandDetailPage() {
     );
   }
 
-  const brandProducts = products
+  const localBrandProducts = products
     .filter((p) => p.brandId === brand.id && p.status !== 'archived')
     .sort((a, b) => {
       const aCurated = !a.id.startsWith('prod_cat_') ? 1 : 0;
       const bCurated = !b.id.startsWith('prod_cat_') ? 1 : 0;
       return bCurated - aCurated;
     });
+  const brandProducts = serverBrandState ? serverBrandState.items : localBrandProducts;
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
@@ -188,6 +249,19 @@ export function BrandDetailPage() {
           <ProductCard key={p.id} product={p} />
         ))}
       </div>
+
+      {serverBrandState?.hasMore && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            disabled={loadingMore}
+            onClick={handleLoadMoreBrand}
+            className="px-5 py-2.5 rounded-lg border border-line dark:border-slate-700 text-xs font-bold hover:border-brand disabled:opacity-50"
+          >
+            {loadingMore ? 'در حال بارگذاری...' : 'مشاهده محصولات بیشتر'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

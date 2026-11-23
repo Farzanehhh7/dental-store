@@ -16,15 +16,18 @@ import {
   shouldUseSecureCookie,
 } from '../lib/http';
 import type { ServerStore } from '../persistence';
+import type { RepositoryBundle } from '../repositories';
+import { createFileRepositories } from '../repositories/fileRepositories';
 import { otpSendBodySchema, otpVerifyBodySchema, parseRequestBody } from '../validation';
 
 const PHONE_SEND_WINDOW_MS = 15 * 60 * 1000;
 
-export function createAuthRouter(store: ServerStore): express.Router {
+export function createAuthRouter(store: ServerStore, repos?: RepositoryBundle): express.Router {
   const router = express.Router();
+  const authRepo = (repos ?? createFileRepositories(store)).authSessions;
 
   router.post('/api/auth/otp/send', async (req, res) => {
-    store.pruneExpired();
+    await authRepo.pruneExpired();
     const parsed = parseRequestBody(otpSendBodySchema, req, res);
     if (!parsed) return;
 
@@ -41,7 +44,7 @@ export function createAuthRouter(store: ServerStore): express.Router {
     const env = validateServerEnv(process.env);
     const now = Date.now();
 
-    const lockout = store.data.otpLockouts[mobile];
+    const lockout = await authRepo.getOtpLockout(mobile);
     if (lockout && lockout.lockedUntil > now) {
       const retryAfterSec = Math.max(1, Math.ceil((lockout.lockedUntil - now) / 1000));
       res.setHeader('Retry-After', String(retryAfterSec));
@@ -52,7 +55,7 @@ export function createAuthRouter(store: ServerStore): express.Router {
     }
 
     const cooldownMs = env.OTP_RESEND_COOLDOWN_SEC * 1000;
-    const existing = store.data.otpChallenges[mobile];
+    const existing = await authRepo.getOtpChallenge(mobile);
     if (existing && now - existing.lastSentAt < cooldownMs) {
       const retryAfterSec = Math.max(1, Math.ceil((cooldownMs - (now - existing.lastSentAt)) / 1000));
       res.setHeader('Retry-After', String(retryAfterSec));
@@ -62,9 +65,8 @@ export function createAuthRouter(store: ServerStore): express.Router {
       });
     }
 
-    const recentPhoneSends = (store.data.otpPhoneSendHistory[mobile] || []).filter(
-      (ts) => now - ts < PHONE_SEND_WINDOW_MS
-    );
+    const cutoffMs = now - PHONE_SEND_WINDOW_MS;
+    const recentPhoneSends = await authRepo.getPhoneSendHistory(mobile, cutoffMs);
     if (recentPhoneSends.length >= env.OTP_PHONE_WINDOW_MAX) {
       res.setHeader('Retry-After', String(Math.ceil(PHONE_SEND_WINDOW_MS / 1000)));
       return res.status(429).json({
@@ -91,15 +93,14 @@ export function createAuthRouter(store: ServerStore): express.Router {
     }
 
     const expiryMs = env.OTP_EXPIRY_SECONDS * 1000;
-    store.data.otpChallenges[mobile] = {
+    await authRepo.setOtpChallenge(mobile, {
       codeHash: hashToken(`${mobile}:${code}`),
       expiresAt: now + expiryMs,
       attempts: 0,
       lastSentAt: now,
-    };
+    });
     recentPhoneSends.push(now);
-    store.data.otpPhoneSendHistory[mobile] = recentPhoneSends;
-    store.save();
+    await authRepo.setPhoneSendHistory(mobile, recentPhoneSends, now + PHONE_SEND_WINDOW_MS);
 
     return res.json({
       ok: true,
@@ -113,8 +114,8 @@ export function createAuthRouter(store: ServerStore): express.Router {
     });
   });
 
-  router.post('/api/auth/otp/verify', (req, res) => {
-    store.pruneExpired();
+  router.post('/api/auth/otp/verify', async (req, res) => {
+    await authRepo.pruneExpired();
     const parsed = parseRequestBody(otpVerifyBodySchema, req, res);
     if (!parsed) return;
 
@@ -130,7 +131,7 @@ export function createAuthRouter(store: ServerStore): express.Router {
 
     const env = validateServerEnv(process.env);
     const now = Date.now();
-    const lockout = store.data.otpLockouts[mobile];
+    const lockout = await authRepo.getOtpLockout(mobile);
     if (lockout && lockout.lockedUntil > now) {
       const retryAfterSec = Math.max(1, Math.ceil((lockout.lockedUntil - now) / 1000));
       res.setHeader('Retry-After', String(retryAfterSec));
@@ -142,50 +143,51 @@ export function createAuthRouter(store: ServerStore): express.Router {
 
     const code = normalizeMobile(parsed.code);
     const displayName = parsed.displayName;
-    const record = store.data.otpChallenges[mobile];
+    const record = await authRepo.getOtpChallenge(mobile);
 
     if (!record) {
       return res.status(400).json({ ok: false, message: 'ابتدا درخواست ارسال کد بدهید.' });
     }
     if (now > record.expiresAt) {
-      delete store.data.otpChallenges[mobile];
-      store.save();
+      await authRepo.deleteOtpChallenge(mobile);
       return res.status(400).json({ ok: false, message: 'کد تایید منقضی شده است.' });
     }
 
     const expectedHash = hashToken(`${mobile}:${code}`);
     if (!timingSafeHashEquals(expectedHash, record.codeHash)) {
-      record.attempts += 1;
-      if (record.attempts >= env.OTP_MAX_ATTEMPTS) {
-        delete store.data.otpChallenges[mobile];
-        store.data.otpLockouts[mobile] = {
+      const nextAttempts = record.attempts + 1;
+      if (nextAttempts >= env.OTP_MAX_ATTEMPTS) {
+        await authRepo.deleteOtpChallenge(mobile);
+        await authRepo.setOtpLockout(mobile, {
           lockedUntil: now + env.OTP_LOCKOUT_SECONDS * 1000,
-          failedAttempts: record.attempts,
+          failedAttempts: nextAttempts,
           reason: 'max_otp_attempts',
-        };
-        store.save();
+        });
         res.setHeader('Retry-After', String(env.OTP_LOCKOUT_SECONDS));
         return res.status(429).json({
           ok: false,
           message: 'تعداد تلاش‌های ناموفق بیش از حد مجاز بود. لطفاً دقایقی دیگر تلاش کنید.',
         });
       }
-      store.save();
+      await authRepo.setOtpChallenge(mobile, {
+        ...record,
+        attempts: nextAttempts,
+      });
       return res.status(400).json({ ok: false, message: 'کد تایید نادرست است.' });
     }
 
-    delete store.data.otpChallenges[mobile];
-    delete store.data.otpLockouts[mobile];
+    await authRepo.deleteOtpChallenge(mobile);
+    await authRepo.deleteOtpLockout(mobile);
 
     const verifiedToken = `vtok_${crypto.randomBytes(18).toString('hex')}`;
     const verifiedHash = hashToken(verifiedToken);
-    store.data.otpVerifiedTokens[verifiedHash] = {
+    await authRepo.saveVerifiedToken({
       tokenHash: verifiedHash,
       mobile,
       expiresAt: now + 30 * 60 * 1000,
-    };
+    });
 
-    const { token: sessionToken, session } = createMobileSession(store, mobile, displayName);
+    const { token: sessionToken, session } = await createMobileSession(authRepo, mobile, displayName);
 
     res.setHeader(
       'Set-Cookie',
@@ -201,8 +203,8 @@ export function createAuthRouter(store: ServerStore): express.Router {
     });
   });
 
-  router.get('/api/auth/session', (req, res) => {
-    const mob = resolveMobileSession(store, req);
+  router.get('/api/auth/session', async (req, res) => {
+    const mob = await resolveMobileSession(authRepo, req);
     if (!mob) {
       return res.json({ ok: true, authenticated: false, session: null });
     }
@@ -217,11 +219,10 @@ export function createAuthRouter(store: ServerStore): express.Router {
     });
   });
 
-  router.post('/api/auth/logout', (req, res) => {
-    const mob = resolveMobileSession(store, req);
+  router.post('/api/auth/logout', async (req, res) => {
+    const mob = await resolveMobileSession(authRepo, req);
     if (mob) {
-      delete store.data.mobileSessions[mob.tokenHash];
-      store.save();
+      await authRepo.deleteMobileSession(mob.tokenHash);
     }
     res.setHeader('Set-Cookie', buildMobileSessionCookieHeader('', 0, shouldUseSecureCookie(req)));
     return res.json({ ok: true });

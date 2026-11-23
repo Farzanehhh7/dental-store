@@ -5,6 +5,7 @@ import { normalizeMobile, resolveMobileSession } from '../auth';
 import { verifyFirebaseAdmin, verifyFirebaseUser } from '../lib/adminAuth';
 import type { ServerStore } from '../persistence';
 import type { RepositoryBundle } from '../repositories';
+import { createFileRepositories } from '../repositories/fileRepositories';
 import {
   parseRequestBody,
   parseRequestQuery,
@@ -18,19 +19,18 @@ import {
 
 export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): express.Router {
   const router = express.Router();
+  const activeRepos = repos ?? createFileRepositories(store);
 
   router.get('/api/rfq', async (req, res) => {
     const query = parseRequestQuery(rfqListQuerySchema, req, res);
     if (!query) return;
 
-    const mob = resolveMobileSession(store, req);
+    const mob = await resolveMobileSession(activeRepos, req);
     const fbUser = await verifyFirebaseUser(req);
     const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'rfq:read_all') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
 
-    const all = Object.values(store.data.rfqs)
-      .filter((r) => !query.status || r.status === query.status)
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    const all = await activeRepos.rfqs.list({ status: query.status });
     const slice = (items: RfqRequest[]) => (query.limit ? items.slice(0, query.limit) : items);
 
     if (isAdmin) {
@@ -49,7 +49,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
     const parsed = parseRequestBody(rfqCreateBodySchema, req, res);
     if (!parsed) return;
 
-    const mob = resolveMobileSession(store, req);
+    const mob = await resolveMobileSession(activeRepos, req);
     const fbUser = await verifyFirebaseUser(req);
 
     const productId = parsed.productId;
@@ -61,7 +61,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
     const note = parsed.note;
     const targetUnitPrice = parsed.targetUnitPrice;
 
-    const catalog = repos ? await repos.catalog.getSnapshot() : store.data.catalogState;
+    const catalog = await activeRepos.catalog.getSnapshot();
     const product = catalog.products.find((p) => p.id === productId);
     const variant = product?.variants.find((v) => v.id === variantId) ?? product?.variants[0];
     if (!product || !variant) {
@@ -100,17 +100,16 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
       updatedAt: now,
     };
 
-    store.data.rfqs[rfq.id] = rfq;
-    store.save();
+    await activeRepos.rfqs.save(rfq);
 
     return res.json({ ok: true, rfq });
   });
 
   router.post('/api/rfq/:id/messages', async (req, res) => {
-    const rfq = store.data.rfqs[String(req.params.id || '')];
+    const rfq = await activeRepos.rfqs.getById(String(req.params.id || ''));
     if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
 
-    const mob = resolveMobileSession(store, req);
+    const mob = await resolveMobileSession(activeRepos, req);
     const fbUser = await verifyFirebaseUser(req);
     const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'rfq:quote') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
@@ -137,7 +136,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
     });
     if (isAdmin && rfq.status === 'submitted') rfq.status = 'in_review';
     rfq.updatedAt = now;
-    store.save();
+    await activeRepos.rfqs.save(rfq);
 
     if (isAdmin && adminCheck && !('errorStatus' in adminCheck) && repos) {
       await repos.audit.append({
@@ -164,7 +163,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
 
-    const rfq = store.data.rfqs[String(req.params.id || '')];
+    const rfq = await activeRepos.rfqs.getById(String(req.params.id || ''));
     if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
 
     const parsed = parseRequestBody(rfqQuoteBodySchema, req, res);
@@ -187,7 +186,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
       createdAt: now,
     });
     rfq.updatedAt = now;
-    store.save();
+    await activeRepos.rfqs.save(rfq);
 
     if (repos) {
       await repos.audit.append({
@@ -209,10 +208,10 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
   });
 
   router.post('/api/rfq/:id/respond', async (req, res) => {
-    const rfq = store.data.rfqs[String(req.params.id || '')];
+    const rfq = await activeRepos.rfqs.getById(String(req.params.id || ''));
     if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
 
-    const mob = resolveMobileSession(store, req);
+    const mob = await resolveMobileSession(activeRepos, req);
     const fbUser = await verifyFirebaseUser(req);
     const isOwner = Boolean(
       (fbUser && rfq.userId === fbUser.uid) || (mob && normalizeMobile(rfq.customerMobile) === mob.mobile)
@@ -239,7 +238,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
       createdAt: now,
     });
     rfq.updatedAt = now;
-    store.save();
+    await activeRepos.rfqs.save(rfq);
 
     return res.json({ ok: true, rfq });
   });
@@ -250,7 +249,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
       return res.status(adminCheck.errorStatus).json({ ok: false, message: adminCheck.message });
     }
 
-    const rfq = store.data.rfqs[String(req.params.id || '')];
+    const rfq = await activeRepos.rfqs.getById(String(req.params.id || ''));
     if (!rfq) return res.status(404).json({ ok: false, message: 'درخواست استعلام قیمت یافت نشد.' });
 
     const parsed = parseRequestBody(rfqConvertBodySchema, req, res);
@@ -261,7 +260,7 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
       return res.status(400).json({ ok: false, message: 'ابتدا باید قیمت واحد پیشنهادی ثبت شود.' });
     }
 
-    const catalog = repos ? await repos.catalog.getSnapshot() : store.data.catalogState;
+    const catalog = await activeRepos.catalog.getSnapshot();
     const beforeState = { status: rfq.status, proformaId: rfq.proformaId ?? null };
     const now = new Date().toISOString();
     const subtotal = unitPrice * rfq.quantity;
@@ -302,25 +301,21 @@ export function createRfqRouter(store: ServerStore, repos?: RepositoryBundle): e
     rfq.status = 'converted';
     rfq.proformaId = proforma.id;
     rfq.updatedAt = now;
-    if (repos) {
-      await repos.proformas.save(proforma);
-      await repos.audit.append({
-        id: `aud_${crypto.randomBytes(6).toString('hex')}`,
-        actorType: 'admin',
-        actorId: adminCheck.user.uid,
-        actorEmail: adminCheck.user.email || adminCheck.user.uid,
-        action: 'rfq.converted_to_proforma',
-        entityType: 'rfq',
-        entityId: rfq.id,
-        summary: `Converted RFQ ${rfq.rfqNo} to proforma ${proforma.proformaNo}`,
-        before: beforeState,
-        after: { status: rfq.status, proformaId: proforma.id },
-        createdAt: now,
-      });
-    } else {
-      store.data.proformas[proforma.id] = proforma;
-    }
-    store.save();
+    await activeRepos.proformas.save(proforma);
+    await activeRepos.rfqs.save(rfq);
+    await activeRepos.audit.append({
+      id: `aud_${crypto.randomBytes(6).toString('hex')}`,
+      actorType: 'admin',
+      actorId: adminCheck.user.uid,
+      actorEmail: adminCheck.user.email || adminCheck.user.uid,
+      action: 'rfq.converted_to_proforma',
+      entityType: 'rfq',
+      entityId: rfq.id,
+      summary: `Converted RFQ ${rfq.rfqNo} to proforma ${proforma.proformaNo}`,
+      before: beforeState,
+      after: { status: rfq.status, proformaId: proforma.id },
+      createdAt: now,
+    });
 
     return res.json({ ok: true, rfq, proforma });
   });

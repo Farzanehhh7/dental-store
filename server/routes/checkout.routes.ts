@@ -10,6 +10,7 @@ import {
 import { verifyFirebaseAdmin } from '../lib/adminAuth';
 import type { ServerStore } from '../persistence';
 import { calculateAuthoritativeCheckout } from '../pricing';
+import type { RepositoryBundle } from '../repositories';
 import type { OrderService } from '../services/orderService';
 import {
   authenticatedOrderBodySchema,
@@ -33,8 +34,13 @@ function extractIdempotencyKey(req: express.Request, bodyKey?: string): string |
   return undefined;
 }
 
-export function createCheckoutRouter(store: ServerStore, orderService: OrderService): express.Router {
+export function createCheckoutRouter(
+  store: ServerStore,
+  orderService: OrderService,
+  repos?: RepositoryBundle
+): express.Router {
   const router = express.Router();
+  const authTarget = repos ?? store;
 
   // --- Authoritative Cart / Checkout Pricing Verification ---
   router.post('/api/checkout/calculate', async (req, res) => {
@@ -115,18 +121,25 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
       return res.status(400).json({ ok: false, message: 'نام و شماره موبایل معتبر برای ثبت سفارش الزامی است.' });
     }
 
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
     let authenticatedMobile: string | null = mobSession ? mobSession.mobile : null;
 
     if (parsed.verifiedToken) {
       const vHash = hashToken(parsed.verifiedToken);
-      const vRecord = store.data.otpVerifiedTokens[vHash];
+      const vRecord = repos
+        ? await repos.authSessions.getVerifiedToken(vHash)
+        : store.data.otpVerifiedTokens[vHash];
       if (!vRecord || Date.now() > vRecord.expiresAt || vRecord.mobile !== customerMobile) {
         return res.status(403).json({ ok: false, message: 'توکن تایید شماره موبایل نامعتبر یا منقضی شده است.' });
       }
       authenticatedMobile = vRecord.mobile;
-      vRecord.consumedAt = new Date().toISOString();
-      store.save();
+      const consumedAt = new Date().toISOString();
+      if (repos) {
+        await repos.authSessions.consumeVerifiedToken(vHash, consumedAt);
+      } else {
+        vRecord.consumedAt = consumedAt;
+        store.save();
+      }
     }
 
     const source = authenticatedMobile ? 'otp' : 'guest';
@@ -187,7 +200,7 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
     const query = parseRequestQuery(mobileOrdersQuerySchema, req, res);
     if (!query) return;
 
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
     if (!mobSession) {
       return res.status(401).json({ ok: false, message: 'برای مشاهده سفارش‌های موبایلی ابتدا با کد تایید وارد شوید.' });
     }
@@ -220,7 +233,7 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
     const fbUser = await verifyFirebaseUser(req);
     const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'orders:update_status') : null;
     const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
     const orderToken = parsed.orderToken || extractOrderToken(req);
 
     const result = await orderService.cancelOrder({
@@ -241,7 +254,7 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
   // --- Authoritative Server Proforma Creation & Response ---
   router.post('/api/proformas', async (req, res) => {
     const fbUser = await verifyFirebaseUser(req);
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
     if (!fbUser && !mobSession) {
       return res.status(401).json({ ok: false, message: 'برای صدور پیش‌فاکتور رسمی لطفاً ابتدا وارد حساب کاربری یا نشست موبایلی شوید.' });
     }
@@ -275,7 +288,7 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
 
   router.get('/api/proformas', async (req, res) => {
     const fbUser = await verifyFirebaseUser(req);
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
     if (!fbUser && !mobSession) {
       return res.status(401).json({ ok: false, message: 'احراز هویت الزامی است.' });
     }
@@ -291,7 +304,7 @@ export function createCheckoutRouter(store: ServerStore, orderService: OrderServ
 
   router.post('/api/proformas/:id/respond', async (req, res) => {
     const fbUser = await verifyFirebaseUser(req);
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(authTarget, req);
     if (!fbUser && !mobSession) {
       return res.status(401).json({ ok: false, message: 'احراز هویت الزامی است.' });
     }

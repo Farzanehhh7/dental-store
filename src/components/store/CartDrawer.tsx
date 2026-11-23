@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Minus, Plus, ShoppingBag, Trash2, X } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { formatMoney, toPersianDigits } from '../../lib/jalali';
+import { buildResponsiveImageProps } from '../../lib/media';
 import { resolveVariantPrice } from '../../lib/pricing';
 
 export default function CartDrawer() {
@@ -93,7 +94,10 @@ export default function CartDrawer() {
               {lineItems.map(({ ci, product, variant, unitPrice, lineTotal }) => (
                 <div key={variant.id} className="py-4 flex gap-3">
                   <img
-                    src={product.imageUrl}
+                    {...buildResponsiveImageProps(product.imageUrl, {
+                      widths: [144, 288],
+                      sizes: '72px',
+                    })}
                     alt={product.titleFa}
                     width={72}
                     height={54}

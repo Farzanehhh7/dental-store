@@ -17,6 +17,7 @@ import ProductCard from '../components/store/ProductCard';
 import { useStore } from '../context/StoreContext';
 import { trackEcommerceEvent } from '../lib/analytics';
 import { formatJalaliDateTime, formatMoney, toPersianDigits } from '../lib/jalali';
+import { buildResponsiveImageProps } from '../lib/media';
 import { resolveVariantPrice } from '../lib/pricing';
 import { applySeoHead } from '../lib/seo';
 import { Order, OrderItem, PaymentMethod } from '../types/domain';
@@ -201,8 +202,13 @@ export function CartPage() {
                 <div key={variant.id} className="p-5 flex flex-col sm:flex-row gap-4 sm:items-center">
                   <Link to={`/product/${product.slug}`} className="shrink-0">
                     <img
-                      src={product.imageUrl}
+                      {...buildResponsiveImageProps(product.imageUrl, {
+                        widths: [160, 320],
+                        sizes: '112px',
+                      })}
                       alt={product.titleFa}
+                      width={112}
+                      height={80}
                       className="w-28 h-20 object-cover rounded-xl bg-surface border border-line dark:border-slate-800"
                     />
                   </Link>

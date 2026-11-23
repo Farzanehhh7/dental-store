@@ -16,6 +16,7 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { t } from '../../lib/i18n';
 import { toPersianDigits } from '../../lib/jalali';
+import { buildResponsiveImageProps } from '../../lib/media';
 import { scoreSearchMatch } from '../../lib/persian-search';
 import { getProductPriceSummary } from '../../lib/pricing';
 import CartDrawer from './CartDrawer';
@@ -451,7 +452,16 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
                       onClick={() => setSearchOpen(false)}
                       className="flex items-center gap-3 px-4 py-3 hover:bg-surface dark:hover:bg-slate-800 transition-colors"
                     >
-                      <img src={product.imageUrl} alt={product.titleFa} className="w-12 h-9 object-cover rounded bg-surface" />
+                      <img
+                        {...buildResponsiveImageProps(product.imageUrl, {
+                          widths: [96, 192],
+                          sizes: '48px',
+                        })}
+                        alt={product.titleFa}
+                        width={48}
+                        height={36}
+                        className="w-12 h-9 object-cover rounded bg-surface"
+                      />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold truncate">{product.titleFa}</p>
                         <p className="text-xs text-ink/50 dark:text-slate-400 tabular-nums">

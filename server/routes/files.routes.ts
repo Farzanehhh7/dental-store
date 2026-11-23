@@ -7,6 +7,7 @@ import { validateServerEnv } from '../config/env';
 import { verifyFirebaseAdmin } from '../lib/adminAuth';
 import type { ServerStore, UploadedFileRecord } from '../persistence';
 import type { RepositoryBundle } from '../repositories';
+import { createFileRepositories } from '../repositories/fileRepositories';
 import { fileUploadJsonBodySchema, parseRequestBody } from '../validation';
 
 const ALLOWED_EXTENSION_MAP: Record<
@@ -73,6 +74,7 @@ export function createFilesRouter(
 ): express.Router {
   const router = express.Router();
   const uploadJsonParser = express.json({ limit: '8mb' });
+  const activeRepos = options?.repos ?? createFileRepositories(store);
 
   // --- Honest Regulatory / Technical Certificate Lookup & Download ---
   router.get('/api/files/certificate', async (req, res) => {
@@ -134,7 +136,7 @@ export function createFilesRouter(
     if (!bodyCheck) return;
 
     const fbUser = await verifyFirebaseUser(req);
-    const mobSession = resolveMobileSession(store, req);
+    const mobSession = await resolveMobileSession(activeRepos, req);
     let actorUid = fbUser?.uid || (mobSession ? `mobile:${mobSession.mobile}` : '');
     let actorEmail = fbUser?.email || actorUid;
 
@@ -188,7 +190,7 @@ export function createFilesRouter(
     }
 
     const uploadDir = resolveUploadsDir(options?.dataDir);
-    fs.mkdirSync(uploadDir, { recursive: true });
+    await fs.promises.mkdir(uploadDir, { recursive: true });
     const fileId = `fil_${crypto.randomBytes(8).toString('hex')}`;
     const storedName = `${crypto.randomUUID()}${extRule.canonicalExt}`;
     const resolvedTarget = path.resolve(uploadDir, storedName);
@@ -196,7 +198,7 @@ export function createFilesRouter(
       return res.status(400).json({ ok: false, message: 'مسیر ذخیره‌سازی نامعتبر است.' });
     }
 
-    fs.writeFileSync(resolvedTarget, buf);
+    await fs.promises.writeFile(resolvedTarget, buf);
     const record: UploadedFileRecord = {
       id: fileId,
       storedName,
@@ -207,8 +209,7 @@ export function createFilesRouter(
       ownerUid: actorUid,
       createdAt: new Date().toISOString(),
     };
-    store.data.uploadedFiles[fileId] = record;
-    store.save();
+    await activeRepos.engagement.saveUploadedFile(record);
 
     if (bodyCheck.purpose !== 'b2b_doc' && options?.repos) {
       await options.repos.audit.append({
@@ -245,14 +246,14 @@ export function createFilesRouter(
       return res.status(400).json({ ok: false, message: 'شناسه فایل نامعتبر است.' });
     }
 
-    const record = store.data.uploadedFiles[fileId];
+    const record = await activeRepos.engagement.getUploadedFile(fileId);
     if (!record) {
       return res.status(404).json({ ok: false, message: 'فایل درخواستی یافت نشد.' });
     }
 
     if (record.purpose === 'b2b_doc') {
       const fbUser = await verifyFirebaseUser(req);
-      const mobSession = resolveMobileSession(store, req);
+      const mobSession = await resolveMobileSession(activeRepos, req);
       const adminCheck = fbUser ? await verifyFirebaseAdmin(req, 'users:manage_group') : null;
       const isAdmin = Boolean(adminCheck && !('errorStatus' in adminCheck));
       const callerUid = fbUser?.uid || (mobSession ? `mobile:${mobSession.mobile}` : '');

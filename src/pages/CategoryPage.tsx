@@ -6,6 +6,7 @@ import { useStore } from '../context/StoreContext';
 import { toPersianDigits } from '../lib/jalali';
 import { getProductPriceSummary } from '../lib/pricing';
 import { applySeoHead, buildBreadcrumbJsonLd } from '../lib/seo';
+import type { Product } from '../types/domain';
 
 type SortOption = 'newest' | 'best_selling' | 'price_asc' | 'price_desc' | 'discount';
 
@@ -33,6 +34,15 @@ export default function CategoryPage() {
   const [attrFilters, setAttrFilters] = useState<Record<string, string[]>>({});
   const [sortBy, setSortBy] = useState<SortOption>((searchParams.get('sort') as SortOption) || 'best_selling');
   const [page, setPage] = useState(Number(searchParams.get('page') || 1));
+  const [serverData, setServerData] = useState<{
+    items: Product[];
+    total: number;
+    totalPages: number;
+    facets?: {
+      brands?: Array<{ id: string; slug: string; nameFa: string; nameEn: string; count: number }>;
+      origins?: Array<{ code: string; nameFa: string; count: number }>;
+    };
+  } | null>(null);
 
   useEffect(() => {
     if (routeBrand) setSelectedBrands([routeBrand.id]);
@@ -41,6 +51,7 @@ export default function CategoryPage() {
       setSelectedBrands(bParam ? bParam.split(',').filter(Boolean) : []);
     }
     setPage(Number(searchParams.get('page') || 1));
+    setServerData(null);
   }, [slug, brandSlug]);
 
   // Bidirectional URL Query Parameter Synchronization
@@ -69,6 +80,50 @@ export default function CategoryPage() {
     );
   }, [category, categories, products]);
 
+  useEffect(() => {
+    if (!category) {
+      setServerData(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    const qs = new URLSearchParams({
+      category: category.slug,
+      sort: sortBy,
+      group: customerGroup,
+      page: String(page),
+      limit: '12',
+    });
+    if (selectedBrands.length > 0) qs.set('brand', selectedBrands.join(','));
+    if (selectedOrigins.length > 0) qs.set('origin', selectedOrigins.join(','));
+    if (onlyInStock) qs.set('inStock', '1');
+    if (onlyDiscount) qs.set('discount', '1');
+    if (minPrice) qs.set('minPrice', minPrice);
+    if (maxPrice) qs.set('maxPrice', maxPrice);
+    const activeAttrs = Object.fromEntries(
+      Object.entries(attrFilters).filter(([, vals]) => vals.length > 0)
+    );
+    if (Object.keys(activeAttrs).length > 0) {
+      qs.set('attrs', JSON.stringify(activeAttrs));
+    }
+
+    fetch(`/api/catalog/products?${qs.toString()}`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.ok && Array.isArray(data.items)) {
+          setServerData({
+            items: data.items as Product[],
+            total: Number(data.total ?? data.items.length),
+            totalPages: Number(data.totalPages ?? 1),
+            facets: data.facets,
+          });
+        }
+      })
+      .catch(() => {
+        // Offline or local-only fallback uses client-side filteredProducts
+      });
+    return () => ctrl.abort();
+  }, [category, selectedBrands, selectedOrigins, onlyInStock, onlyDiscount, minPrice, maxPrice, attrFilters, sortBy, customerGroup, page]);
+
   // Dynamic attributes configured for this category
   const categoryAttrs = useMemo(() => {
     if (!category) return [];
@@ -76,18 +131,29 @@ export default function CategoryPage() {
   }, [category, attributes]);
 
   const availableBrands = useMemo(() => {
+    if (serverData?.facets?.brands) {
+      return serverData.facets.brands
+        .map((fb) => {
+          const brand = brands.find((b) => b.id === fb.id);
+          return brand ? { brand, count: fb.count } : null;
+        })
+        .filter((x): x is { brand: (typeof brands)[number]; count: number } => x !== null);
+    }
     const counts = new Map<string, number>();
     categoryProducts.forEach((p) => counts.set(p.brandId, (counts.get(p.brandId) ?? 0) + 1));
     return brands
       .filter((b) => counts.has(b.id))
       .map((b) => ({ brand: b, count: counts.get(b.id) ?? 0 }));
-  }, [categoryProducts, brands]);
+  }, [serverData?.facets?.brands, categoryProducts, brands]);
 
   const availableOrigins = useMemo(() => {
+    if (serverData?.facets?.origins) {
+      return serverData.facets.origins.map((o) => [o.nameFa, o.count] as [string, number]);
+    }
     const counts = new Map<string, number>();
     categoryProducts.forEach((p) => counts.set(p.originCountryFa, (counts.get(p.originCountryFa) ?? 0) + 1));
     return Array.from(counts.entries());
-  }, [categoryProducts]);
+  }, [serverData?.facets?.origins, categoryProducts]);
 
   const filteredProducts = useMemo(() => {
     const minP = minPrice ? Number(minPrice) : null;
@@ -226,8 +292,9 @@ export default function CategoryPage() {
 
   const subCategories = categories.filter((c) => c.parentId === category.id && c.isActive);
   const perPage = 12;
-  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / perPage));
-  const pagedProducts = filteredProducts.slice((page - 1) * perPage, page * perPage);
+  const totalCount = serverData ? serverData.total : filteredProducts.length;
+  const totalPages = serverData ? serverData.totalPages : Math.max(1, Math.ceil(filteredProducts.length / perPage));
+  const pagedProducts = serverData ? serverData.items : filteredProducts.slice((page - 1) * perPage, page * perPage);
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
@@ -251,7 +318,7 @@ export default function CategoryPage() {
             {routeBrand ? `${category.nameFa} ${routeBrand.nameFa}` : category.nameFa}
           </h1>
           <span className="text-xs text-ink/60 dark:text-slate-400 tabular-nums">
-            {toPersianDigits(filteredProducts.length)} محصول
+            {toPersianDigits(totalCount)} محصول
           </span>
         </div>
         <p className="text-sm text-ink/75 dark:text-slate-300 leading-relaxed max-w-4xl">

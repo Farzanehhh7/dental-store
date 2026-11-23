@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import {
   CustomerGroupCode,
+  NewsletterSubscriber,
+  NotFoundLog,
   Order,
   OrderBatchAllocation,
   PaymentLedgerEntry,
@@ -8,10 +10,12 @@ import {
   ProductVariant,
   ProformaInvoice,
   ReturnRequest,
+  RfqRequest,
   StockBatch,
   StockBatchRecord,
   StockLevel,
   StockMovement,
+  StockNotification,
   Warehouse,
 } from '../../src/types/domain';
 import { SEED_WAREHOUSES } from '../../src/data/expandedCatalog';
@@ -27,7 +31,10 @@ import {
 import { normalizeDigits, parseFilterDateBoundary } from './dateUtils';
 import {
   AuditRepository,
+  AuthSessionRepository,
   CatalogRepository,
+  CatalogSnapshotPatch,
+  EngagementRepository,
   OrderQueryFilter,
   OrderRepository,
   PaginatedResult,
@@ -35,6 +42,7 @@ import {
   ProformaRepository,
   RepositoryBundle,
   ReturnRepository,
+  RfqRepository,
   StockAdjustParams,
   StockItemDelta,
   StockMovementContext,
@@ -100,6 +108,19 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
   let lockChain: Promise<void> = Promise.resolve();
   let txDepth = 0;
   let txNeedsSave = false;
+  let catalogVersion = 1;
+  const catalogListeners = new Set<() => void>();
+
+  const notifyCatalogChanged = () => {
+    catalogVersion += 1;
+    for (const listener of catalogListeners) {
+      try {
+        listener();
+      } catch {
+        // Listener errors should not abort writes
+      }
+    }
+  };
 
   const persistIfOutsideTx = () => {
     if (txDepth > 0) {
@@ -465,6 +486,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
 
       store.data.catalogState.updatedAt = nowIso;
       persistIfOutsideTx();
+      notifyCatalogChanged();
       return { ok: true, allocationsByItem };
     },
 
@@ -555,6 +577,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
 
       store.data.catalogState.updatedAt = nowIso;
       persistIfOutsideTx();
+      notifyCatalogChanged();
     },
 
     async releaseItems(items: StockItemDelta[], ctx?: StockMovementContext) {
@@ -638,6 +661,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
 
       store.data.catalogState.updatedAt = nowIso;
       persistIfOutsideTx();
+      notifyCatalogChanged();
     },
 
     async incrementCouponUsage(couponCode: string) {
@@ -656,6 +680,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
         coupon.usageCount += 1;
         store.data.catalogState.updatedAt = new Date().toISOString();
         persistIfOutsideTx();
+        notifyCatalogChanged();
       }
     },
 
@@ -772,6 +797,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
 
       store.data.catalogState.updatedAt = nowIso;
       persistIfOutsideTx();
+      notifyCatalogChanged();
       return { ok: true, stockLevel: lvl, ...(touchedBatch ? { batch: touchedBatch } : {}), movement };
     },
 
@@ -840,6 +866,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
 
       store.data.catalogState.updatedAt = nowIso;
       persistIfOutsideTx();
+      notifyCatalogChanged();
       return { ok: true, stockLevel: lvl, movement };
     },
 
@@ -981,6 +1008,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
       syncVariantAggregates(pv.variant);
       store.data.catalogState.updatedAt = nowIso;
       persistIfOutsideTx();
+      notifyCatalogChanged();
       return { ok: true, batch };
     },
 
@@ -1105,6 +1133,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
 
       store.data.catalogState.updatedAt = nowIso;
       persistIfOutsideTx();
+      notifyCatalogChanged();
       return { ok: true, movements, warehouseId: wh.id };
     },
 
@@ -1233,13 +1262,36 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
       }
       persistIfOutsideTx();
     },
-    async saveCatalogCollections(patch) {
+    async saveCatalogCollections(patch: CatalogSnapshotPatch) {
       if (patch.categories) store.data.catalogState.categories = patch.categories;
       if (patch.brands) store.data.catalogState.brands = patch.brands;
       if (patch.products) store.data.catalogState.products = patch.products;
+      if (patch.campaigns) store.data.catalogState.campaigns = patch.campaigns;
+      if (patch.bundles) store.data.catalogState.bundles = patch.bundles;
+      if (patch.agents) store.data.catalogState.agents = patch.agents;
+      if (patch.blogPosts) store.data.catalogState.blogPosts = patch.blogPosts;
+      if (patch.pages) store.data.catalogState.pages = patch.pages;
       if (patch.redirects) store.data.catalogState.redirects = patch.redirects;
+      if (patch.coupons) store.data.catalogState.coupons = patch.coupons;
+      if (patch.contractPrices) store.data.catalogState.contractPrices = patch.contractPrices;
+      if (patch.settings) store.data.catalogState.settings = patch.settings;
       store.data.catalogState.updatedAt = patch.updatedAt ?? new Date().toISOString();
       persistIfOutsideTx();
+      notifyCatalogChanged();
+    },
+    async incrementRedirectHits(deltas: Record<string, number>) {
+      let anyUpdated = false;
+      for (const [id, delta] of Object.entries(deltas)) {
+        if (!Number.isFinite(delta) || delta <= 0) continue;
+        const target = store.data.catalogState.redirects.find((r) => r.id === id);
+        if (target) {
+          target.hitCount = (target.hitCount || 0) + Math.floor(delta);
+          anyUpdated = true;
+        }
+      }
+      if (anyUpdated) {
+        persistIfOutsideTx();
+      }
     },
   };
 
@@ -1282,6 +1334,202 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
     },
   };
 
+  const authSessions: AuthSessionRepository = {
+    async getOtpChallenge(mobile) {
+      const rec = store.data.otpChallenges[mobile];
+      if (!rec) return null;
+      if (Date.now() > rec.expiresAt) {
+        delete store.data.otpChallenges[mobile];
+        persistIfOutsideTx();
+        return null;
+      }
+      return rec;
+    },
+    async setOtpChallenge(mobile, record) {
+      store.data.otpChallenges[mobile] = record;
+      persistIfOutsideTx();
+    },
+    async deleteOtpChallenge(mobile) {
+      if (store.data.otpChallenges[mobile]) {
+        delete store.data.otpChallenges[mobile];
+        persistIfOutsideTx();
+      }
+    },
+    async getOtpLockout(mobile) {
+      const rec = store.data.otpLockouts[mobile];
+      if (!rec) return null;
+      if (Date.now() >= rec.lockedUntil) {
+        delete store.data.otpLockouts[mobile];
+        persistIfOutsideTx();
+        return null;
+      }
+      return rec;
+    },
+    async setOtpLockout(mobile, record) {
+      store.data.otpLockouts[mobile] = record;
+      persistIfOutsideTx();
+    },
+    async deleteOtpLockout(mobile) {
+      if (store.data.otpLockouts[mobile]) {
+        delete store.data.otpLockouts[mobile];
+        persistIfOutsideTx();
+      }
+    },
+    async getPhoneSendHistory(mobile, cutoffMs) {
+      const list = (store.data.otpPhoneSendHistory[mobile] || []).filter((ts) => ts > cutoffMs);
+      return list;
+    },
+    async setPhoneSendHistory(mobile, timestamps) {
+      if (timestamps.length === 0) {
+        delete store.data.otpPhoneSendHistory[mobile];
+      } else {
+        store.data.otpPhoneSendHistory[mobile] = timestamps;
+      }
+      persistIfOutsideTx();
+    },
+    async getVerifiedToken(tokenHash) {
+      const rec = store.data.otpVerifiedTokens[tokenHash];
+      if (!rec) return null;
+      if (Date.now() > rec.expiresAt) {
+        delete store.data.otpVerifiedTokens[tokenHash];
+        persistIfOutsideTx();
+        return null;
+      }
+      return rec;
+    },
+    async saveVerifiedToken(record) {
+      store.data.otpVerifiedTokens[record.tokenHash] = record;
+      persistIfOutsideTx();
+    },
+    async consumeVerifiedToken(tokenHash, consumedAt) {
+      const rec = store.data.otpVerifiedTokens[tokenHash];
+      if (rec) {
+        rec.consumedAt = consumedAt;
+        persistIfOutsideTx();
+      }
+    },
+    async getMobileSession(tokenHash) {
+      const rec = store.data.mobileSessions[tokenHash];
+      if (!rec) return null;
+      if (Date.now() > rec.expiresAt) {
+        delete store.data.mobileSessions[tokenHash];
+        persistIfOutsideTx();
+        return null;
+      }
+      return rec;
+    },
+    async saveMobileSession(record) {
+      store.data.mobileSessions[record.tokenHash] = record;
+      persistIfOutsideTx();
+    },
+    async deleteMobileSession(tokenHash) {
+      if (store.data.mobileSessions[tokenHash]) {
+        delete store.data.mobileSessions[tokenHash];
+        persistIfOutsideTx();
+      }
+    },
+    async pruneExpired() {
+      store.pruneExpired();
+    },
+  };
+
+  const rfqs: RfqRepository = {
+    async getById(id) {
+      return store.data.rfqs[id] ?? null;
+    },
+    async list(filter) {
+      let list = Object.values(store.data.rfqs)
+        .filter((r) => !filter?.status || r.status === filter.status)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      if (filter?.limit && filter.limit > 0) {
+        list = list.slice(0, filter.limit);
+      }
+      return list;
+    },
+    async save(rfq) {
+      store.data.rfqs[rfq.id] = rfq;
+      persistIfOutsideTx();
+    },
+  };
+
+  let notFoundDirty = false;
+  const engagement: EngagementRepository = {
+    async record404Hit(id, hitPath, lastSeenAt) {
+      const existing = store.data.notFoundLogs[id];
+      const nextLog: NotFoundLog = {
+        id,
+        path: hitPath,
+        hitCount: (existing?.hitCount ?? 0) + 1,
+        lastSeenAt,
+      };
+      store.data.notFoundLogs[id] = nextLog;
+      notFoundDirty = true;
+      return nextLog;
+    },
+    async flush404Hits() {
+      if (!notFoundDirty) return;
+      notFoundDirty = false;
+      persistIfOutsideTx();
+    },
+    async list404Logs() {
+      return Object.values(store.data.notFoundLogs).sort(
+        (a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime()
+      );
+    },
+    async findNewsletterByContact(contact) {
+      const clean = contact.trim().toLowerCase();
+      return (
+        Object.values(store.data.newsletterSubscribers).find((s) => s.contact.toLowerCase() === clean) ?? null
+      );
+    },
+    async saveNewsletterSubscriber(sub) {
+      store.data.newsletterSubscribers[sub.id] = sub;
+      persistIfOutsideTx();
+    },
+    async listNewsletterSubscribers() {
+      return Object.values(store.data.newsletterSubscribers).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    },
+    async getStockNotification(id) {
+      return store.data.stockNotifications[id] ?? null;
+    },
+    async saveStockNotification(item) {
+      store.data.stockNotifications[item.id] = item;
+      persistIfOutsideTx();
+    },
+    async listStockNotifications() {
+      return Object.values(store.data.stockNotifications).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    },
+    async getUploadedFile(id) {
+      return store.data.uploadedFiles[id] ?? null;
+    },
+    async saveUploadedFile(record) {
+      store.data.uploadedFiles[record.id] = record;
+      persistIfOutsideTx();
+    },
+    async getImportJob(id) {
+      return store.data.importJobs.find((j) => j.id === id) ?? null;
+    },
+    async listImportJobs(limit = 100) {
+      return store.data.importJobs.slice(0, limit);
+    },
+    async saveImportJob(job) {
+      const idx = store.data.importJobs.findIndex((j) => j.id === job.id);
+      if (idx >= 0) {
+        store.data.importJobs[idx] = job;
+      } else {
+        store.data.importJobs.unshift(job);
+        if (store.data.importJobs.length > 100) {
+          store.data.importJobs.length = 100;
+        }
+      }
+      persistIfOutsideTx();
+    },
+  };
+
   async function runTransaction<T>(fn: () => Promise<T>): Promise<T> {
     if (txDepth > 0) {
       // Nested inside already held mutex
@@ -1317,6 +1565,15 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
     catalog,
     proformas,
     audit,
+    authSessions,
+    rfqs,
+    engagement,
+    getCatalogVersion: () => catalogVersion,
+    onCatalogChange: (listener) => {
+      catalogListeners.add(listener);
+      return () => catalogListeners.delete(listener);
+    },
+    notifyCatalogChanged,
     runTransaction,
   };
 }
