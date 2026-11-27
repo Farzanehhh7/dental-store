@@ -1,10 +1,14 @@
 import crypto from 'node:crypto';
 import {
+  AbandonedCartRecord,
+  CampaignRun,
   CustomerGroupCode,
+  MarketingConsentRecord,
   NewsletterSubscriber,
   NotFoundLog,
   Order,
   OrderBatchAllocation,
+  OutboxMessage,
   PaymentLedgerEntry,
   Product,
   ProductVariant,
@@ -16,6 +20,7 @@ import {
   StockLevel,
   StockMovement,
   StockNotification,
+  SuppressionEntry,
   Warehouse,
 } from '../../src/types/domain';
 import { SEED_WAREHOUSES } from '../../src/data/expandedCatalog';
@@ -35,6 +40,7 @@ import {
   CatalogRepository,
   CatalogSnapshotPatch,
   EngagementRepository,
+  MarketingRepository,
   OrderQueryFilter,
   OrderRepository,
   PaginatedResult,
@@ -1530,6 +1536,103 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
     },
   };
 
+  const marketing: MarketingRepository = {
+    async saveOutboxMessage(msg) {
+      store.data.outboxMessages[msg.id] = msg;
+      persistIfOutsideTx();
+    },
+    async getOutboxMessage(id) {
+      return store.data.outboxMessages[id] ?? null;
+    },
+    async listOutboxMessages(filter) {
+      let list = Object.values(store.data.outboxMessages)
+        .filter((m) => (!filter?.status || m.status === filter.status) && (!filter?.channel || m.channel === filter.channel))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (filter?.limit && filter.limit > 0) {
+        list = list.slice(0, filter.limit);
+      }
+      return list;
+    },
+    async saveCampaignRun(run) {
+      store.data.campaignRuns[run.id] = run;
+      persistIfOutsideTx();
+    },
+    async listCampaignRuns(limit = 50) {
+      return Object.values(store.data.campaignRuns)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, limit);
+    },
+    async getConsentByKey(ownerKey) {
+      return store.data.marketingConsents[ownerKey] ?? null;
+    },
+    async findConsentByContact(contact) {
+      const clean = contact.trim().toLowerCase();
+      const normMob = clean.includes('@') ? '' : normalizeMobile(clean);
+      return (
+        Object.values(store.data.marketingConsents).find((c) => {
+          if (c.email && c.email.trim().toLowerCase() === clean) return true;
+          if (c.mobile && normMob && normalizeMobile(c.mobile) === normMob) return true;
+          return false;
+        }) ?? null
+      );
+    },
+    async saveConsent(consent) {
+      store.data.marketingConsents[consent.ownerKey] = consent;
+      persistIfOutsideTx();
+    },
+    async listConsents() {
+      return Object.values(store.data.marketingConsents).sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
+    },
+    async getSuppressionByContact(contact) {
+      const clean = contact.trim().toLowerCase();
+      const normMob = clean.includes('@') ? '' : normalizeMobile(clean);
+      return (
+        Object.values(store.data.suppressionList).find((s) => {
+          const sc = s.contact.trim().toLowerCase();
+          if (sc === clean) return true;
+          if (normMob && !sc.includes('@') && normalizeMobile(sc) === normMob) return true;
+          return false;
+        }) ?? null
+      );
+    },
+    async saveSuppression(entry) {
+      store.data.suppressionList[entry.id] = entry;
+      persistIfOutsideTx();
+    },
+    async deleteSuppression(id) {
+      if (!store.data.suppressionList[id]) return false;
+      delete store.data.suppressionList[id];
+      persistIfOutsideTx();
+      return true;
+    },
+    async listSuppressions() {
+      return Object.values(store.data.suppressionList).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    },
+    async getAbandonedCart(id) {
+      return store.data.abandonedCarts[id] ?? null;
+    },
+    async findAbandonedCartByOwner(ownerKey) {
+      return (
+        Object.values(store.data.abandonedCarts).find((c) => c.ownerKey === ownerKey && c.status !== 'recovered') ??
+        Object.values(store.data.abandonedCarts).find((c) => c.ownerKey === ownerKey) ??
+        null
+      );
+    },
+    async listAbandonedCarts(status) {
+      return Object.values(store.data.abandonedCarts)
+        .filter((c) => !status || c.status === status)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    },
+    async saveAbandonedCart(cart) {
+      store.data.abandonedCarts[cart.id] = cart;
+      persistIfOutsideTx();
+    },
+  };
+
   async function runTransaction<T>(fn: () => Promise<T>): Promise<T> {
     if (txDepth > 0) {
       // Nested inside already held mutex
@@ -1568,6 +1671,7 @@ export function createFileRepositories(store: ServerStore): RepositoryBundle {
     authSessions,
     rfqs,
     engagement,
+    marketing,
     getCatalogVersion: () => catalogVersion,
     onCatalogChange: (listener) => {
       catalogListeners.add(listener);

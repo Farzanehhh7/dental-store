@@ -199,6 +199,7 @@ export interface StoreContextValue {
 
   // Cart & Storefront State
   cart: CartItem[];
+  cartPendingVariantIds: string[];
   cartOpen: boolean;
   setCartOpen: (open: boolean) => void;
   addToCart: (productId: string, variantId: string, qty?: number) => void;

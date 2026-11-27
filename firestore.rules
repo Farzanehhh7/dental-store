@@ -587,5 +587,36 @@ service cloud.firestore {
       allow create, update, delete: if isSuperAdmin() && isValidId(uid)
         && (!('role' in incoming()) || incoming().role in ['super_admin', 'admin', 'sales_mgr', 'warehouse', 'content', 'support', 'accountant']);
     }
+
+    // --- Phase 9: Marketing Automation Collections (Server-Written Only) ---
+    match /outboxMessages/{msgId} {
+      allow get: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) && isValidId(msgId);
+      allow list: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']);
+      allow create, update, delete: if false;
+    }
+
+    match /campaignRuns/{runId} {
+      allow get: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) && isValidId(runId);
+      allow list: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']);
+      allow create, update, delete: if false;
+    }
+
+    match /marketingConsents/{consentId} {
+      allow get: if isValidId(consentId) && (hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    match /suppressionList/{entryId} {
+      allow get: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) && isValidId(entryId);
+      allow list: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']);
+      allow create, update, delete: if false;
+    }
+
+    match /abandonedCarts/{cartId} {
+      allow get: if isValidId(cartId) && (hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if hasRole(['super_admin', 'admin', 'sales_mgr', 'content']) || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create, update, delete: if false;
+    }
   }
 }

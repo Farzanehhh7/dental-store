@@ -1,22 +1,7 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Area,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ComposedChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import {
   AlertTriangle,
-  ArrowUpLeft,
   Calendar,
   Clock,
   CreditCard,
@@ -32,25 +17,16 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { daysUntil, formatJalaliDate, formatMoney, formatNumber, toPersianDigits } from '../../lib/jalali';
+import { useI18n } from '../../context/i18n';
+import { ChartSkeleton, EmptyState } from '../../components/ui/States';
+import { daysUntil } from '../../lib/jalali';
 import { getVariantAvailableStock } from '../../lib/pricing';
 import { auditSeoHealth, findOrphanProducts } from '../../lib/seo';
 import { canSeeCostPrice } from '../../components/admin/rbac';
 
+const DashboardCharts = lazy(() => import('../../components/admin/DashboardCharts'));
+
 type RangePreset = 'today' | 'yesterday' | '7d' | '30d' | '90d' | 'year' | 'all' | 'custom';
-
-const CHART_COLORS = ['#17788C', '#0F5667', '#2A9D8F', '#E9C46A', '#E76F51', '#64748B', '#8B5CF6'];
-
-function formatDeltaBadge(current: number, previous: number): { text: string; positive: boolean } {
-  if (previous <= 0) {
-    return current > 0 ? { text: '+۱۰۰٪ نسبت به دوره قبل', positive: true } : { text: '۰٪ بدون تغییر', positive: true };
-  }
-  const pct = Math.round(((current - previous) / previous) * 100);
-  return {
-    text: `${pct >= 0 ? '+' : '−'}${toPersianDigits(Math.abs(pct))}٪ نسبت به دوره قبل`,
-    positive: pct >= 0,
-  };
-}
 
 export default function AdminDashboardHome() {
   const {
@@ -75,12 +51,26 @@ export default function AdminDashboardHome() {
     settings,
     reviewB2BVerification,
   } = useStore();
+  const { t, formatDate, formatDigits, formatMoney } = useI18n();
 
   const [range, setRange] = useState<RangePreset>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
   const showCostMetrics = canSeeCostPrice(actualAdminRole ?? activeAdminRole);
+
+  const formatDeltaBadge = (current: number, previous: number): { text: string; positive: boolean } => {
+    if (previous <= 0) {
+      return current > 0
+        ? { text: t('adminDash.deltaPlus100'), positive: true }
+        : { text: t('adminDash.deltaZero'), positive: true };
+    }
+    const pct = Math.round(((current - previous) / previous) * 100);
+    return {
+      text: t('adminDash.deltaPct', { sign: pct >= 0 ? '+' : '−', pct: formatDigits(Math.abs(pct)) }),
+      positive: pct >= 0,
+    };
+  };
 
   const costLookup = useMemo(() => {
     const map = new Map<string, number>();
@@ -102,12 +92,12 @@ export default function AdminDashboardHome() {
       const end = toDate ? new Date(toDate).getTime() + 86400000 : now;
       const span = Math.max(86400000, end - start);
       const curr = orders.filter((o) => {
-        const t = new Date(o.createdAt).getTime();
-        return t >= start && t <= end;
+        const tm = new Date(o.createdAt).getTime();
+        return tm >= start && tm <= end;
       });
       const prev = orders.filter((o) => {
-        const t = new Date(o.createdAt).getTime();
-        return t >= start - span && t < start;
+        const tm = new Date(o.createdAt).getTime();
+        return tm >= start - span && tm < start;
       });
       return { filteredOrders: curr, previousOrders: prev };
     }
@@ -126,12 +116,12 @@ export default function AdminDashboardHome() {
 
     return {
       filteredOrders: orders.filter((o) => {
-        const t = new Date(o.createdAt).getTime();
-        return Number.isNaN(t) ? true : t >= startCutoff && t <= endCutoff;
+        const tm = new Date(o.createdAt).getTime();
+        return Number.isNaN(tm) ? true : tm >= startCutoff && tm <= endCutoff;
       }),
       previousOrders: orders.filter((o) => {
-        const t = new Date(o.createdAt).getTime();
-        return !Number.isNaN(t) && t >= prevStart && t < startCutoff;
+        const tm = new Date(o.createdAt).getTime();
+        return !Number.isNaN(tm) && tm >= prevStart && tm < startCutoff;
       }),
     };
   }, [orders, range, fromDate, toDate]);
@@ -164,7 +154,7 @@ export default function AdminDashboardHome() {
     const openProformas = proformas.filter((p) => ['draft', 'sent', 'viewed'].includes(p.status)).length;
     const convertedProformas = proformas.filter((p) => p.status === 'converted').length;
     const pendingB2B = b2bVerifications.filter((b) => b.status === 'pending').length;
-    const openTickets = tickets.filter((t) => ['open', 'pending_staff'].includes(t.status)).length;
+    const openTickets = tickets.filter((tk) => ['open', 'pending_staff'].includes(tk.status)).length;
     const returnCount = returns.length;
     const returnRate = valid.length > 0 ? Math.round((returnCount / valid.length) * 1000) / 10 : 0;
 
@@ -234,20 +224,21 @@ export default function AdminDashboardHome() {
     usersList,
     settings,
     costLookup,
+    t,
   ]);
 
   // Charts Data (§10.2)
   const salesTrendData = useMemo(() => {
     const byDay = new Map<string, { label: string; revenue: number; orders: number }>();
     filteredOrders.forEach((o) => {
-      const label = formatJalaliDate(o.createdAt);
+      const label = formatDate(o.createdAt);
       const prev = byDay.get(label) ?? { label, revenue: 0, orders: 0 };
       prev.orders += 1;
       if (o.status !== 'cancelled') prev.revenue += o.grandTotal;
       byDay.set(label, prev);
     });
     return Array.from(byDay.values());
-  }, [filteredOrders]);
+  }, [filteredOrders, formatDate]);
 
   const categoryRevenueData = useMemo(() => {
     const map = new Map<string, number>();
@@ -256,7 +247,7 @@ export default function AdminDashboardHome() {
       .forEach((o) =>
         o.items.forEach((it) => {
           const prod = products.find((p) => p.id === it.productId);
-          const catName = categories.find((c) => c.id === prod?.primaryCategoryId)?.nameFa ?? 'سایر';
+          const catName = categories.find((c) => c.id === prod?.primaryCategoryId)?.nameFa ?? t('common.other');
           map.set(catName, (map.get(catName) ?? 0) + it.lineTotal);
         })
       );
@@ -264,7 +255,7 @@ export default function AdminDashboardHome() {
       .map(([name, revenue]) => ({ name: name.slice(0, 18), revenue }))
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 6);
-  }, [filteredOrders, products, categories]);
+  }, [filteredOrders, products, categories, t]);
 
   const brandRevenueData = useMemo(() => {
     const map = new Map<string, number>();
@@ -273,7 +264,7 @@ export default function AdminDashboardHome() {
       .forEach((o) =>
         o.items.forEach((it) => {
           const prod = products.find((p) => p.id === it.productId);
-          const brName = brands.find((b) => b.id === prod?.brandId)?.nameFa ?? 'سایر';
+          const brName = brands.find((b) => b.id === prod?.brandId)?.nameFa ?? t('common.other');
           map.set(brName, (map.get(brName) ?? 0) + it.lineTotal);
         })
       );
@@ -281,7 +272,7 @@ export default function AdminDashboardHome() {
       .map(([name, revenue]) => ({ name: name.slice(0, 18), revenue }))
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 6);
-  }, [filteredOrders, products, brands]);
+  }, [filteredOrders, products, brands, t]);
 
   const groupSplitData = useMemo(() => {
     const map = new Map<string, number>();
@@ -303,10 +294,10 @@ export default function AdminDashboardHome() {
         else b2b += o.grandTotal;
       });
     return [
-      { name: 'کلینیک و همکار (B2B)', value: b2b },
-      { name: 'مشتری عادی (B2C)', value: b2c },
+      { name: t('adminDash.charts.b2bSegment'), value: b2b },
+      { name: t('adminDash.charts.b2cSegment'), value: b2c },
     ].filter((x) => x.value > 0);
-  }, [filteredOrders]);
+  }, [filteredOrders, t]);
 
   const statusDonutData = useMemo(() => {
     const map = new Map<string, number>();
@@ -327,13 +318,13 @@ export default function AdminDashboardHome() {
   const provinceSalesData = useMemo(() => {
     const map = new Map<string, number>();
     filteredOrders.forEach((o) => {
-      const prov = o.shippingAddress?.province || 'تهران';
+      const prov = o.shippingAddress?.province || t('common.tehran');
       map.set(prov, (map.get(prov) ?? 0) + o.grandTotal);
     });
     return Array.from(map.entries())
       .map(([province, revenue]) => ({ province, revenue }))
       .slice(0, 6);
-  }, [filteredOrders]);
+  }, [filteredOrders, t]);
 
   const topProductsData = useMemo(() => {
     return [...products]
@@ -347,10 +338,10 @@ export default function AdminDashboardHome() {
 
   const expiryRiskBuckets = useMemo(() => {
     const buckets = [
-      { bucket: '۰ تا ۳۰ روز', qty: 0 },
-      { bucket: '۳۱ تا ۶۰ روز', qty: 0 },
-      { bucket: '۶۱ تا ۹۰ روز', qty: 0 },
-      { bucket: '۹۱ تا ۱۸۰ روز', qty: 0 },
+      { bucket: t('adminDash.charts.bucket0_30'), qty: 0 },
+      { bucket: t('adminDash.charts.bucket31_60'), qty: 0 },
+      { bucket: t('adminDash.charts.bucket61_90'), qty: 0 },
+      { bucket: t('adminDash.charts.bucket91_180'), qty: 0 },
     ];
     products.forEach((p) =>
       p.variants.forEach((v) =>
@@ -365,7 +356,7 @@ export default function AdminDashboardHome() {
       )
     );
     return buckets;
-  }, [products]);
+  }, [products, t]);
 
   // Action Queues (§10.3)
   const lowStockRows = useMemo(() => {
@@ -400,89 +391,93 @@ export default function AdminDashboardHome() {
   const unansweredQuestionsCount = questions.filter((q) => !q.answerBody).length;
 
   const kpiCards = [
-    { label: 'فروش خالص (تاییدشده)', value: formatMoney(kpis.revenue, currency), sub: kpis.revenueDelta.text, to: '/admin/reports', icon: TrendingUp },
-    { label: 'فروش ناخالص اقلام', value: formatMoney(kpis.grossSales, currency), sub: `مجموع تخفیف‌ها: ${formatMoney(kpis.totalDiscounts, currency)}`, to: '/admin/reports', icon: TrendingUp },
+    { label: t('adminDash.kpi.netRevenue'), value: formatMoney(kpis.revenue, currency), sub: kpis.revenueDelta.text, to: '/admin/reports', icon: TrendingUp },
+    { label: t('adminDash.kpi.grossSales'), value: formatMoney(kpis.grossSales, currency), sub: t('adminDash.kpi.totalDiscountsSub', { amount: formatMoney(kpis.totalDiscounts, currency) }), to: '/admin/reports', icon: TrendingUp },
     showCostMetrics
-      ? { label: 'سود ناخالص تخمینی', value: formatMoney(kpis.netProfit, currency), sub: 'بر مبنای بهای تمام‌شده محرمانه', to: '/admin/reports', icon: TrendingUp }
-      : { label: 'میانگین ارزش سبد (AOV)', value: formatMoney(kpis.aov, currency), sub: kpis.ordersDelta.text, to: '/admin/reports', icon: ShoppingBag },
-    { label: 'سفارش‌های فعال', value: toPersianDigits(kpis.ordersCount), sub: kpis.ordersDelta.text, to: '/admin/orders', icon: ShoppingBag },
-    { label: 'نرخ تبدیل بازدید', value: `${toPersianDigits(kpis.conversionRate)}٪`, sub: 'نسبت سفارش به بازدید کاتالوگ', to: '/admin/reports', icon: PackageCheck },
-    { label: 'سفارش نیازمند پردازش', value: toPersianDigits(kpis.pendingAction), sub: `${toPersianDigits(kpis.unpaid)} سفارش در انتظار پرداخت`, to: '/admin/orders', icon: CreditCard },
-    { label: 'پیش‌فاکتورهای باز', value: toPersianDigits(kpis.openProformas), sub: `${toPersianDigits(kpis.convertedProformas)} مورد تبدیل به سفارش`, to: '/admin/orders', icon: FileSpreadsheet },
-    { label: 'حساب‌های منتظر تایید B2B', value: toPersianDigits(kpis.pendingB2B), sub: 'در انتظار تایید نظام پزشکی', to: '/admin/customers', icon: UserPlus },
-    { label: 'مشتریان کلینیکی/عادی', value: toPersianDigits(kpis.newUsersCount), sub: 'کاربران ثبت‌شده فعال', to: '/admin/customers', icon: UserPlus },
-    { label: 'کالاهای کم‌موجودی', value: toPersianDigits(kpis.lowStockCount), sub: 'زیر آستانه سفارش مجدد', to: '/admin/inventory', icon: PackageX },
-    { label: 'بچ‌های نزدیک انقضا (FEFO)', value: toPersianDigits(kpis.nearExpiryCount), sub: `کمتر از ${toPersianDigits(settings.nearExpiryThresholdDays)} روز`, to: '/admin/inventory', icon: AlertTriangle },
+      ? { label: t('adminDash.kpi.netProfit'), value: formatMoney(kpis.netProfit, currency), sub: t('adminDash.kpi.netProfitSub'), to: '/admin/reports', icon: TrendingUp }
+      : { label: t('adminDash.kpi.aov'), value: formatMoney(kpis.aov, currency), sub: kpis.ordersDelta.text, to: '/admin/reports', icon: ShoppingBag },
+    { label: t('adminDash.kpi.activeOrders'), value: formatDigits(kpis.ordersCount), sub: kpis.ordersDelta.text, to: '/admin/orders', icon: ShoppingBag },
+    { label: t('adminDash.kpi.conversionRate'), value: t('common.percentValue', { value: formatDigits(kpis.conversionRate) }), sub: t('adminDash.kpi.conversionSub'), to: '/admin/reports', icon: PackageCheck },
+    { label: t('adminDash.kpi.pendingAction'), value: formatDigits(kpis.pendingAction), sub: t('adminDash.kpi.unpaidSub', { count: formatDigits(kpis.unpaid) }), to: '/admin/orders', icon: CreditCard },
+    { label: t('adminDash.kpi.openProformas'), value: formatDigits(kpis.openProformas), sub: t('adminDash.kpi.convertedProformasSub', { count: formatDigits(kpis.convertedProformas) }), to: '/admin/orders', icon: FileSpreadsheet },
+    { label: t('adminDash.kpi.pendingB2B'), value: formatDigits(kpis.pendingB2B), sub: t('adminDash.kpi.pendingB2BSub'), to: '/admin/customers', icon: UserPlus },
+    { label: t('adminDash.kpi.customersCount'), value: formatDigits(kpis.newUsersCount), sub: t('adminDash.kpi.customersSub'), to: '/admin/customers', icon: UserPlus },
+    { label: t('adminDash.kpi.lowStock'), value: formatDigits(kpis.lowStockCount), sub: t('adminDash.kpi.lowStockSub'), to: '/admin/inventory', icon: PackageX },
+    { label: t('adminDash.kpi.nearExpiry'), value: formatDigits(kpis.nearExpiryCount), sub: t('adminDash.kpi.nearExpirySub', { days: formatDigits(settings.nearExpiryThresholdDays) }), to: '/admin/inventory', icon: AlertTriangle },
     showCostMetrics
-      ? { label: 'ارزش بهای تمام‌شده انبار', value: formatMoney(kpis.stockValuation, currency), sub: 'ارزش ریالی/تومانی موجودی کل', to: '/admin/inventory', icon: TrendingUp }
-      : { label: 'کالاهای فعال کاتالوگ', value: toPersianDigits(products.filter((p) => p.status === 'active').length), sub: `از ${toPersianDigits(products.length)} محصول`, to: '/admin/products', icon: PackageCheck },
-    { label: 'تیکت‌های باز پشتیبانی', value: toPersianDigits(kpis.openTickets), sub: 'نیازمند پاسخ کارشناس', to: '/admin/support', icon: Clock },
-    { label: 'دیدگاه و پرسش در انتظار', value: toPersianDigits(pendingReviewsCount + unansweredQuestionsCount), sub: `${toPersianDigits(pendingReviewsCount)} نظر · ${toPersianDigits(unansweredQuestionsCount)} پرسش`, to: '/admin/support', icon: Star },
-    { label: 'نرخ و تعداد مرجوعی', value: `${toPersianDigits(kpis.returnRate)}٪`, sub: `${toPersianDigits(kpis.returnCount)} پرونده RMA`, to: '/admin/orders', icon: RotateCcw },
-    { label: 'درخواست کالای ناموجود', value: toPersianDigits(kpis.openStockRequests), sub: 'ثبت‌شده توسط مشتریان', to: '/admin/inventory', icon: PackageX },
-    { label: 'هشدارهای سئو و ۴۰۴', value: toPersianDigits(kpis.seoAlerts), sub: 'صفحات یتیم، متای ناقص و ۴۰۴', to: '/admin/seo', icon: Globe },
+      ? { label: t('adminDash.kpi.stockValuation'), value: formatMoney(kpis.stockValuation, currency), sub: t('adminDash.kpi.stockValuationSub'), to: '/admin/inventory', icon: TrendingUp }
+      : { label: t('adminDash.kpi.activeCatalog'), value: formatDigits(products.filter((p) => p.status === 'active').length), sub: t('adminDash.kpi.activeCatalogSub', { count: formatDigits(products.length) }), to: '/admin/products', icon: PackageCheck },
+    { label: t('adminDash.kpi.openTickets'), value: formatDigits(kpis.openTickets), sub: t('adminDash.kpi.openTicketsSub'), to: '/admin/support', icon: Clock },
+    { label: t('adminDash.kpi.pendingReviewsAndQa'), value: formatDigits(pendingReviewsCount + unansweredQuestionsCount), sub: t('adminDash.kpi.pendingReviewsSub', { reviews: formatDigits(pendingReviewsCount), questions: formatDigits(unansweredQuestionsCount) }), to: '/admin/support', icon: Star },
+    { label: t('adminDash.kpi.returnRate'), value: t('common.percentValue', { value: formatDigits(kpis.returnRate) }), sub: t('adminDash.kpi.returnRateSub', { count: formatDigits(kpis.returnCount) }), to: '/admin/orders', icon: RotateCcw },
+    { label: t('adminDash.kpi.stockRequests'), value: formatDigits(kpis.openStockRequests), sub: t('adminDash.kpi.stockRequestsSub'), to: '/admin/inventory', icon: PackageX },
+    { label: t('adminDash.kpi.seoAlerts'), value: formatDigits(kpis.seoAlerts), sub: t('adminDash.kpi.seoAlertsSub'), to: '/admin/seo', icon: Globe },
   ];
+
+  const rangePresets: { id: RangePreset; label: string }[] = [
+    { id: 'today', label: t('adminDash.ranges.today') },
+    { id: 'yesterday', label: t('adminDash.ranges.yesterday') },
+    { id: '7d', label: t('adminDash.ranges.d7') },
+    { id: '30d', label: t('adminDash.ranges.d30') },
+    { id: '90d', label: t('adminDash.ranges.d90') },
+    { id: 'year', label: t('adminDash.ranges.year') },
+    { id: 'all', label: t('adminDash.ranges.all') },
+    { id: 'custom', label: t('adminDash.ranges.custom') },
+  ];
+
+  const pendingB2BList = b2bVerifications.filter((b) => b.status === 'pending');
 
   return (
     <div className="space-y-6">
-      {/* Header & Jalali Date Range Presets + Custom Picker */}
+      {/* Header & Date Range Presets */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold">داشبورد عملیاتی و فروش دنتال‌مارکت</h1>
-          <p className="text-xs text-ink/60 dark:text-slate-400 mt-0.5">
-            پایش ۱۷ شاخص کلیدی، روندهای فروش، انبار FEFO، صف‌های عملیاتی و سلامت سئو
-          </p>
+          <h1 className="text-2xl font-extrabold">{t('adminDash.title')}</h1>
+          <p className="text-xs text-ink/70 dark:text-slate-400 mt-0.5">{t('adminDash.subtitle')}</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex flex-wrap items-center gap-1 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-1 text-xs">
-            <Calendar className="w-4 h-4 text-brand mx-1.5" />
-            {[
-              { id: 'today', label: 'امروز' },
-              { id: 'yesterday', label: 'دیروز' },
-              { id: '7d', label: '۷ روز' },
-              { id: '30d', label: '۳۰ روز' },
-              { id: '90d', label: 'فصل' },
-              { id: 'year', label: 'امسال' },
-              { id: 'all', label: 'کل دوره' },
-              { id: 'custom', label: 'بازه دلخواه' },
-            ].map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setRange(item.id as RangePreset)}
-                className={`px-2.5 py-1.5 rounded-lg font-bold transition-colors ${
-                  range === item.id ? 'bg-brand text-white' : 'hover:bg-surface dark:hover:bg-slate-800'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
+        <div className="flex flex-col md:flex-row md:flex-wrap items-start md:items-center gap-2 w-full md:w-auto max-w-full">
+          <div className="w-full md:w-auto max-w-full overflow-x-auto no-scrollbar">
+            <div className="inline-flex flex-nowrap md:flex-wrap items-center gap-1 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-1 text-xs">
+              <Calendar className="w-4 h-4 text-brand mx-1.5 shrink-0" aria-hidden="true" />
+              {rangePresets.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setRange(item.id)}
+                  className={`whitespace-nowrap shrink-0 min-h-[36px] px-2.5 py-1.5 rounded-lg font-bold transition-colors ${
+                    range === item.id ? 'bg-brand text-white' : 'hover:bg-surface dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
           {range === 'custom' && (
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <input
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                aria-label="از تاریخ"
-                className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
+                aria-label={t('adminDash.fromDateAria')}
+                className="min-h-[36px] px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
               />
-              <span>تا</span>
+              <span>{t('common.toLabel')}</span>
               <input
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                aria-label="تا تاریخ"
-                className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
+                aria-label={t('adminDash.toDateAria')}
+                className="min-h-[36px] px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
               />
             </div>
           )}
         </div>
       </div>
 
-      {/* 17 KPI Cards (§10.1) */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3.5">
+      {/* 17 KPI Cards */}
+      <section className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
         {kpiCards.map((card, i) => {
           const Icon = card.icon;
           return (
@@ -491,271 +486,185 @@ export default function AdminDashboardHome() {
               to={card.to}
               className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 hover:border-brand transition-colors space-y-1.5"
             >
-              <div className="flex items-center justify-between text-ink/60 dark:text-slate-400">
+              <div className="flex items-center justify-between text-ink/70 dark:text-slate-300">
                 <span className="text-[11px] font-bold line-clamp-1">{card.label}</span>
-                <Icon className="w-3.5 h-3.5 text-brand shrink-0" />
+                <Icon className="w-3.5 h-3.5 text-brand shrink-0" aria-hidden="true" />
               </div>
               <p className="text-lg font-extrabold tabular-nums text-ink dark:text-slate-100 truncate">{card.value}</p>
-              <p className="text-[10px] text-ink/55 dark:text-slate-400 tabular-nums line-clamp-1">{card.sub}</p>
+              <p className="text-[10px] text-ink/65 dark:text-slate-400 tabular-nums line-clamp-1">{card.sub}</p>
             </Link>
           );
         })}
       </section>
 
-      {/* Comprehensive Charts Grid (§10.2) */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <div className="lg:col-span-8 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-extrabold">روند فروش و تعداد سفارش‌ها</h2>
-            <Link to="/admin/reports" className="text-xs font-bold text-brand inline-flex items-center gap-1">
-              <span>۲۹ گزارش تحلیلی</span>
-              <ArrowUpLeft className="w-3.5 h-3.5" />
-            </Link>
-          </div>
-          <div className="h-64 w-full" dir="ltr">
-            {salesTrendData.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-xs text-ink/50">داده‌ای برای این بازه وجود ندارد</div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={salesTrendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatNumber(Number(v))} />
-                  <Tooltip formatter={(val) => formatMoney(Number(val), currency)} />
-                  <Area type="monotone" dataKey="revenue" fill="#17788C22" stroke="#17788C" strokeWidth={2} name="فروش" />
-                  <Bar dataKey="orders" fill="#0F5667" barSize={18} name="سفارش" />
-                </ComposedChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <h2 className="text-base font-extrabold">سهم B2B در برابر B2C</h2>
-          <div className="h-64 w-full" dir="ltr">
-            {b2bVsB2cData.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-xs text-ink/50">داده‌ای وجود ندارد</div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={b2bVsB2cData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={80} paddingAngle={4}>
-                    {b2bVsB2cData.map((_, idx) => (
-                      <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v) => formatMoney(Number(v), currency)} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <h2 className="text-base font-extrabold">فروش بر اساس دسته‌بندی اصلی</h2>
-          <div className="h-56 w-full" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={categoryRevenueData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatNumber(Number(v))} />
-                <Tooltip formatter={(v) => formatMoney(Number(v), currency)} />
-                <Bar dataKey="revenue" fill="#17788C" radius={[4, 4, 0, 0]} name="درآمد" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <h2 className="text-base font-extrabold">فروش بر اساس برندها و گروه‌های مشتری</h2>
-          <div className="h-56 w-full grid grid-cols-2 gap-3" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={brandRevenueData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
-                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
-                <Tooltip formatter={(v) => formatMoney(Number(v), currency)} />
-                <Bar dataKey="revenue" fill="#2A9D8F" radius={[4, 4, 0, 0]} name="برند" />
-              </BarChart>
-            </ResponsiveContainer>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={groupSplitData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
-                <XAxis dataKey="group" tick={{ fontSize: 9 }} />
-                <Tooltip formatter={(v) => formatMoney(Number(v), currency)} />
-                <Bar dataKey="revenue" fill="#0F5667" radius={[4, 4, 0, 0]} name="گروه" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <h2 className="text-base font-extrabold">پرفروش‌ترین محصولات کاتالوگ</h2>
-          <div className="h-56 w-full" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topProductsData} layout="vertical" margin={{ left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
-                <XAxis type="number" tick={{ fontSize: 10 }} />
-                <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 9 }} />
-                <Tooltip />
-                <Bar dataKey="sold" fill="#17788C" radius={[0, 4, 4, 0]} name="تعداد" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <h2 className="text-base font-extrabold">ریسک انقضای بچ‌ها (FEFO)</h2>
-          <div className="h-56 w-full" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={expiryRiskBuckets}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#D6E2E6" />
-                <XAxis dataKey="bucket" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} />
-                <Tooltip />
-                <Bar dataKey="qty" fill="#E76F51" radius={[4, 4, 0, 0]} name="تعداد در ریسک" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <h2 className="text-base font-extrabold">تفکیک روش پرداخت و استان</h2>
-          <div className="h-56 w-full grid grid-cols-2 gap-2" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={paymentMethodData} dataKey="value" nameKey="name" innerRadius={28} outerRadius={56}>
-                  {paymentMethodData.map((_, idx) => (
-                    <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={statusDonutData} dataKey="value" nameKey="name" innerRadius={28} outerRadius={56}>
-                  {statusDonutData.map((_, idx) => (
-                    <Cell key={idx} fill={CHART_COLORS[(idx + 2) % CHART_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-[11px] text-ink/60 truncate">
-            پرفروش‌ترین استان‌ها: {provinceSalesData.map((p) => p.province).join(' · ') || 'تهران'}
-          </p>
-        </div>
-      </section>
+      {/* Lazy-Loaded Recharts Bundle */}
+      <Suspense fallback={<ChartSkeleton heightClass="h-96" />}>
+        <DashboardCharts
+          currency={currency}
+          salesTrendData={salesTrendData}
+          b2bVsB2cData={b2bVsB2cData}
+          categoryRevenueData={categoryRevenueData}
+          brandRevenueData={brandRevenueData}
+          groupSplitData={groupSplitData}
+          topProductsData={topProductsData}
+          expiryRiskBuckets={expiryRiskBuckets}
+          paymentMethodData={paymentMethodData}
+          statusDonutData={statusDonutData}
+          provinceSalesData={provinceSalesData}
+        />
+      </Suspense>
 
       {/* Action Queues (§10.3) */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
           <div className="flex justify-between items-center">
-            <h2 className="text-base font-extrabold">صف سفارش‌ها و پیش‌فاکتورهای باز</h2>
-            <Link to="/admin/orders" className="text-xs font-bold text-brand">مدیریت فروش</Link>
+            <h2 className="text-base font-extrabold">{t('adminDash.queues.ordersTitle')}</h2>
+            <Link to="/admin/orders" className="text-xs font-bold text-brand hover:underline">
+              {t('adminDash.queues.ordersLink')}
+            </Link>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-line dark:border-slate-800 text-ink/60">
-                  <th className="py-2 text-right">شماره</th>
-                  <th className="py-2 text-right">مشتری</th>
-                  <th className="py-2 text-right">مبلغ</th>
-                  <th className="py-2 text-right">وضعیت</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line dark:divide-slate-800">
-                {orders.slice(0, 5).map((o) => (
-                  <tr key={o.id}>
-                    <td className="py-2.5 font-bold tabular-nums">{o.orderNo}</td>
-                    <td className="py-2.5">{o.customerName}</td>
-                    <td className="py-2.5 tabular-nums font-bold">{formatMoney(o.grandTotal, currency)}</td>
-                    <td className="py-2.5 text-brand font-bold">{o.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-          <div className="flex justify-between items-center">
-            <h2 className="text-base font-extrabold">هشدار انبار FEFO و کم‌موجودی</h2>
-            <Link to="/admin/inventory" className="text-xs font-bold text-brand">مدیریت انبار</Link>
-          </div>
-          <div className="space-y-2 text-xs">
-            {nearExpiryRows.map((row, idx) => (
-              <div key={idx} className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 flex justify-between items-center">
-                <span className="font-bold truncate">{row.titleFa} ({row.batchNo})</span>
-                <span className="tabular-nums text-amber-800 dark:text-amber-300 shrink-0">
-                  {toPersianDigits(row.daysLeft)} روز · {toPersianDigits(row.qty)} عدد
-                </span>
-              </div>
-            ))}
-            {lowStockRows.map((row, idx) => (
-              <div key={`low_${idx}`} className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 flex justify-between items-center">
-                <span className="font-bold truncate">{row.titleFa} ({row.sku})</span>
-                <span className="tabular-nums text-rose-700 dark:text-rose-300 shrink-0">
-                  موجود: {toPersianDigits(row.avail)} (آستانه {toPersianDigits(row.threshold)})
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-          <div className="flex justify-between items-center">
-            <h2 className="text-base font-extrabold">احراز هویت B2B و نظرات منتظر تایید</h2>
-            <Link to="/admin/customers" className="text-xs font-bold text-brand">بررسی مشتریان</Link>
-          </div>
-          {b2bVerifications.filter((b) => b.status === 'pending').length === 0 ? (
-            <p className="text-xs text-ink/50">درخواست B2B در صف انتظار نیست.</p>
+          {orders.length === 0 ? (
+            <EmptyState title={t('adminDash.queues.ordersEmpty')} />
           ) : (
-            <div className="space-y-2 text-xs">
-              {b2bVerifications
-                .filter((b) => b.status === 'pending')
-                .map((b) => (
-                  <div key={b.id} className="p-3 rounded-xl border border-line dark:border-slate-800 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-bold">{b.applicantName} — {b.clinicName}</p>
-                      <p className="text-ink/60 tabular-nums">نظام پزشکی: {b.medicalCouncilNo} · {b.requestedGroup}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => reviewB2BVerification(b.id, 'approved')}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold shrink-0"
-                    >
-                      تایید فوری
-                    </button>
-                  </div>
-                ))}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-line dark:border-slate-800 text-ink/70 dark:text-slate-400">
+                    <th className="py-2 text-start">{t('adminDash.queues.colOrderNo')}</th>
+                    <th className="py-2 text-start">{t('adminDash.queues.colCustomer')}</th>
+                    <th className="py-2 text-start">{t('adminDash.queues.colAmount')}</th>
+                    <th className="py-2 text-start">{t('adminDash.queues.colStatus')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line dark:divide-slate-800">
+                  {orders.slice(0, 5).map((o) => (
+                    <tr key={o.id}>
+                      <td className="py-2.5 font-bold tabular-nums">{o.orderNo}</td>
+                      <td className="py-2.5">{o.customerName}</td>
+                      <td className="py-2.5 tabular-nums font-bold">{formatMoney(o.grandTotal, currency)}</td>
+                      <td className="py-2.5 text-brand font-bold">{t(`orderStatus.${o.status}`, undefined, o.status)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
 
         <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
           <div className="flex justify-between items-center">
-            <h2 className="text-base font-extrabold">تیکت‌ها، تامین کالا و سلامت سئو</h2>
-            <Link to="/admin/seo" className="text-xs font-bold text-brand">بررسی سئو</Link>
+            <h2 className="text-base font-extrabold">{t('adminDash.queues.inventoryTitle')}</h2>
+            <Link to="/admin/inventory" className="text-xs font-bold text-brand hover:underline">
+              {t('adminDash.queues.inventoryLink')}
+            </Link>
+          </div>
+          {nearExpiryRows.length === 0 && lowStockRows.length === 0 ? (
+            <EmptyState title={t('adminDash.queues.inventoryEmpty')} />
+          ) : (
+            <div className="space-y-2 text-xs">
+              {nearExpiryRows.map((row, idx) => (
+                <div
+                  key={idx}
+                  className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 flex justify-between items-center"
+                >
+                  <span className="font-bold truncate">
+                    {row.titleFa} ({row.batchNo})
+                  </span>
+                  <span className="tabular-nums text-amber-800 dark:text-amber-300 shrink-0">
+                    {t('adminDash.queues.nearExpiryMeta', {
+                      days: formatDigits(row.daysLeft),
+                      qty: formatDigits(row.qty),
+                    })}
+                  </span>
+                </div>
+              ))}
+              {lowStockRows.map((row, idx) => (
+                <div
+                  key={`low_${idx}`}
+                  className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 flex justify-between items-center"
+                >
+                  <span className="font-bold truncate">
+                    {row.titleFa} ({row.sku})
+                  </span>
+                  <span className="tabular-nums text-rose-700 dark:text-rose-300 shrink-0">
+                    {t('adminDash.queues.lowStockMeta', {
+                      avail: formatDigits(row.avail),
+                      threshold: formatDigits(row.threshold),
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
+          <div className="flex justify-between items-center">
+            <h2 className="text-base font-extrabold">{t('adminDash.queues.b2bTitle')}</h2>
+            <Link to="/admin/customers" className="text-xs font-bold text-brand hover:underline">
+              {t('adminDash.queues.b2bLink')}
+            </Link>
+          </div>
+          {pendingB2BList.length === 0 ? (
+            <p className="text-xs text-ink/65 dark:text-slate-400">{t('adminDash.queues.b2bEmpty')}</p>
+          ) : (
+            <div className="space-y-2 text-xs">
+              {pendingB2BList.map((b) => (
+                <div
+                  key={b.id}
+                  className="p-3 rounded-xl border border-line dark:border-slate-800 flex items-center justify-between gap-3"
+                >
+                  <div>
+                    <p className="font-bold">
+                      {b.applicantName} — {b.clinicName}
+                    </p>
+                    <p className="text-ink/70 dark:text-slate-400 tabular-nums">
+                      {t('adminDash.queues.b2bMeta', {
+                        councilNo: formatDigits(b.medicalCouncilNo),
+                        group: t(`customerGroup.${b.requestedGroup}`, undefined, b.requestedGroup),
+                      })}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => reviewB2BVerification(b.id, 'approved')}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold shrink-0 hover:bg-emerald-700"
+                  >
+                    {t('adminDash.queues.b2bApproveBtn')}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
+          <div className="flex justify-between items-center">
+            <h2 className="text-base font-extrabold">{t('adminDash.queues.supportSeoTitle')}</h2>
+            <Link to="/admin/seo" className="text-xs font-bold text-brand hover:underline">
+              {t('adminDash.queues.supportSeoLink')}
+            </Link>
           </div>
           <div className="space-y-2 text-xs">
             <div className="p-2.5 rounded-xl bg-surface/60 dark:bg-slate-800 flex justify-between items-center">
               <span className="flex items-center gap-1.5 font-bold">
-                <FileWarning className="w-4 h-4 text-amber-600" />
-                وضعیت سئو و ۴۰۴
+                <FileWarning className="w-4 h-4 text-amber-600" aria-hidden="true" />
+                <span>{t('adminDash.queues.seoStatusLabel')}</span>
               </span>
-              <span className="font-bold text-amber-700 tabular-nums">{toPersianDigits(kpis.seoAlerts)} مورد نیازمند بررسی</span>
+              <span className="font-bold text-amber-700 dark:text-amber-300 tabular-nums">
+                {t('adminDash.queues.seoAlertsCount', { count: formatDigits(kpis.seoAlerts) })}
+              </span>
             </div>
-            {tickets.slice(0, 2).map((t) => (
-              <div key={t.id} className="p-2.5 rounded-xl border border-line dark:border-slate-800 flex justify-between">
-                <span className="font-bold truncate">{t.subject}</span>
-                <span className="text-brand font-bold tabular-nums">{t.ticketNo}</span>
+            {tickets.slice(0, 2).map((tk) => (
+              <div key={tk.id} className="p-2.5 rounded-xl border border-line dark:border-slate-800 flex justify-between">
+                <span className="font-bold truncate">{tk.subject}</span>
+                <span className="text-brand font-bold tabular-nums">{tk.ticketNo}</span>
               </div>
             ))}
             {stockRequests.slice(0, 2).map((sr) => (
               <div key={sr.id} className="p-2.5 rounded-xl border border-line dark:border-slate-800 flex justify-between">
-                <span className="truncate">درخواست تامین: {sr.titleText}</span>
-                <span className="font-bold text-amber-600">{sr.status}</span>
+                <span className="truncate">{t('adminDash.queues.stockRequestPrefix', { title: sr.titleText })}</span>
+                <span className="font-bold text-amber-700 dark:text-amber-300">{sr.status}</span>
               </div>
             ))}
           </div>

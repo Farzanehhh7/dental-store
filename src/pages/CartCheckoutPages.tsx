@@ -14,9 +14,10 @@ import {
   Truck,
 } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
+import { AccessibleModal } from '../components/ui/Modal';
+import { useI18n } from '../context/i18n';
 import { useStore } from '../context/StoreContext';
 import { trackEcommerceEvent } from '../lib/analytics';
-import { formatJalaliDateTime, formatMoney, toPersianDigits } from '../lib/jalali';
 import { buildResponsiveImageProps } from '../lib/media';
 import { resolveVariantPrice } from '../lib/pricing';
 import { applySeoHead } from '../lib/seo';
@@ -40,6 +41,7 @@ export function CartPage() {
     userProfile,
     pushToast,
   } = useStore();
+  const { t, formatDigits, formatMoney } = useI18n();
   const navigate = useNavigate();
 
   const [couponInput, setCouponInput] = useState('');
@@ -49,12 +51,12 @@ export function CartPage() {
 
   useEffect(() => {
     applySeoHead({
-      title: `سبد خرید | ${settings.storeNameFa}`,
-      description: 'مدیریت اقلام سبد خرید تجهیزات و مواد دندانپزشکی',
+      title: `${t('nav.cart', 'سبد خرید')} | ${settings.storeNameFa}`,
+      description: t('cart.seoDesc', 'مدیریت اقلام سبد خرید تجهیزات و مواد دندانپزشکی'),
       canonicalPath: '/cart',
       robots: 'noindex, follow',
     });
-  }, [settings.storeNameFa]);
+  }, [settings.storeNameFa, t]);
 
   const lines = useMemo(() => {
     return cart
@@ -121,15 +123,18 @@ export function CartPage() {
     const code = couponInput.trim().toUpperCase();
     const match = coupons.find((c) => c.code.toUpperCase() === code && c.isActive);
     if (!match) {
-      pushToast('کد تخفیف معتبر نیست یا منقضی شده است.', 'error');
+      pushToast(t('cart.toasts.invalidCoupon', 'کد تخفیف معتبر نیست یا منقضی شده است.'), 'error');
       return;
     }
     if (subtotal < match.minOrderAmount) {
-      pushToast(`حداقل مبلغ سبد برای این کد ${formatMoney(match.minOrderAmount, currency)} است.`, 'error');
+      pushToast(
+        t('cart.toasts.minOrderForCoupon', { amount: formatMoney(match.minOrderAmount, currency) }),
+        'error'
+      );
       return;
     }
     setAppliedCouponCode(match.code);
-    pushToast(`کد تخفیف ${match.code} اعمال شد.`, 'success');
+    pushToast(t('cart.toasts.couponApplied', { code: match.code }), 'success');
   };
 
   const submitProformaWithMobile = async (contactMobile: string) => {
@@ -150,7 +155,7 @@ export function CartPage() {
       }));
     if (orderItems.length === 0) return;
     const pf = await requestProforma({
-      contactName: userProfile?.displayName || mobileSession?.displayName || 'مشتری کلینیک',
+      contactName: userProfile?.displayName || mobileSession?.displayName || t('common.clinicCustomer', 'مشتری کلینیک'),
       contactMobile,
       clinicName: userProfile?.clinicName,
       items: orderItems,
@@ -172,34 +177,34 @@ export function CartPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-10">
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8 py-6 sm:py-8 space-y-8 sm:space-y-10">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-extrabold">سبد خرید شما</h1>
+        <h1 className="text-xl sm:text-2xl font-extrabold">{t('cart.pageTitle', 'سبد خرید شما')}</h1>
         <Link to="/category/consumables" className="text-sm font-bold text-brand hover:underline">
-          ادامه خرید در کاتالوگ
+          {t('cart.continueShopping', 'ادامه خرید در کاتالوگ')}
         </Link>
       </div>
 
       {lines.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-12 text-center space-y-4">
-          <ShoppingBag className="w-12 h-12 mx-auto text-ink/20 dark:text-slate-700" />
-          <p className="text-base font-bold">سبد خرید شما خالی است.</p>
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 sm:p-12 text-center space-y-4">
+          <ShoppingBag className="w-12 h-12 mx-auto text-ink/20 dark:text-slate-700" aria-hidden="true" />
+          <p className="text-base font-bold">{t('cart.emptyTitle', 'سبد خرید شما خالی است.')}</p>
           <p className="text-sm text-ink/60 dark:text-slate-400">
-            برای ثبت سفارش یا دریافت پیش‌فاکتور رسمی، محصولات مورد نیاز مطب را انتخاب کنید.
+            {t('cart.emptySubtitle', 'برای ثبت سفارش یا دریافت پیش‌فاکتور رسمی، محصولات مورد نیاز مطب را انتخاب کنید.')}
           </p>
           <Link
             to="/category/consumables"
-            className="inline-block px-6 py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
+            className="inline-flex items-center justify-center min-h-[44px] px-6 py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
           >
-            مشاهده محصولات فروشگاه
+            {t('cart.browseProducts', 'مشاهده محصولات فروشگاه')}
           </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
           <div className="lg:col-span-8 space-y-4">
             <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl divide-y divide-line dark:divide-slate-800">
               {lines.map(({ ci, product, variant, resolved, unitPrice, lineTotal }) => (
-                <div key={variant.id} className="p-5 flex flex-col sm:flex-row gap-4 sm:items-center">
+                <div key={variant.id} className="p-4 sm:p-5 flex flex-col sm:flex-row gap-4 sm:items-center">
                   <Link to={`/product/${product.slug}`} className="shrink-0">
                     <img
                       {...buildResponsiveImageProps(product.imageUrl, {
@@ -209,7 +214,7 @@ export function CartPage() {
                       alt={product.titleFa}
                       width={112}
                       height={80}
-                      className="w-28 h-20 object-cover rounded-xl bg-surface border border-line dark:border-slate-800"
+                      className="w-24 sm:w-28 h-20 object-cover rounded-xl bg-surface border border-line dark:border-slate-800"
                     />
                   </Link>
                   <div className="flex-1 min-w-0 space-y-1">
@@ -218,58 +223,58 @@ export function CartPage() {
                     </Link>
                     <p className="text-xs text-ink/60 dark:text-slate-400">
                       {variant.labelFa} · <span className="tabular-nums">{variant.sku}</span>
-                      {resolved.nearestBatchNo ? ` · بچ ${resolved.nearestBatchNo}` : ''}
+                      {resolved.nearestBatchNo ? ` · ${t('cart.batchPrefix', { batch: resolved.nearestBatchNo })}` : ''}
                     </p>
                     <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
                       {resolved.priceSource === 'contract'
-                        ? 'تعرفه قرارداد اختصاصی کلینیک'
+                        ? t('cart.priceSource.contract', 'تعرفه قرارداد اختصاصی کلینیک')
                         : resolved.priceSource === 'tier'
-                        ? 'قیمت پلکانی عمده اعمال شد'
+                        ? t('cart.priceSource.tier', 'قیمت پلکانی عمده اعمال شد')
                         : resolved.priceSource === 'group'
-                        ? 'تعرفه اختصاصی گروه همکار'
+                        ? t('cart.priceSource.group', 'تعرفه اختصاصی گروه همکار')
                         : resolved.priceSource === 'campaign'
-                        ? 'تخفیف جشنواره فعال'
+                        ? t('cart.priceSource.campaign', 'تخفیف جشنواره فعال')
                         : resolved.nearExpiry
-                        ? 'تخفیف ویژه انقضای نزدیک'
-                        : 'قیمت مصوب واحد'}
+                        ? t('cart.priceSource.nearExpiry', 'تخفیف ویژه انقضای نزدیک')
+                        : t('cart.priceSource.base', 'قیمت مصوب واحد')}
                     </p>
                   </div>
 
-                  <div className="flex items-center justify-between sm:justify-end gap-4">
+                  <div className="flex flex-wrap items-center justify-between sm:justify-end gap-3 sm:gap-4">
                     <div className="inline-flex items-center border border-line dark:border-slate-700 rounded-xl">
                       <button
                         type="button"
                         onClick={() => updateCartQty(variant.id, ci.quantity + 1)}
-                        aria-label="افزایش"
-                        className="p-2 hover:bg-surface dark:hover:bg-slate-800"
+                        aria-label={t('cart.increaseQty', 'افزایش')}
+                        className="min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] inline-flex items-center justify-center hover:bg-surface dark:hover:bg-slate-800"
                       >
                         <Plus className="w-4 h-4" />
                       </button>
-                      <span className="px-3 text-sm font-bold tabular-nums">{toPersianDigits(ci.quantity)}</span>
+                      <span className="px-3 text-sm font-bold tabular-nums">{formatDigits(ci.quantity)}</span>
                       <button
                         type="button"
                         onClick={() => updateCartQty(variant.id, ci.quantity - 1)}
-                        aria-label="کاهش"
-                        className="p-2 hover:bg-surface dark:hover:bg-slate-800"
+                        aria-label={t('cart.decreaseQty', 'کاهش')}
+                        className="min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] inline-flex items-center justify-center hover:bg-surface dark:hover:bg-slate-800"
                       >
                         <Minus className="w-4 h-4" />
                       </button>
                     </div>
 
-                    <div className="text-left min-w-[120px]">
+                    <div className="text-end min-w-0 sm:min-w-[120px]">
                       <p className="text-sm font-extrabold text-brand dark:text-teal-300 tabular-nums">
-                        {unitPrice > 0 ? formatMoney(lineTotal, currency) : 'استعلام قیمت'}
+                        {unitPrice > 0 ? formatMoney(lineTotal, currency) : t('cart.callForQuote', 'استعلام قیمت')}
                       </p>
                       <p className="text-[11px] text-ink/50 dark:text-slate-400 tabular-nums">
-                        فی: {formatMoney(unitPrice, currency)}
+                        {t('cart.unitPricePrefix', { price: formatMoney(unitPrice, currency) })}
                       </p>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => removeFromCart(variant.id)}
-                      aria-label="حذف کالا"
-                      className="p-2 text-ink/40 hover:text-rose-600"
+                      aria-label={t('cart.removeItem', 'حذف کالا')}
+                      className="min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] inline-flex items-center justify-center text-ink/40 hover:text-rose-600"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -280,66 +285,69 @@ export function CartPage() {
 
             <form
               onSubmit={handleApplyCoupon}
-              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 flex flex-wrap items-center gap-3"
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-wrap items-center gap-3"
             >
-              <Tag className="w-4 h-4 text-brand shrink-0" />
+              <Tag className="w-4 h-4 text-brand shrink-0 hidden sm:block" aria-hidden="true" />
               <input
                 type="text"
                 value={couponInput}
                 onChange={(e) => setCouponInput(e.target.value)}
-                placeholder="کد تخفیف (مثلاً CLINIC5 یا FREESHIP)..."
-                className="flex-1 min-w-[200px] px-3.5 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                placeholder={t('cart.couponPlaceholder', 'کد تخفیف (مثلاً CLINIC5 یا FREESHIP)...')}
+                className="w-full sm:flex-1 min-h-[44px] px-3.5 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
               />
               <button
                 type="submit"
-                className="px-4 py-2 rounded-lg bg-surface dark:bg-slate-800 text-sm font-bold hover:bg-brand hover:text-white transition-colors"
+                className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-lg bg-surface dark:bg-slate-800 text-sm font-bold hover:bg-brand hover:text-white transition-colors whitespace-nowrap"
               >
-                اعمال کد تخفیف
+                {t('cart.applyCouponBtn', 'اعمال کد تخفیف')}
               </button>
             </form>
           </div>
 
-          <aside className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-5 sticky top-20">
-            <h2 className="text-lg font-extrabold">خلاصه صورتحساب</h2>
+          <aside className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-5 lg:sticky lg:top-20">
+            <h2 className="text-lg font-extrabold">{t('cart.summaryTitle', 'خلاصه صورتحساب')}</h2>
 
             <div className="p-3 rounded-xl bg-surface/80 dark:bg-slate-800/70 text-xs flex items-center gap-2">
-              <Truck className="w-4 h-4 text-brand shrink-0" />
+              <Truck className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
               {freeShipping ? (
-                <span className="font-bold text-emerald-700 dark:text-emerald-400">ارسال این سفارش رایگان است.</span>
+                <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                  {t('cart.freeShippingReached', 'ارسال این سفارش رایگان است.')}
+                </span>
               ) : (
                 <span>
-                  <strong className="tabular-nums">{formatMoney(remainingFree, currency)}</strong> تا ارسال رایگان تهران
+                  <strong className="tabular-nums">{formatMoney(remainingFree, currency)}</strong>{' '}
+                  {t('cart.untilFreeShipping', 'تا ارسال رایگان تهران')}
                 </span>
               )}
             </div>
 
             <div className="space-y-2.5 text-sm border-b border-line dark:border-slate-800 pb-4">
               <div className="flex justify-between">
-                <span className="text-ink/70 dark:text-slate-400">جمع کالاها</span>
+                <span className="text-ink/70 dark:text-slate-400">{t('cart.itemsTotal', 'جمع کالاها')}</span>
                 <span className="font-bold tabular-nums">{formatMoney(subtotal + itemDiscount, currency)}</span>
               </div>
               {itemDiscount > 0 && (
                 <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-                  <span>تخفیف پلکانی / همکار / جشنواره</span>
+                  <span>{t('cart.tierCampaignDiscount', 'تخفیف پلکانی / همکار / جشنواره')}</span>
                   <span className="font-bold tabular-nums">−{formatMoney(itemDiscount, currency)}</span>
                 </div>
               )}
               {couponDiscount > 0 && (
                 <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-                  <span>کد تخفیف ({appliedCouponCode})</span>
+                  <span>{t('cart.couponCodeLabel', { code: appliedCouponCode })}</span>
                   <span className="font-bold tabular-nums">−{formatMoney(couponDiscount, currency)}</span>
                 </div>
               )}
               <div className="flex justify-between">
                 <span className="text-ink/70 dark:text-slate-400">
-                  مالیات ارزش افزوده ({toPersianDigits(settings.taxRatePercent)}٪)
+                  {t('cart.vatWithPercent', { rate: formatDigits(settings.taxRatePercent) })}
                 </span>
                 <span className="font-bold tabular-nums">{formatMoney(taxTotal, currency)}</span>
               </div>
             </div>
 
             <div className="flex justify-between items-center text-base">
-              <span className="font-extrabold">مبلغ قابل پرداخت</span>
+              <span className="font-extrabold">{t('cart.payableAmount', 'مبلغ قابل پرداخت')}</span>
               <span className="text-xl font-extrabold text-brand dark:text-teal-300 tabular-nums">
                 {formatMoney(netSubtotal + taxTotal, currency)}
               </span>
@@ -348,16 +356,16 @@ export function CartPage() {
             <div className="space-y-2.5">
               <Link
                 to={`/checkout${appliedCouponCode ? `?coupon=${encodeURIComponent(appliedCouponCode)}` : ''}`}
-                className="block w-full py-3 rounded-xl bg-brand text-white text-center text-sm font-bold hover:bg-brandDark transition-colors"
+                className="flex items-center justify-center w-full min-h-[44px] py-3 rounded-xl bg-brand text-white text-center text-sm font-bold hover:bg-brandDark transition-colors"
               >
-                ادامه و ثبت نهایی سفارش
+                {t('cart.proceedCheckoutBtn', 'ادامه و ثبت نهایی سفارش')}
               </Link>
               <button
                 type="button"
                 onClick={handleRequestProformaFromCart}
-                className="w-full py-2.5 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand transition-colors"
+                className="w-full min-h-[44px] py-2.5 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand transition-colors"
               >
-                صدور پیش‌فاکتور رسمی برای این سبد
+                {t('cart.issueCartProformaBtn', 'صدور پیش‌فاکتور رسمی برای این سبد')}
               </button>
             </div>
           </aside>
@@ -366,8 +374,8 @@ export function CartPage() {
 
       {complementaryProducts.length > 0 && (
         <section className="space-y-5 pt-4">
-          <h2 className="text-xl font-extrabold">محصولات مکمل پیشنهادی</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          <h2 className="text-xl font-extrabold">{t('cart.complementaryHeading', 'محصولات مکمل پیشنهادی')}</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {complementaryProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
@@ -375,55 +383,61 @@ export function CartPage() {
         </section>
       )}
 
-      {proformaMobilePromptOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!/^09\d{9}$/.test(proformaMobileInput.trim())) {
-                pushToast('لطفاً شماره موبایل معتبر ۱۱ رقمی (با شروع 09) وارد کنید.', 'error');
-                return;
-              }
-              await submitProformaWithMobile(proformaMobileInput.trim());
-            }}
-            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 text-xs"
-          >
-            <h2 className="text-base font-extrabold">شماره تماس برای صدور پیش‌فاکتور رسمی</h2>
-            <p className="text-ink/70 dark:text-slate-400">
-              برای ثبت پیش‌فاکتور رسمی در سامانه، وارد کردن شماره موبایل واقعی خریدار الزامی است.
-            </p>
-            <input
-              required
-              type="tel"
-              value={proformaMobileInput}
-              onChange={(e) => setProformaMobileInput(e.target.value)}
-              placeholder="0912..."
-              className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setProformaMobilePromptOpen(false)}
-                className="px-4 py-2 rounded-xl border border-line dark:border-slate-700 font-bold"
-              >
-                انصراف
-              </button>
-              <button type="submit" className="px-5 py-2 rounded-xl bg-brand text-white font-bold">
-                تایید و صدور پیش‌فاکتور
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      <AccessibleModal
+        open={proformaMobilePromptOpen}
+        onClose={() => setProformaMobilePromptOpen(false)}
+        ariaLabel={t('cart.proformaModalTitle', 'شماره تماس برای صدور پیش‌فاکتور رسمی')}
+        panelClassName="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-xs"
+      >
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!/^09\d{9}$/.test(proformaMobileInput.trim())) {
+              pushToast(
+                t('cart.toasts.invalidMobile', 'لطفاً شماره موبایل معتبر ۱۱ رقمی (با شروع 09) وارد کنید.'),
+                'error'
+              );
+              return;
+            }
+            await submitProformaWithMobile(proformaMobileInput.trim());
+          }}
+          className="space-y-4"
+        >
+          <h2 className="text-base font-extrabold">{t('cart.proformaModalTitle', 'شماره تماس برای صدور پیش‌فاکتور رسمی')}</h2>
+          <p className="text-ink/70 dark:text-slate-400">
+            {t('cart.proformaModalDesc', 'برای ثبت پیش‌فاکتور رسمی در سامانه، وارد کردن شماره موبایل واقعی خریدار الزامی است.')}
+          </p>
+          <input
+            required
+            type="tel"
+            value={proformaMobileInput}
+            onChange={(e) => setProformaMobileInput(e.target.value)}
+            placeholder="0912..."
+            className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+          />
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setProformaMobilePromptOpen(false)}
+              className="min-h-[44px] px-4 py-2 rounded-xl border border-line dark:border-slate-700 font-bold"
+            >
+              {t('actions.cancel', 'انصراف')}
+            </button>
+            <button type="submit" className="min-h-[44px] px-5 py-2 rounded-xl bg-brand text-white font-bold">
+              {t('cart.proformaModalSubmit', 'تایید و صدور پیش‌فاکتور')}
+            </button>
+          </div>
+        </form>
+      </AccessibleModal>
     </div>
   );
 }
 
-const SHIPPING_OPTIONS = [
-  { id: 'courier_tehran', label: 'پیک تخصصی تجهیزات پزشکی (تهران - تحویل روز)', baseFee: 120000 },
-  { id: 'tipax', label: 'تیپاکس ویژه مراکز درمانی (۱ تا ۳ روز کاری)', baseFee: 185000 },
-  { id: 'post_pishtaz', label: 'پست پیشتاز بیمه شده (سراسر کشور)', baseFee: 145000 },
-  { id: 'heavy_freight', label: 'حمل و نصب تخصصی یونیت و تجهیزات سرمایه‌ای', baseFee: 0 },
+const SHIPPING_OPTIONS_BASE = [
+  { id: 'courier_tehran', baseFee: 120000 },
+  { id: 'tipax', baseFee: 185000 },
+  { id: 'post_pishtaz', baseFee: 145000 },
+  { id: 'heavy_freight', baseFee: 0 },
 ];
 
 export function CheckoutPage() {
@@ -447,6 +461,16 @@ export function CheckoutPage() {
     fetchOrderPaymentStatus,
     pushToast,
   } = useStore();
+  const { t, formatDigits, formatMoney, formatDateTime } = useI18n();
+
+  const shippingOptions = useMemo(
+    () =>
+      SHIPPING_OPTIONS_BASE.map((opt) => ({
+        ...opt,
+        label: t(`checkout.shippingOptions.${opt.id}`),
+      })),
+    [t]
+  );
 
   const [searchParams] = useSearchParams();
   const initialCoupon = searchParams.get('coupon') ?? '';
@@ -459,15 +483,17 @@ export function CheckoutPage() {
 
   const [customerName, setCustomerName] = useState(userProfile?.displayName || authUser?.displayName || '');
   const [customerMobile, setCustomerMobile] = useState(userProfile?.mobile || '');
-  const [province, setProvince] = useState(userProfile?.addresses?.[0]?.province || 'تهران');
-  const [city, setCity] = useState(userProfile?.addresses?.[0]?.city || 'تهران');
+  const [province, setProvince] = useState(userProfile?.addresses?.[0]?.province || t('common.tehran', 'تهران'));
+  const [city, setCity] = useState(userProfile?.addresses?.[0]?.city || t('common.tehran', 'تهران'));
   const [postalCode, setPostalCode] = useState(userProfile?.addresses?.[0]?.postalCode || '');
   const [addressLine, setAddressLine] = useState(userProfile?.addresses?.[0]?.addressLine || '');
-  const [shippingMethod, setShippingMethod] = useState(SHIPPING_OPTIONS[0].id);
+  const [shippingMethod, setShippingMethod] = useState(SHIPPING_OPTIONS_BASE[0].id);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('online');
   const [gatewayName, setGatewayName] = useState<'zarinpal' | 'idpay'>('zarinpal');
   const [installmentsCount, setInstallmentsCount] = useState(3);
-  const [proposedTermsFa, setProposedTermsFa] = useState('پیش‌پرداخت ۳۰ درصد + ۳ فقره چک صیادی ماهانه');
+  const [proposedTermsFa, setProposedTermsFa] = useState(() =>
+    t('checkout.defaultProposedTerms', 'پیش‌پرداخت ۳۰ درصد + ۳ فقره چک صیادی ماهانه')
+  );
   const [couponCode, setCouponCode] = useState(initialCoupon);
   const [customerNote, setCustomerNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -504,12 +530,12 @@ export function CheckoutPage() {
 
   useEffect(() => {
     applySeoHead({
-      title: `تسویه‌حساب و ثبت سفارش | ${settings.storeNameFa}`,
-      description: 'تکمیل اطلاعات ارسال و پرداخت سفارش در دنتال‌مارکت',
+      title: `${t('checkout.seoTitle', 'تسویه‌حساب و ثبت سفارش')} | ${settings.storeNameFa}`,
+      description: t('checkout.seoDesc', 'تکمیل اطلاعات ارسال و پرداخت سفارش در دنتال‌مارکت'),
       canonicalPath: '/checkout',
       robots: 'noindex, nofollow',
     });
-  }, [settings.storeNameFa]);
+  }, [settings.storeNameFa, t]);
 
   useEffect(() => {
     if (paymentCallbackParam !== '1' || !callbackOrderId) {
@@ -538,7 +564,10 @@ export function CheckoutPage() {
           loading: false,
           paid: false,
           refId: callbackRefIdParam || undefined,
-          message: callbackMessageParam || statusRes.message || 'تایید وضعیت پرداخت از سرور ناموفق بود.',
+          message:
+            callbackMessageParam ||
+            statusRes.message ||
+            t('checkout.callbackVerifyFailed', 'تایید وضعیت پرداخت از سرور ناموفق بود.'),
         });
         return;
       }
@@ -551,14 +580,15 @@ export function CheckoutPage() {
         verifiedAt: statusRes.verifiedAt,
         message: statusRes.paid
           ? undefined
-          : callbackMessageParam || 'پرداخت تایید نشد یا لغو گردید. در صورت کسر وجه، تا ۷۲ ساعت به حساب شما بازمی‌گردد.',
+          : callbackMessageParam ||
+            t('checkout.callbackUnverifiedMsg', 'پرداخت تایید نشد یا لغو گردید. در صورت کسر وجه، تا ۷۲ ساعت به حساب شما بازمی‌گردد.'),
       });
     };
     void run();
     return () => {
       cancelled = true;
     };
-  }, [paymentCallbackParam, callbackOrderId, callbackAuthority, callbackRawStatus, callbackRefIdParam, callbackMessageParam]);
+  }, [paymentCallbackParam, callbackOrderId, callbackAuthority, callbackRawStatus, callbackRefIdParam, callbackMessageParam, fetchOrderPaymentStatus, t]);
 
   useEffect(() => {
     if (cart.length > 0) {
@@ -622,7 +652,7 @@ export function CheckoutPage() {
     }
   }
 
-  const chosenShipping = SHIPPING_OPTIONS.find((s) => s.id === shippingMethod) ?? SHIPPING_OPTIONS[0];
+  const chosenShipping = shippingOptions.find((s) => s.id === shippingMethod) ?? shippingOptions[0];
   const isFreeShipping =
     subtotal - couponDiscount >= settings.freeShippingThreshold || activeCoupon?.type === 'free_shipping';
   const shippingFee = isFreeShipping ? 0 : chosenShipping.baseFee;
@@ -661,13 +691,17 @@ export function CheckoutPage() {
   const handleSendOtp = async () => {
     const mobile = customerMobile.trim();
     if (!mobile) {
-      pushToast('ابتدا شماره موبایل خود را وارد کنید.', 'error');
+      pushToast(t('checkout.toasts.enterMobileFirst', 'ابتدا شماره موبایل خود را وارد کنید.'), 'error');
       return;
     }
     const res = await sendMobileOtp(mobile);
     if (!res.ok) return;
     setOtpSent(true);
-    setOtpHint(res.sandboxCode ? `کد آزمایشی: ${res.sandboxCode}` : res.message || '');
+    setOtpHint(
+      res.sandboxCode
+        ? t('checkout.sandboxCodeHint', { code: res.sandboxCode })
+        : res.message || ''
+    );
   };
 
   const handleVerifyOtp = async () => {
@@ -680,7 +714,10 @@ export function CheckoutPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim() || !customerMobile.trim() || !addressLine.trim()) {
-      pushToast('لطفاً نام تحویل‌گیرنده، شماره همراه و نشانی دقیق را وارد کنید.', 'error');
+      pushToast(
+        t('checkout.toasts.requiredContactAddress', 'لطفاً نام تحویل‌گیرنده، شماره همراه و نشانی دقیق را وارد کنید.'),
+        'error'
+      );
       return;
     }
 
@@ -725,43 +762,50 @@ export function CheckoutPage() {
     }
   };
 
+  const gatewayLabel =
+    gatewayName === 'zarinpal'
+      ? t('checkout.gateways.zarinpal', 'زرین‌پال')
+      : t('checkout.gateways.idpay', 'آی‌دی‌پی');
+
   if (paymentCallbackParam === '1' && callbackOrderId && callbackState) {
     return (
-      <div data-testid="payment-callback-receipt" className="max-w-2xl mx-auto px-4 py-12 space-y-6">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
+      <div data-testid="payment-callback-receipt" className="max-w-2xl mx-auto px-3 sm:px-4 py-8 sm:py-12 space-y-6">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 sm:p-8 space-y-5">
           {callbackState.loading ? (
             <div className="text-center py-8 space-y-3">
-              <p className="text-base font-extrabold">در حال استعلام قطعی وضعیت تراکنش از سرور...</p>
-              <p className="text-xs text-ink/60">لطفاً تا دریافت تاییدیه بانکی صفحه را نبندید.</p>
+              <p className="text-base font-extrabold">{t('checkout.callbackLoadingTitle', 'در حال استعلام قطعی وضعیت تراکنش از سرور...')}</p>
+              <p className="text-xs text-ink/60">{t('checkout.callbackLoadingHint', 'لطفاً تا دریافت تاییدیه بانکی صفحه را نبندید.')}</p>
             </div>
           ) : callbackState.paid ? (
             <>
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="w-9 h-9 text-emerald-600 shrink-0" />
                 <div>
-                  <h1 className="text-xl font-extrabold text-emerald-700 dark:text-emerald-400">
-                    پرداخت با موفقیت تایید و ثبت شد
+                  <h1 className="text-lg sm:text-xl font-extrabold text-emerald-700 dark:text-emerald-400">
+                    {t('checkout.callbackSuccessTitle', 'پرداخت با موفقیت تایید و ثبت شد')}
                   </h1>
                   <p className="text-xs text-ink/60 dark:text-slate-400 mt-1">
-                    {callbackState.verifiedAt ? `زمان تایید سرور: ${formatJalaliDateTime(callbackState.verifiedAt)}` : ''}
+                    {callbackState.verifiedAt
+                      ? t('checkout.callbackVerifiedAt', { time: formatDateTime(callbackState.verifiedAt) })
+                      : ''}
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs p-4 rounded-xl bg-surface/60 dark:bg-slate-800/60">
                 <div>
-                  <span className="text-ink/50 block">شماره سفارش</span>
+                  <span className="text-ink/50 block">{t('checkout.receiptOrderNo', 'شماره سفارش')}</span>
                   <strong className="mt-1 block tabular-nums">{callbackState.order?.orderNo || callbackOrderId}</strong>
                 </div>
                 <div>
-                  <span className="text-ink/50 block">کد رهگیری پرداخت</span>
-                  <strong className="mt-1 block font-mono">{callbackState.refId || 'ثبت‌شده'}</strong>
+                  <span className="text-ink/50 block">{t('checkout.receiptRefId', 'کد رهگیری پرداخت')}</span>
+                  <strong className="mt-1 block font-mono break-all">{callbackState.refId || t('checkout.recordedBadge', 'ثبت‌شده')}</strong>
                 </div>
                 <div>
-                  <span className="text-ink/50 block">درگاه</span>
-                  <strong className="mt-1 block">{callbackState.gateway || 'بانکی'}</strong>
+                  <span className="text-ink/50 block">{t('checkout.receiptGateway', 'درگاه')}</span>
+                  <strong className="mt-1 block">{callbackState.gateway || t('checkout.bankGatewayFallback', 'بانکی')}</strong>
                 </div>
                 <div>
-                  <span className="text-ink/50 block">مبلغ پرداختی</span>
+                  <span className="text-ink/50 block">{t('checkout.receiptAmount', 'مبلغ پرداختی')}</span>
                   <strong className="mt-1 block tabular-nums text-brand">
                     {callbackState.order ? formatMoney(callbackState.order.grandTotal, currency) : '—'}
                   </strong>
@@ -773,11 +817,11 @@ export function CheckoutPage() {
               <div className="flex items-center gap-3">
                 <AlertCircle className="w-9 h-9 text-rose-600 shrink-0" />
                 <div>
-                  <h1 className="text-xl font-extrabold text-rose-700 dark:text-rose-400">
-                    پرداخت تایید نشد یا ناتمام ماند
+                  <h1 className="text-lg sm:text-xl font-extrabold text-rose-700 dark:text-rose-400">
+                    {t('checkout.callbackFailedTitle', 'پرداخت تایید نشد یا ناتمام ماند')}
                   </h1>
                   <p className="text-xs text-ink/65 dark:text-slate-400 mt-1">
-                    {callbackState.message || 'تراکنش توسط درگاه تایید نگردید.'}
+                    {callbackState.message || t('checkout.callbackFailedDefault', 'تراکنش توسط درگاه تایید نگردید.')}
                   </p>
                 </div>
               </div>
@@ -785,19 +829,19 @@ export function CheckoutPage() {
                 <button
                   type="button"
                   onClick={() => void verifyOnlinePayment(callbackOrderId, gatewayName)}
-                  className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
+                  className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
                 >
-                  تلاش مجدد برای پرداخت آنلاین
+                  {t('checkout.retryOnlinePayBtn', 'تلاش مجدد برای پرداخت آنلاین')}
                 </button>
               </div>
             </>
           )}
           <div className="flex flex-wrap gap-3 pt-2 border-t border-line dark:border-slate-800">
-            <Link to="/account" className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
-              مشاهده سفارش در حساب کاربری
+            <Link to="/account" className="min-h-[44px] inline-flex items-center px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
+              {t('checkout.viewOrderInAccount', 'مشاهده سفارش در حساب کاربری')}
             </Link>
-            <Link to="/" className="px-5 py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold">
-              بازگشت به فروشگاه
+            <Link to="/" className="min-h-[44px] inline-flex items-center px-5 py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold">
+              {t('product.backToStore', 'بازگشت به فروشگاه')}
             </Link>
           </div>
         </div>
@@ -807,48 +851,53 @@ export function CheckoutPage() {
 
   if (createdOrder) {
     return (
-      <div data-testid="order-success-card" className="max-w-3xl mx-auto px-4 py-12 space-y-6">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
+      <div data-testid="order-success-card" className="max-w-3xl mx-auto px-3 sm:px-4 py-8 sm:py-12 space-y-6">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 sm:p-8 space-y-5">
           <div className="flex items-center gap-3">
             <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
             <div>
-              <h1 className="text-xl font-extrabold">
-                سفارش با شماره <span data-testid="order-success-number" className="tabular-nums text-brand">{createdOrder.orderNo}</span> ثبت شد
+              <h1 className="text-lg sm:text-xl font-extrabold">
+                {t('checkout.orderCreatedPrefix', 'سفارش با شماره')}{' '}
+                <span data-testid="order-success-number" className="tabular-nums text-brand">{createdOrder.orderNo}</span>{' '}
+                {t('checkout.orderCreatedSuffix', 'ثبت شد')}
               </h1>
               <p className="text-xs text-ink/60 dark:text-slate-400 mt-1">
-                تاریخ ثبت: {formatJalaliDateTime(createdOrder.createdAt)}
+                {t('checkout.createdAtLabel', { time: formatDateTime(createdOrder.createdAt) })}
               </p>
             </div>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs p-4 rounded-xl bg-surface/60 dark:bg-slate-800/60">
             <div>
-              <span className="text-ink/50 block">وضعیت سفارش</span>
+              <span className="text-ink/50 block">{t('checkout.orderStatusLabel', 'وضعیت سفارش')}</span>
               <strong data-testid="order-success-status" className="mt-1 block">
                 {createdOrder.status === 'paid'
-                  ? 'پرداخت‌شده و آماده پردازش'
+                  ? t('checkout.orderSuccessPaidStatus', 'پرداخت‌شده و آماده پردازش')
                   : createdOrder.status === 'awaiting_review'
-                  ? 'در انتظار بررسی واحد اعتبار'
-                  : 'در انتظار پرداخت'}
+                  ? t('checkout.orderSuccessAwaitingReview', 'در انتظار بررسی واحد اعتبار')
+                  : t('orderStatus.pending_payment', 'در انتظار پرداخت')}
               </strong>
             </div>
             <div>
-              <span className="text-ink/50 block">روش پرداخت</span>
+              <span className="text-ink/50 block">{t('checkout.paymentMethodCol', 'روش پرداخت')}</span>
               <strong className="mt-1 block">{createdOrder.paymentMethod}</strong>
             </div>
             <div>
-              <span className="text-ink/50 block">ارسال</span>
+              <span className="text-ink/50 block">{t('checkout.shippingCol', 'ارسال')}</span>
               <strong className="mt-1 block">{createdOrder.shippingAddress.city}</strong>
             </div>
             <div>
-              <span className="text-ink/50 block">مبلغ کل</span>
+              <span className="text-ink/50 block">{t('checkout.totalAmountCol', 'مبلغ کل')}</span>
               <strong className="mt-1 block tabular-nums text-brand">{formatMoney(createdOrder.grandTotal, currency)}</strong>
             </div>
           </div>
 
           {createdOrder.userId === 'guest' && (
             <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200">
-              این سفارش به‌صورت مهمان ثبت شد. با شماره سفارش <strong className="tabular-nums">{createdOrder.orderNo}</strong> و شماره همراه <strong className="tabular-nums">{createdOrder.customerMobile}</strong> می‌توانید در بخش «پیگیری سفارش مهمان» وضعیت مرسوله را دنبال کنید.
+              {t('checkout.guestTrackingNotice', {
+                orderNo: createdOrder.orderNo,
+                mobile: createdOrder.customerMobile,
+              })}
             </div>
           )}
 
@@ -856,114 +905,117 @@ export function CheckoutPage() {
             <button
               type="button"
               onClick={() => setGatewayModalOpen(true)}
-              className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
+              className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
             >
-              تکمیل پرداخت آنلاین ({gatewayName === 'zarinpal' ? 'زرین‌پال' : 'آی‌دی‌پی'})
+              {t('checkout.completeOnlinePaymentBtn', { gateway: gatewayLabel })}
             </button>
           )}
 
           <div className="flex flex-wrap gap-3 pt-2">
-            <Link to="/account" className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
-              پیگیری در حساب کاربری / سفارش مهمان
+            <Link to="/account" className="min-h-[44px] inline-flex items-center px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
+              {t('checkout.trackInAccountOrGuest', 'پیگیری در حساب کاربری / سفارش مهمان')}
             </Link>
-            <Link to="/" className="px-5 py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold">
-              بازگشت به فروشگاه
+            <Link to="/" className="min-h-[44px] inline-flex items-center px-5 py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold">
+              {t('product.backToStore', 'بازگشت به فروشگاه')}
             </Link>
           </div>
         </div>
 
-        {gatewayModalOpen && (
-          <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4">
-              <div className="flex items-center gap-2 text-brand">
-                <ShieldCheck className="w-6 h-6" />
-                <h2 className="text-lg font-extrabold">
-                  شبیه‌ساز درگاه شاپرکی — Demo/Sandbox ({gatewayName === 'zarinpal' ? 'زرین‌پال' : 'آی‌دی‌پی'})
-                </h2>
-              </div>
-              <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed">
-                حالت آزمایشی (Demo / Sandbox): پرداخت آنلاین با تایید قطعی سمت سرور و کلید یکتای تراکنش انجام می‌شود. مبلغ قابل پرداخت:
-              </p>
-              <p className="text-2xl font-extrabold text-brand tabular-nums text-center py-3 bg-surface/60 dark:bg-slate-800 rounded-xl">
-                {formatMoney(createdOrder.grandTotal, currency)}
-              </p>
-              <div className="grid grid-cols-2 gap-3 pt-2">
-                <button
-                  type="button"
-                  disabled={verifying}
-                  data-testid="sandbox-verify-payment-button"
-                  onClick={handleVerifyPayment}
-                  className="py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {verifying ? 'در حال استعلام تایید...' : 'پرداخت موفق و Verify'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGatewayModalOpen(false)}
-                  className="py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold"
-                >
-                  انصراف
-                </button>
-              </div>
-            </div>
+        <AccessibleModal
+          open={gatewayModalOpen}
+          onClose={() => setGatewayModalOpen(false)}
+          ariaLabel={t('checkout.sandboxGatewayTitle', { gateway: gatewayLabel })}
+          panelClassName="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
+        >
+          <div className="flex items-center gap-2 text-brand">
+            <ShieldCheck className="w-6 h-6 shrink-0" />
+            <h2 className="text-base sm:text-lg font-extrabold">
+              {t('checkout.sandboxGatewayTitle', { gateway: gatewayLabel })}
+            </h2>
           </div>
-        )}
+          <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed">
+            {t('checkout.sandboxGatewayDesc', 'حالت آزمایشی (Demo / Sandbox): پرداخت آنلاین با تایید قطعی سمت سرور و کلید یکتای تراکنش انجام می‌شود. مبلغ قابل پرداخت:')}
+          </p>
+          <p className="text-2xl font-extrabold text-brand tabular-nums text-center py-3 bg-surface/60 dark:bg-slate-800 rounded-xl">
+            {formatMoney(createdOrder.grandTotal, currency)}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+            <button
+              type="button"
+              disabled={verifying}
+              data-testid="sandbox-verify-payment-button"
+              onClick={handleVerifyPayment}
+              className="min-h-[44px] py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {verifying
+                ? t('checkout.verifyingBtn', 'در حال استعلام تایید...')
+                : t('checkout.sandboxPaySuccessBtn', 'پرداخت موفق و Verify')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setGatewayModalOpen(false)}
+              className="min-h-[44px] py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold"
+            >
+              {t('actions.cancel', 'انصراف')}
+            </button>
+          </div>
+        </AccessibleModal>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
-      <h1 className="text-2xl font-extrabold">تکمیل اطلاعات و تسویه‌حساب</h1>
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8 py-6 sm:py-8 space-y-6">
+      <h1 className="text-xl sm:text-2xl font-extrabold">{t('checkout.pageTitle', 'تکمیل اطلاعات و تسویه‌حساب')}</h1>
 
       {!authUser && (
-        <div className="bg-surface/60 dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="bg-surface/60 dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="font-bold text-sm text-ink dark:text-slate-100">
-              امکان خرید به‌صورت مهمان (بدون نیاز به ورود) فعال است.
+              {t('checkout.guestBannerTitle', 'امکان خرید به‌صورت مهمان (بدون نیاز به ورود) فعال است.')}
             </p>
             <p className="text-xs text-ink/65 dark:text-slate-400 mt-0.5">
-              در صورت تمایل به اعمال تعرفه همکار (B2B) یا ذخیره دائمی سفارش‌ها، با گوگل وارد شوید.
+              {t('checkout.guestBannerSub', 'در صورت تمایل به اعمال تعرفه همکار (B2B) یا ذخیره دائمی سفارش‌ها، با گوگل وارد شوید.')}
             </p>
           </div>
           <button
             type="button"
             onClick={signInWithGoogle}
-            className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
+            className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
           >
-            ورود با حساب گوگل
+            {t('actions.signInGoogle', 'ورود با حساب گوگل')}
           </button>
         </div>
       )}
 
       {cart.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center space-y-3">
-          <p className="font-bold">سبد خرید شما خالی است.</p>
-          <Link to="/category/consumables" className="inline-block px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
-            مشاهده محصولات
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 sm:p-10 text-center space-y-3">
+          <p className="font-bold">{t('cart.emptyTitle', 'سبد خرید شما خالی است.')}</p>
+          <Link to="/category/consumables" className="inline-flex items-center justify-center min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
+            {t('actions.viewProducts', 'مشاهده محصولات')}
           </Link>
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
           <div className="lg:col-span-8 space-y-6">
             {/* Address */}
-            <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
-              <h2 className="text-lg font-extrabold">۱. مشخصات تحویل‌گیرنده و نشانی مطب / کلینیک</h2>
+            <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+              <h2 className="text-lg font-extrabold">{t('checkout.step1Title', '۱. مشخصات تحویل‌گیرنده و نشانی مطب / کلینیک')}</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <label className="text-xs space-y-1.5">
-                  <span className="font-bold">نام و نام خانوادگی *</span>
+                  <span className="font-bold">{t('checkout.fullNameLabel', 'نام و نام خانوادگی *')}</span>
                   <input
                     required
                     type="text"
                     data-testid="checkout-name-input"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                   />
                 </label>
                 <div className="text-xs space-y-1.5">
-                  <span className="font-bold block">شماره همراه *</span>
-                  <div className="flex gap-2">
+                  <span className="font-bold block">{t('checkout.mobileLabel', 'شماره همراه *')}</span>
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <input
                       required
                       type="tel"
@@ -975,68 +1027,72 @@ export function CheckoutPage() {
                         setOtpVerifiedToken('');
                       }}
                       placeholder="0912..."
-                      className="flex-1 px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                      className="w-full sm:flex-1 min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                     />
                     <button
                       type="button"
                       onClick={handleSendOtp}
-                      className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-brand text-brand text-xs font-bold shrink-0"
+                      className="inline-flex items-center justify-center gap-1 min-h-[44px] px-3 py-2 rounded-xl border border-brand text-brand text-xs font-bold shrink-0 whitespace-nowrap"
                     >
                       <Smartphone className="w-3.5 h-3.5" />
-                      <span>{otpVerified || (mobileSession && mobileSession.mobile === customerMobile) ? 'تایید شد' : 'ارسال کد OTP'}</span>
+                      <span>
+                        {otpVerified || (mobileSession && mobileSession.mobile === customerMobile)
+                          ? t('checkout.otpVerifiedBadge', 'تایید شد')
+                          : t('checkout.sendOtpShort', 'ارسال کد OTP')}
+                      </span>
                     </button>
                   </div>
                   {otpSent && !otpVerified && (
-                    <div className="flex items-center gap-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
                       <input
                         type="text"
                         value={otpCode}
                         onChange={(e) => setOtpCode(e.target.value)}
-                        placeholder="کد تایید ۶ رقمی"
-                        className="w-40 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
+                        placeholder={t('checkout.otpCodePlaceholder', 'کد تایید ۶ رقمی')}
+                        className="w-full sm:w-40 min-h-[44px] px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
                       />
                       <button
                         type="button"
                         onClick={handleVerifyOtp}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold"
+                        className="min-h-[44px] px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold whitespace-nowrap"
                       >
-                        تایید کد
+                        {t('checkout.verifyOtpBtn', 'تایید کد')}
                       </button>
                       {otpHint && <span className="text-[11px] text-ink/60">{otpHint}</span>}
                     </div>
                   )}
                 </div>
                 <label className="text-xs space-y-1.5">
-                  <span className="font-bold">استان *</span>
+                  <span className="font-bold">{t('checkout.provinceLabel', 'استان *')}</span>
                   <input
                     required
                     type="text"
                     value={province}
                     onChange={(e) => setProvince(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                   />
                 </label>
                 <label className="text-xs space-y-1.5">
-                  <span className="font-bold">شهر *</span>
+                  <span className="font-bold">{t('checkout.cityLabel', 'شهر *')}</span>
                   <input
                     required
                     type="text"
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                   />
                 </label>
                 <label className="text-xs space-y-1.5">
-                  <span className="font-bold">کد پستی ۱۰ رقمی</span>
+                  <span className="font-bold">{t('checkout.postalCodeLabel', 'کد پستی ۱۰ رقمی')}</span>
                   <input
                     type="text"
                     value={postalCode}
                     onChange={(e) => setPostalCode(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                   />
                 </label>
                 <label className="text-xs space-y-1.5 sm:col-span-2">
-                  <span className="font-bold">نشانی دقیق پستی *</span>
+                  <span className="font-bold">{t('checkout.addressLineLabel', 'نشانی دقیق پستی *')}</span>
                   <textarea
                     required
                     rows={2}
@@ -1050,10 +1106,10 @@ export function CheckoutPage() {
             </section>
 
             {/* Shipping Method */}
-            <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
-              <h2 className="text-lg font-extrabold">۲. روش ارسال مرسوله</h2>
+            <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+              <h2 className="text-lg font-extrabold">{t('checkout.step2Title', '۲. روش ارسال مرسوله')}</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {SHIPPING_OPTIONS.map((opt) => (
+                {shippingOptions.map((opt) => (
                   <label
                     key={opt.id}
                     className={`p-4 rounded-xl border cursor-pointer flex items-start gap-3 transition-colors ${
@@ -1072,7 +1128,9 @@ export function CheckoutPage() {
                     <div className="space-y-1 text-xs">
                       <p className="font-bold text-sm">{opt.label}</p>
                       <p className="text-ink/60 dark:text-slate-400 tabular-nums">
-                        {isFreeShipping || opt.baseFee === 0 ? 'رایگان / توافقی' : formatMoney(opt.baseFee, currency)}
+                        {isFreeShipping || opt.baseFee === 0
+                          ? t('checkout.freeOrNegotiated', 'رایگان / توافقی')
+                          : formatMoney(opt.baseFee, currency)}
                       </p>
                     </div>
                   </label>
@@ -1081,21 +1139,14 @@ export function CheckoutPage() {
             </section>
 
             {/* Payment Method */}
-            <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
-              <h2 className="text-lg font-extrabold">۳. شیوه پرداخت و تسویه</h2>
+            <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+              <h2 className="text-lg font-extrabold">{t('checkout.step3Title', '۳. شیوه پرداخت و تسویه')}</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  { id: 'online', label: 'پرداخت آنلاین بانکی (شتاب)', sub: 'اتصال به درگاه زرین‌پال یا آی‌دی‌پی' },
-                  { id: 'bank_transfer', label: 'کارت‌به‌کارت / واریز شناسه دار', sub: 'ثبت سفارش و ارسال فیش برای حسابداری' },
-                  { id: 'cash_on_delivery', label: 'پرداخت در محل (محدوده تهران)', sub: 'تحویل پیک و پرداخت با دستگاه کارتخوان' },
-                  { id: 'credit_request', label: 'درخواست خرید اعتباری (کلینیک / B2B)', sub: 'بررسی و تایید توسط واحد مالی دنتال‌مارکت' },
-                  { id: 'cheque_request', label: 'درخواست خرید چکی (چک صیادی)', sub: 'ارسال شرایط پیشنهادی چک جهت بررسی' },
-                  { id: 'installment_request', label: 'درخواست خرید اقساطی تجهیزات', sub: 'پیشنهاد اقساط برای تجهیزات سرمایه‌ای' },
-                ].map((m) => (
+                {(['online', 'bank_transfer', 'cash_on_delivery', 'credit_request', 'cheque_request', 'installment_request'] as PaymentMethod[]).map((methodId) => (
                   <label
-                    key={m.id}
+                    key={methodId}
                     className={`p-4 rounded-xl border cursor-pointer flex items-start gap-3 transition-colors ${
-                      paymentMethod === m.id
+                      paymentMethod === methodId
                         ? 'border-brand bg-brand/5'
                         : 'border-line dark:border-slate-700 hover:border-brand/50'
                     }`}
@@ -1103,13 +1154,13 @@ export function CheckoutPage() {
                     <input
                       type="radio"
                       name="paymentMethod"
-                      checked={paymentMethod === m.id}
-                      onChange={() => setPaymentMethod(m.id as PaymentMethod)}
+                      checked={paymentMethod === methodId}
+                      onChange={() => setPaymentMethod(methodId)}
                       className="mt-1"
                     />
                     <div className="space-y-1 text-xs">
-                      <p className="font-bold text-sm">{m.label}</p>
-                      <p className="text-ink/60 dark:text-slate-400">{m.sub}</p>
+                      <p className="font-bold text-sm">{t(`checkout.paymentMethods.${methodId}.label`)}</p>
+                      <p className="text-ink/60 dark:text-slate-400">{t(`checkout.paymentMethods.${methodId}.sub`)}</p>
                     </div>
                   </label>
                 ))}
@@ -1117,17 +1168,17 @@ export function CheckoutPage() {
 
               {paymentMethod === 'online' && (
                 <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <span className="text-xs font-bold">انتخاب درگاه:</span>
+                  <span className="text-xs font-bold">{t('checkout.chooseGatewayLabel', 'انتخاب درگاه:')}</span>
                   {(['zarinpal', 'idpay'] as const).map((gw) => (
                     <button
                       key={gw}
                       type="button"
                       onClick={() => setGatewayName(gw)}
-                      className={`px-3.5 py-1.5 rounded-lg border text-xs font-bold ${
+                      className={`min-h-[40px] px-4 py-1.5 rounded-lg border text-xs font-bold ${
                         gatewayName === gw ? 'border-brand bg-brand text-white' : 'border-line dark:border-slate-700'
                       }`}
                     >
-                      {gw === 'zarinpal' ? 'زرین‌پال' : 'آی‌دی‌پی'}
+                      {gw === 'zarinpal' ? t('checkout.gateways.zarinpal', 'زرین‌پال') : t('checkout.gateways.idpay', 'آی‌دی‌پی')}
                     </button>
                   ))}
                 </div>
@@ -1138,27 +1189,27 @@ export function CheckoutPage() {
                 paymentMethod === 'installment_request') && (
                 <div className="p-4 rounded-xl bg-surface/70 dark:bg-slate-800/70 space-y-3">
                   <p className="text-xs font-bold text-brand dark:text-teal-300">
-                    توجه: این گزینه یک درخواست بررسی اعتباری / اقساطی ثبت می‌کند و تایید نهایی منوط به بررسی واحد مالی است.
+                    {t('checkout.creditReviewNotice', 'توجه: این گزینه یک درخواست بررسی اعتباری / اقساطی ثبت می‌کند و تایید نهایی منوط به بررسی واحد مالی است.')}
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <label className="text-xs space-y-1">
-                      <span className="font-bold">تعداد قسط / چک</span>
+                      <span className="font-bold">{t('checkout.installmentsCountLabel', 'تعداد قسط / چک')}</span>
                       <input
                         type="number"
                         min={1}
                         max={24}
                         value={installmentsCount}
                         onChange={(e) => setInstallmentsCount(Number(e.target.value))}
-                        className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
+                        className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
                       />
                     </label>
                     <label className="text-xs space-y-1 sm:col-span-2">
-                      <span className="font-bold">شرایط پیشنهادی پرداخت</span>
+                      <span className="font-bold">{t('checkout.proposedTermsLabel', 'شرایط پیشنهادی پرداخت')}</span>
                       <input
                         type="text"
                         value={proposedTermsFa}
                         onChange={(e) => setProposedTermsFa(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
+                        className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900"
                       />
                     </label>
                   </div>
@@ -1166,66 +1217,70 @@ export function CheckoutPage() {
               )}
 
               <label className="block text-xs space-y-1.5 pt-2">
-                <span className="font-bold">توضیحات تکمیلی سفارش یا اطلاعات فاکتور رسمی حقوقی</span>
+                <span className="font-bold">{t('checkout.customerNoteLabel', 'توضیحات تکمیلی سفارش یا اطلاعات فاکتور رسمی حقوقی')}</span>
                 <textarea
                   rows={2}
                   value={customerNote}
                   onChange={(e) => setCustomerNote(e.target.value)}
-                  placeholder="در صورت نیاز به فاکتور رسمی شرکتی، شناسه ملی و کد اقتصادی را قید فرمایید..."
+                  placeholder={t('checkout.customerNotePh', 'در صورت نیاز به فاکتور رسمی شرکتی، شناسه ملی و کد اقتصادی را قید فرمایید...')}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                 />
               </label>
             </section>
           </div>
 
-          <aside className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 sticky top-20">
+          <aside className="lg:col-span-4 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 lg:sticky lg:top-20">
             <h2 className="text-lg font-extrabold flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-brand" />
-              <span>مرور مالی سفارش</span>
+              <CreditCard className="w-5 h-5 text-brand" aria-hidden="true" />
+              <span>{t('checkout.financialReviewTitle', 'مرور مالی سفارش')}</span>
             </h2>
 
             <div className="space-y-2 text-xs">
               <label className="block space-y-1">
-                <span className="font-bold">کد تخفیف</span>
+                <span className="font-bold">{t('checkout.couponLabel', 'کد تخفیف')}</span>
                 <input
                   type="text"
                   value={couponCode}
                   onChange={(e) => setCouponCode(e.target.value)}
-                  placeholder="اختیاری..."
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  placeholder={t('common.optionalPlaceholder', 'اختیاری...')}
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
             </div>
 
             <div className="space-y-2 text-sm border-y border-line dark:border-slate-800 py-4">
               <div className="flex justify-between">
-                <span className="text-ink/70 dark:text-slate-400">جمع اقلام ({toPersianDigits(cart.length)})</span>
+                <span className="text-ink/70 dark:text-slate-400">
+                  {t('checkout.itemsCountTotal', { count: formatDigits(cart.length) })}
+                </span>
                 <span className="font-bold tabular-nums">{formatMoney(serverTotals?.subtotal ?? subtotal, currency)}</span>
               </div>
               {(serverTotals?.couponDiscount ?? couponDiscount) > 0 && (
                 <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-                  <span>تخفیف کد</span>
+                  <span>{t('checkout.couponDiscountLabel', 'تخفیف کد')}</span>
                   <span className="font-bold tabular-nums">
                     −{formatMoney(serverTotals?.couponDiscount ?? couponDiscount, currency)}
                   </span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span className="text-ink/70 dark:text-slate-400">هزینه ارسال</span>
+                <span className="text-ink/70 dark:text-slate-400">{t('checkout.shippingFeeLabel', 'هزینه ارسال')}</span>
                 <span className="font-bold tabular-nums">
                   {(serverTotals?.shippingTotal ?? shippingFee) === 0
-                    ? 'رایگان'
+                    ? t('common.free', 'رایگان')
                     : formatMoney(serverTotals?.shippingTotal ?? shippingFee, currency)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-ink/70 dark:text-slate-400">مالیات ({toPersianDigits(settings.taxRatePercent)}٪)</span>
+                <span className="text-ink/70 dark:text-slate-400">
+                  {t('checkout.taxWithPercent', { rate: formatDigits(settings.taxRatePercent) })}
+                </span>
                 <span className="font-bold tabular-nums">{formatMoney(serverTotals?.taxTotal ?? taxTotal, currency)}</span>
               </div>
             </div>
 
             <div className="flex justify-between items-center">
-              <span className="font-extrabold">جمع نهایی</span>
+              <span className="font-extrabold">{t('checkout.grandTotalLabel', 'جمع نهایی')}</span>
               <span className="text-xl font-extrabold text-brand dark:text-teal-300 tabular-nums">
                 {formatMoney(serverTotals?.grandTotal ?? grandTotal, currency)}
               </span>
@@ -1235,9 +1290,11 @@ export function CheckoutPage() {
               type="submit"
               disabled={submitting}
               data-testid="checkout-submit-button"
-              className="w-full py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark disabled:opacity-50 transition-colors"
+              className="w-full min-h-[44px] py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark disabled:opacity-50 transition-colors"
             >
-              {submitting ? 'در حال ثبت سفارش...' : 'تایید و ثبت نهایی سفارش'}
+              {submitting
+                ? t('checkout.submittingBtn', 'در حال ثبت سفارش...')
+                : t('checkout.submitOrderBtn', 'تایید و ثبت نهایی سفارش')}
             </button>
           </aside>
         </form>

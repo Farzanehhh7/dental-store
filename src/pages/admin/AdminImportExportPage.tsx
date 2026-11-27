@@ -10,6 +10,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
+import { useI18n } from '../../context/i18n';
 import { downloadCsvFile } from '../../lib/csv';
 import {
   MAX_IMPORT_FILE_BYTES,
@@ -18,7 +19,6 @@ import {
   parseCsvToMatrix,
   readSpreadsheetToMatrix,
 } from '../../lib/excel';
-import { formatJalaliDateTime, toPersianDigits } from '../../lib/jalali';
 import {
   IMPORT_TEMPLATE_LIST,
   IMPORT_TEMPLATE_REGISTRY,
@@ -50,6 +50,7 @@ export function AdminImportExportPage() {
     refreshInventory,
     pushToast,
   } = useStore();
+  const { t, formatDateTime, formatDigits } = useI18n();
 
   const [templateKey, setTemplateKey] = useState<ImportTemplateKey>('products');
   const [filename, setFilename] = useState<string>('manual-paste.csv');
@@ -177,7 +178,7 @@ export function AdminImportExportPage() {
         await exportRowsToXlsx(rows, templateKey, `export-${templateKey}.xlsx`, expHeaders);
       }
     } catch {
-      pushToast('خطا در تولید خروجی از اطلاعات کاتالوگ.', 'error');
+      pushToast(t('adminImport.exportError'), 'error');
     }
   };
 
@@ -187,11 +188,11 @@ export function AdminImportExportPage() {
     mappingOverride?: ColumnMapping
   ) => {
     if (rowsMatrix.length < 2) {
-      pushToast('فایل حداقل باید شامل سرستون و یک ردیف داده باشد.', 'error');
+      pushToast(t('adminImport.minRowsError'), 'error');
       return;
     }
     if (rowsMatrix.length - 1 > MAX_IMPORT_ROWS) {
-      pushToast(`حداکثر ${toPersianDigits(MAX_IMPORT_ROWS)} ردیف داده در هر فایل مجاز است.`, 'error');
+      pushToast(t('adminImport.maxRowsError', { max: formatDigits(MAX_IMPORT_ROWS) }), 'error');
       return;
     }
 
@@ -206,7 +207,7 @@ export function AdminImportExportPage() {
 
     const mappedRawRows = applyColumnMappingToMatrix(rowsMatrix, tpl, effectiveMapping);
     if (mappedRawRows.length === 0) {
-      pushToast('هیچ ردیف داده‌ای برای بررسی یافت نشد.', 'error');
+      pushToast(t('adminImport.noDataRowsError'), 'error');
       return;
     }
 
@@ -253,7 +254,7 @@ export function AdminImportExportPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX_IMPORT_FILE_BYTES) {
-      pushToast('حجم فایل بیش از سقف مجاز (۵ مگابایت) است.', 'error');
+      pushToast(t('adminImport.fileSizeExceeded'), 'error');
       e.target.value = '';
       return;
     }
@@ -264,7 +265,7 @@ export function AdminImportExportPage() {
         maxRows: MAX_IMPORT_ROWS,
       });
       if (parsedMatrix.length < 2) {
-        pushToast('فایل باید شامل سرستون و حداقل یک ردیف داده باشد.', 'error');
+        pushToast(t('adminImport.minRowsError'), 'error');
         return;
       }
 
@@ -275,23 +276,18 @@ export function AdminImportExportPage() {
       if (detection.confidence !== 'low' && detection.templateKey !== templateKey) {
         const detectedTpl = IMPORT_TEMPLATE_REGISTRY[detection.templateKey];
         setTemplateKey(detection.templateKey);
-        setDetectionNote(
-          `قالب «${detectedTpl.label}» بر اساس سرستون‌های فایل به‌صورت خودکار تشخیص داده شد.`
-        );
+        setDetectionNote(t('adminImport.templateAutoDetected', { label: detectedTpl.label }));
         await runValidationFromMatrix(parsedMatrix, detection.templateKey, detection.mapping);
       } else {
         setDetectionNote(
           detection.confidence === 'high'
-            ? `سرستون‌ها با قالب «${activeTemplate.label}» مطابقت دارند.`
-            : 'در صورت نیاز، نگاشت ستون‌ها را پیش از ثبت نهایی بررسی کنید.'
+            ? t('adminImport.headersMatched', { label: activeTemplate.label })
+            : t('adminImport.reviewMappingNote')
         );
         await runValidationFromMatrix(parsedMatrix, templateKey, autoMapColumns(fileHeaders, activeTemplate));
       }
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'امکان خواندن فایل وجود ندارد. لطفاً فایل معتبر .xlsx یا .csv انتخاب کنید.';
+      const msg = err instanceof Error ? err.message : t('adminImport.invalidFileError');
       pushToast(msg, 'error');
     } finally {
       e.target.value = '';
@@ -305,7 +301,7 @@ export function AdminImportExportPage() {
         maxRows: MAX_IMPORT_ROWS,
       });
       if (lines.length < 2) {
-        pushToast('متن CSV حداقل باید شامل سطر سرستون و یک سطر داده باشد.', 'error');
+        pushToast(t('adminImport.minCsvRowsError'), 'error');
         return;
       }
       const textHeaders = lines[0] ?? [];
@@ -316,13 +312,13 @@ export function AdminImportExportPage() {
           : templateKey;
       if (chosenKey !== templateKey) {
         setTemplateKey(chosenKey);
-        setDetectionNote(`قالب «${IMPORT_TEMPLATE_REGISTRY[chosenKey].label}» تشخیص داده شد.`);
+        setDetectionNote(t('adminImport.templateDetected', { label: IMPORT_TEMPLATE_REGISTRY[chosenKey].label }));
       }
       setFilename(`csv-paste-${chosenKey}.csv`);
       const chosenTpl = IMPORT_TEMPLATE_REGISTRY[chosenKey];
       await runValidationFromMatrix(lines, chosenKey, autoMapColumns(textHeaders, chosenTpl));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'متن CSV نامعتبر است.';
+      const msg = err instanceof Error ? err.message : t('adminImport.invalidCsvError');
       pushToast(msg, 'error');
     }
   };
@@ -359,7 +355,7 @@ export function AdminImportExportPage() {
     if (!dryRunResult || matrix.length < 2) return;
     const actionableCount = dryRunResult.summary.createCount + dryRunResult.summary.updateCount;
     if (actionableCount === 0) {
-      pushToast('هیچ ردیف جدید یا ویرایش‌شده‌ای برای ثبت وجود ندارد.', 'error');
+      pushToast(t('adminImport.noActionableRows'), 'error');
       return;
     }
 
@@ -384,7 +380,7 @@ export function AdminImportExportPage() {
       };
 
       if (!res.ok || !data.ok || !data.job) {
-        pushToast(data.message || 'خطا در ثبت دسته‌ای اطلاعات روی سرور.', 'error');
+        pushToast(data.message || t('adminImport.commitServerError'), 'error');
         return;
       }
 
@@ -396,13 +392,14 @@ export function AdminImportExportPage() {
       setDetectionNote(null);
       await refreshInventory().catch(() => {});
       pushToast(
-        `ایمپورت با موفقیت انجام شد (${toPersianDigits(data.job.counts.createCount)} جدید، ${toPersianDigits(
-          data.job.counts.updateCount
-        )} بروزرسانی).`,
+        t('adminImport.commitSuccessToast', {
+          created: formatDigits(data.job.counts.createCount),
+          updated: formatDigits(data.job.counts.updateCount),
+        }),
         'success'
       );
     } catch {
-      pushToast('ارتباط با سرور برای ثبت ایمپورت برقرار نشد.', 'error');
+      pushToast(t('adminImport.commitNetworkError'), 'error');
     } finally {
       setIsCommitting(false);
     }
@@ -418,15 +415,15 @@ export function AdminImportExportPage() {
       });
       const data = (await res.json()) as { ok?: boolean; job?: ImportJobSummaryDto; message?: string };
       if (!res.ok || !data.ok || !data.job) {
-        pushToast(data.message || 'امکان بازگردانی این ایمپورت وجود ندارد.', 'error');
+        pushToast(data.message || t('adminImport.rollbackNotAllowed'), 'error');
         return;
       }
       setImportJobs((prev) => prev.map((j) => (j.id === jobId ? data.job! : j)));
       setConfirmRollbackJobId(null);
       await refreshInventory().catch(() => {});
-      pushToast(`عملیات ${jobId} با موفقیت بازگردانی شد.`, 'success');
+      pushToast(t('adminImport.rollbackSuccessToast', { id: jobId }), 'success');
     } catch {
-      pushToast('خطا در ارتباط با سرور هنگام بازگردانی.', 'error');
+      pushToast(t('adminImport.rollbackNetworkError'), 'error');
     } finally {
       setRollingBackJobId(null);
     }
@@ -454,51 +451,49 @@ export function AdminImportExportPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap justify-between items-start gap-4">
-        <div>
-          <h1 className="text-xl font-extrabold text-ink dark:text-slate-100">
-            مرکز ورود و خروج گروهی کاتالوگ و انبار (Excel / CSV)
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-extrabold text-ink dark:text-slate-100">
+            {t('adminImport.title')}
           </h1>
-          <p className="text-xs text-ink/65 dark:text-slate-400 mt-1">
-            پشتیبانی از ۷ قالب استاندارد با تشخیص خودکار ستون‌ها، اعتبارسنجی Dry-Run، ثبت دسته‌ای و بازگردانی (Rollback)
-          </p>
+          <p className="text-xs text-ink/65 dark:text-slate-400 mt-1">{t('adminImport.subtitle')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <button
             type="button"
             onClick={() => void handleDownloadSample('xlsx')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-line dark:border-slate-700 bg-white dark:bg-slate-900 font-bold hover:border-brand"
+            className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-line dark:border-slate-700 bg-white dark:bg-slate-900 font-bold hover:border-brand"
           >
-            <Download className="w-4 h-4" />
-            <span>قالب خام .xlsx</span>
+            <Download className="w-4 h-4 shrink-0" />
+            <span>{t('adminImport.sampleXlsx')}</span>
           </button>
           <button
             type="button"
             onClick={() => void handleDownloadSample('csv')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-line dark:border-slate-700 bg-white dark:bg-slate-900 font-bold hover:border-brand"
+            className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-line dark:border-slate-700 bg-white dark:bg-slate-900 font-bold hover:border-brand"
           >
-            <Download className="w-4 h-4" />
-            <span>قالب خام .csv</span>
+            <Download className="w-4 h-4 shrink-0" />
+            <span>{t('adminImport.sampleCsv')}</span>
           </button>
           <button
             type="button"
             onClick={() => void handleExportCurrentData('xlsx')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand text-white font-bold"
+            className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand text-white font-bold"
           >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>خروجی کل داده‌های این قالب (.xlsx)</span>
+            <FileSpreadsheet className="w-4 h-4 shrink-0" />
+            <span>{t('adminImport.exportAllXlsx')}</span>
           </button>
           <button
             type="button"
             onClick={() => void handleExportCurrentData('csv')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-brand/40 text-brand dark:text-sky-300 font-bold"
+            className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-brand/40 text-brand dark:text-sky-300 font-bold"
           >
-            <span>خروجی .csv</span>
+            <span>{t('adminImport.exportCsv')}</span>
           </button>
         </div>
       </div>
 
       {/* Template Selector Strip */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
         {IMPORT_TEMPLATE_LIST.map((tpl) => {
           const active = tpl.key === templateKey;
           return (
@@ -506,7 +501,7 @@ export function AdminImportExportPage() {
               key={tpl.key}
               type="button"
               onClick={() => handleSelectTemplate(tpl.key)}
-              className={`text-right p-3.5 rounded-2xl border transition-colors ${
+              className={`text-start p-3.5 rounded-2xl border transition-colors min-h-[72px] ${
                 active
                   ? 'border-brand bg-brand/5 dark:bg-sky-950/30 text-ink dark:text-slate-100'
                   : 'border-line dark:border-slate-800 bg-white dark:bg-slate-900 text-ink/80 dark:text-slate-300 hover:border-brand/50'
@@ -523,34 +518,38 @@ export function AdminImportExportPage() {
       </div>
 
       {/* Step 1: Upload / Paste */}
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 text-xs">
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-line dark:border-slate-800">
-          <div>
+          <div className="min-w-0">
             <h2 className="text-sm font-extrabold text-ink dark:text-slate-100">
-              گام ۱: بارگذاری فایل Excel (.xlsx) یا CSV برای «{activeTemplate.label}»
+              {t('adminImport.step1Title', { label: activeTemplate.label })}
             </h2>
-            <p className="text-[11px] text-ink/60 dark:text-slate-400 mt-0.5">
-              سقف مجاز: {toPersianDigits(5)} مگابایت · حداکثر {toPersianDigits(MAX_IMPORT_ROWS)} ردیف · کلید یکتا: {activeTemplate.upsertKeyLabel}
+            <p className="text-[11px] text-ink/60 dark:text-slate-400 mt-0.5 tabular-nums">
+              {t('adminImport.step1Meta', {
+                maxMb: formatDigits(5),
+                maxRows: formatDigits(MAX_IMPORT_ROWS),
+                key: activeTemplate.upsertKeyLabel,
+              })}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-brand text-brand dark:text-sky-300 font-bold cursor-pointer hover:bg-brand/5">
-              <FileSpreadsheet className="w-4 h-4" />
-              <span>آپلود مستقیم فایل .xlsx یا .csv</span>
+            <label className="min-h-[40px] inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-brand text-brand dark:text-sky-300 font-bold cursor-pointer hover:bg-brand/5">
+              <FileSpreadsheet className="w-4 h-4 shrink-0" />
+              <span>{t('adminImport.uploadFileBtn')}</span>
               <input type="file" accept=".xlsx,.csv" onChange={handleFileUpload} className="hidden" />
             </label>
             <button
               type="button"
               onClick={handleFillSampleCsv}
-              className="px-3 py-2 rounded-xl border border-line dark:border-slate-700 font-semibold hover:border-brand"
+              className="min-h-[40px] px-3 py-2 rounded-xl border border-line dark:border-slate-700 font-semibold hover:border-brand"
             >
-              درج نمونه CSV این قالب
+              {t('adminImport.fillSampleCsv')}
             </button>
           </div>
         </div>
 
-        <div className="text-[11px] text-ink/70 dark:text-slate-400">
-          ستون‌های قالب فعلی:{' '}
+        <div className="text-[11px] text-ink/70 dark:text-slate-400 break-words">
+          {t('adminImport.currentColumnsLabel')}{' '}
           {activeTemplate.columns.map((c, i) => (
             <span key={c.key} className="font-mono">
               {i > 0 ? ' · ' : ''}
@@ -578,10 +577,10 @@ export function AdminImportExportPage() {
             type="button"
             disabled={isValidating || !csvText.trim()}
             onClick={() => void handleDryRunText()}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand text-white font-bold disabled:opacity-50"
+            className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand text-white font-bold disabled:opacity-50"
           >
-            <FileUp className="w-4 h-4" />
-            <span>{isValidating ? 'در حال بررسی...' : 'تحلیل و پیش‌نمایش Dry-Run'}</span>
+            <FileUp className="w-4 h-4 shrink-0" />
+            <span>{isValidating ? t('adminImport.validating') : t('adminImport.analyzeDryRun')}</span>
           </button>
 
           {detectionNote && (
@@ -594,11 +593,11 @@ export function AdminImportExportPage() {
 
       {/* Step 2: Column Mapping */}
       {headers.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 text-xs">
-          <div className="flex items-center gap-2">
-            <ArrowRightLeft className="w-4 h-4 text-brand" />
-            <h2 className="text-sm font-extrabold text-ink dark:text-slate-100">
-              گام ۲: نگاشت ستون‌های فایل ({filename})
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <ArrowRightLeft className="w-4 h-4 text-brand shrink-0" />
+            <h2 className="text-sm font-extrabold text-ink dark:text-slate-100 break-all">
+              {t('adminImport.step2Title', { filename })}
             </h2>
           </div>
 
@@ -608,24 +607,26 @@ export function AdminImportExportPage() {
               return (
                 <label
                   key={col.key}
-                  className="p-3 rounded-xl border border-line dark:border-slate-800 bg-paper/50 dark:bg-slate-800/40 flex flex-col gap-1.5"
+                  className="p-3 rounded-xl border border-line dark:border-slate-800 bg-paper/50 dark:bg-slate-800/40 flex flex-col gap-1.5 min-w-0"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-ink dark:text-slate-200">
+                    <span className="font-bold text-ink dark:text-slate-200 truncate">
                       {col.labelFa}
-                      {col.required && <span className="text-rose-600 mr-1">*</span>}
+                      {col.required && <span className="text-rose-600 ms-1">*</span>}
                     </span>
-                    <span className="font-mono text-[10px] text-ink/55 dark:text-slate-400">{col.key}</span>
+                    <span className="font-mono text-[10px] text-ink/55 dark:text-slate-400 shrink-0">
+                      {col.key}
+                    </span>
                   </div>
                   <select
                     value={selectedIdx === null || selectedIdx === undefined ? '' : String(selectedIdx)}
                     onChange={(e) => handleMappingChange(col.key, e.target.value)}
-                    className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                    className="px-2.5 py-2 rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
                   >
-                    <option value="">-- بدون نگاشت --</option>
+                    <option value="">{t('adminImport.noMapping')}</option>
                     {headers.map((h, idx) => (
                       <option key={`${h}-${idx}`} value={String(idx)}>
-                        ستون {toPersianDigits(idx + 1)}: {h}
+                        {t('adminImport.columnHeaderOption', { index: formatDigits(idx + 1), name: h })}
                       </option>
                     ))}
                   </select>
@@ -638,10 +639,10 @@ export function AdminImportExportPage() {
 
       {/* Step 3: Dry-Run Preview */}
       {dryRunResult && (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 text-xs">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-extrabold text-ink dark:text-slate-100">
-              گام ۳: گزارش Dry-Run ({dryRunResult.templateLabel})
+              {t('adminImport.step3Title', { label: dryRunResult.templateLabel })}
             </h2>
             <div className="flex flex-wrap items-center gap-2">
               {dryRunResult.summary.errorCount > 0 && (
@@ -649,17 +650,17 @@ export function AdminImportExportPage() {
                   <button
                     type="button"
                     onClick={() => void handleDownloadErrors('xlsx')}
-                    className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold"
+                    className="min-h-[38px] inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>گزارش خطاها (.xlsx)</span>
+                    <span>{t('adminImport.errorReportXlsx')}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleDownloadErrors('csv')}
-                    className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold"
+                    className="min-h-[38px] inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold"
                   >
-                    <span>گزارش خطاها (.csv)</span>
+                    <span>{t('adminImport.errorReportCsv')}</span>
                   </button>
                 </>
               )}
@@ -667,58 +668,58 @@ export function AdminImportExportPage() {
                 type="button"
                 disabled={isCommitting || actionableCount === 0}
                 onClick={() => void handleCommitImport()}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold disabled:opacity-50"
+                className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold disabled:opacity-50"
               >
-                <CheckCircle2 className="w-4 h-4" />
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>
                   {isCommitting
-                    ? 'در حال ثبت...'
-                    : `ثبت نهایی ${toPersianDigits(actionableCount)} ردیف معتبر`}
+                    ? t('adminImport.committing')
+                    : t('adminImport.commitValidRows', { count: formatDigits(actionableCount) })}
                 </span>
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <div className="p-3 rounded-xl border border-line dark:border-slate-800 bg-paper/50 dark:bg-slate-800/40">
-              <div className="text-[11px] text-ink/60 dark:text-slate-400">کل ردیف‌ها</div>
+              <div className="text-[11px] text-ink/60 dark:text-slate-400">{t('adminImport.summaryTotal')}</div>
               <div className="text-lg font-extrabold tabular-nums mt-0.5">
-                {toPersianDigits(dryRunResult.summary.totalRows)}
+                {formatDigits(dryRunResult.summary.totalRows)}
               </div>
             </div>
             <div className="p-3 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20">
-              <div className="text-[11px] text-emerald-700 dark:text-emerald-300">ایجاد جدید</div>
+              <div className="text-[11px] text-emerald-700 dark:text-emerald-300">{t('adminImport.summaryCreate')}</div>
               <div className="text-lg font-extrabold tabular-nums text-emerald-700 dark:text-emerald-300 mt-0.5">
-                {toPersianDigits(dryRunResult.summary.createCount)}
+                {formatDigits(dryRunResult.summary.createCount)}
               </div>
             </div>
             <div className="p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/50 dark:bg-sky-950/20">
-              <div className="text-[11px] text-sky-700 dark:text-sky-300">بروزرسانی</div>
+              <div className="text-[11px] text-sky-700 dark:text-sky-300">{t('adminImport.summaryUpdate')}</div>
               <div className="text-lg font-extrabold tabular-nums text-sky-700 dark:text-sky-300 mt-0.5">
-                {toPersianDigits(dryRunResult.summary.updateCount)}
+                {formatDigits(dryRunResult.summary.updateCount)}
               </div>
             </div>
             <div className="p-3 rounded-xl border border-line dark:border-slate-800 bg-paper/50 dark:bg-slate-800/40">
-              <div className="text-[11px] text-ink/60 dark:text-slate-400">بدون تغییر (Skip)</div>
+              <div className="text-[11px] text-ink/60 dark:text-slate-400">{t('adminImport.summarySkip')}</div>
               <div className="text-lg font-extrabold tabular-nums mt-0.5">
-                {toPersianDigits(dryRunResult.summary.skipCount)}
+                {formatDigits(dryRunResult.summary.skipCount)}
               </div>
             </div>
-            <div className="p-3 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/20">
-              <div className="text-[11px] text-rose-700 dark:text-rose-300">خطا (Error)</div>
+            <div className="col-span-2 sm:col-span-1 p-3 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/20">
+              <div className="text-[11px] text-rose-700 dark:text-rose-300">{t('adminImport.summaryError')}</div>
               <div className="text-lg font-extrabold tabular-nums text-rose-700 dark:text-rose-300 mt-0.5">
-                {toPersianDigits(dryRunResult.summary.errorCount)}
+                {formatDigits(dryRunResult.summary.errorCount)}
               </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 border-b border-line dark:border-slate-800 pb-3">
+          <div className="flex flex-nowrap overflow-x-auto no-scrollbar sm:flex-wrap gap-2 border-b border-line dark:border-slate-800 pb-3">
             {(
               [
-                ['all', `همه (${toPersianDigits(dryRunResult.rows.length)})`],
-                ['actionable', `ایجاد و بروزرسانی (${toPersianDigits(actionableCount)})`],
-                ['error', `دارای خطا (${toPersianDigits(dryRunResult.summary.errorCount)})`],
-                ['skip', `بدون تغییر (${toPersianDigits(dryRunResult.summary.skipCount)})`],
+                ['all', t('adminImport.filterAll', { count: formatDigits(dryRunResult.rows.length) })],
+                ['actionable', t('adminImport.filterActionable', { count: formatDigits(actionableCount) })],
+                ['error', t('adminImport.filterError', { count: formatDigits(dryRunResult.summary.errorCount) })],
+                ['skip', t('adminImport.filterSkip', { count: formatDigits(dryRunResult.summary.skipCount) })],
               ] as const
             ).map(([fKey, label]) => (
               <button
@@ -728,7 +729,7 @@ export function AdminImportExportPage() {
                   setActionFilter(fKey);
                   setPreviewPage(1);
                 }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${
+                className={`whitespace-nowrap shrink-0 min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-bold border ${
                   actionFilter === fKey
                     ? 'border-brand text-brand dark:text-sky-300 bg-brand/5'
                     : 'border-line dark:border-slate-700 text-ink/70 dark:text-slate-400'
@@ -740,32 +741,38 @@ export function AdminImportExportPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-right border-collapse">
+            <table className="w-full min-w-[640px] text-start border-collapse">
               <thead>
                 <tr className="border-b border-line dark:border-slate-800 text-[11px] text-ink/60 dark:text-slate-400">
-                  <th className="py-2 px-2">ردیف</th>
-                  <th className="py-2 px-2">کلید یکتا</th>
-                  <th className="py-2 px-2">شرح عملیات</th>
-                  <th className="py-2 px-2">وضعیت</th>
-                  <th className="py-2 px-2">پیام اعتبارسنجی</th>
+                  <th className="py-2 px-2 text-start">{t('adminImport.colRow')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminImport.colKey')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminImport.colActionDesc')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminImport.colStatus')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminImport.colMessage')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line dark:divide-slate-800">
                 {pagedPreviewRows.map((row) => (
                   <tr key={row.rowNumber} className="align-top">
-                    <td className="py-2.5 px-2 tabular-nums font-bold">{toPersianDigits(row.rowNumber)}</td>
+                    <td className="py-2.5 px-2 tabular-nums font-bold">{formatDigits(row.rowNumber)}</td>
                     <td className="py-2.5 px-2 font-mono text-[11px]" dir="ltr">
                       {row.upsertKey}
                     </td>
                     <td className="py-2.5 px-2 font-semibold">{row.summaryFa}</td>
                     <td className="py-2.5 px-2 font-bold">
-                      {row.action === 'create' && <span className="text-emerald-600 dark:text-emerald-400">ایجاد</span>}
-                      {row.action === 'update' && <span className="text-sky-600 dark:text-sky-400">بروزرسانی</span>}
-                      {row.action === 'skip' && <span className="text-ink/55 dark:text-slate-400">بدون تغییر</span>}
+                      {row.action === 'create' && (
+                        <span className="text-emerald-600 dark:text-emerald-400">{t('adminImport.actionCreate')}</span>
+                      )}
+                      {row.action === 'update' && (
+                        <span className="text-sky-600 dark:text-sky-400">{t('adminImport.actionUpdate')}</span>
+                      )}
+                      {row.action === 'skip' && (
+                        <span className="text-ink/55 dark:text-slate-400">{t('adminImport.actionSkip')}</span>
+                      )}
                       {row.action === 'error' && (
                         <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          <span>خطا</span>
+                          <span>{t('adminImport.actionError')}</span>
                         </span>
                       )}
                     </td>
@@ -777,7 +784,7 @@ export function AdminImportExportPage() {
                           ))}
                         </ul>
                       ) : (
-                        <span className="text-ink/55 dark:text-slate-400">معتبر و آماده اجرا</span>
+                        <span className="text-ink/55 dark:text-slate-400">{t('adminImport.rowValidMsg')}</span>
                       )}
                     </td>
                   </tr>
@@ -787,26 +794,29 @@ export function AdminImportExportPage() {
           </div>
 
           {totalPreviewPages > 1 && (
-            <div className="flex items-center justify-between pt-2 text-xs">
-              <span className="text-ink/60 dark:text-slate-400">
-                صفحه {toPersianDigits(previewPage)} از {toPersianDigits(totalPreviewPages)}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs">
+              <span className="text-ink/60 dark:text-slate-400 tabular-nums">
+                {t('common.pageOf', {
+                  page: formatDigits(previewPage),
+                  total: formatDigits(totalPreviewPages),
+                })}
               </span>
               <div className="flex gap-2">
                 <button
                   type="button"
                   disabled={previewPage <= 1}
                   onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
-                  className="px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+                  className="min-h-[36px] px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
                 >
-                  قبلی
+                  {t('common.prev')}
                 </button>
                 <button
                   type="button"
                   disabled={previewPage >= totalPreviewPages}
                   onClick={() => setPreviewPage((p) => Math.min(totalPreviewPages, p + 1))}
-                  className="px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+                  className="min-h-[36px] px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
                 >
-                  بعدی
+                  {t('common.next')}
                 </button>
               </div>
             </div>
@@ -815,20 +825,18 @@ export function AdminImportExportPage() {
       )}
 
       {/* Step 4: Persistent Import Jobs & Rollback */}
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3 text-xs">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <History className="w-4 h-4 text-brand" />
-            <h2 className="text-sm font-extrabold text-ink dark:text-slate-100">
-              تاریخچه عملیات ایمپورت و بازگردانی (Rollback)
-            </h2>
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <History className="w-4 h-4 text-brand shrink-0" />
+            <h2 className="text-sm font-extrabold text-ink dark:text-slate-100">{t('adminImport.step4Title')}</h2>
           </div>
-          {isLoadingJobs && <span className="text-ink/55 dark:text-slate-400">در حال بروزرسانی...</span>}
+          {isLoadingJobs && <span className="text-ink/55 dark:text-slate-400">{t('adminImport.refreshingJobs')}</span>}
         </div>
 
         {importJobs.length === 0 ? (
           <div className="p-4 rounded-xl border border-dashed border-line dark:border-slate-700 text-center text-ink/60 dark:text-slate-400">
-            هنوز عملیات ورود داده ثبت‌شده‌ای در سرور وجود ندارد.
+            {t('adminImport.noJobsEmpty')}
           </div>
         ) : (
           <div className="space-y-2">
@@ -837,24 +845,30 @@ export function AdminImportExportPage() {
                 key={job.id}
                 className="p-3.5 rounded-xl border border-line dark:border-slate-800 flex flex-wrap items-center justify-between gap-3"
               >
-                <div className="space-y-1">
+                <div className="space-y-1 min-w-0 flex-1">
                   <div className="font-extrabold flex flex-wrap items-center gap-2">
-                    <span className="font-mono">{job.id}</span>
+                    <span className="font-mono break-all">{job.id}</span>
                     <span>· {job.templateLabel}</span>
-                    <span className="text-ink/60 dark:text-slate-400 font-normal">({job.filename})</span>
+                    <span className="text-ink/60 dark:text-slate-400 font-normal break-all">({job.filename})</span>
                   </div>
                   <div className="text-[11px] text-ink/70 dark:text-slate-400 tabular-nums">
-                    جدید: {toPersianDigits(job.counts.createCount)} · بروزرسانی:{' '}
-                    {toPersianDigits(job.counts.updateCount)} · بدون تغییر:{' '}
-                    {toPersianDigits(job.counts.skipCount)} · خطا: {toPersianDigits(job.counts.errorCount)} · ثبت‌شده
-                    توسط {job.actorEmail} در {formatJalaliDateTime(job.createdAt)}
+                    {t('adminImport.jobMeta', {
+                      created: formatDigits(job.counts.createCount),
+                      updated: formatDigits(job.counts.updateCount),
+                      skipped: formatDigits(job.counts.skipCount),
+                      errors: formatDigits(job.counts.errorCount),
+                      actor: job.actorEmail,
+                      date: formatDateTime(job.createdAt),
+                    })}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   {job.status === 'rolled_back' ? (
                     <span className="text-amber-700 dark:text-amber-300 font-bold">
-                      بازگردانی شده ({job.rolledBackAt ? formatJalaliDateTime(job.rolledBackAt) : ''})
+                      {t('adminImport.rolledBackAt', {
+                        date: job.rolledBackAt ? formatDateTime(job.rolledBackAt) : '',
+                      })}
                     </span>
                   ) : confirmRollbackJobId === job.id ? (
                     <div className="flex items-center gap-1.5">
@@ -862,26 +876,28 @@ export function AdminImportExportPage() {
                         type="button"
                         disabled={rollingBackJobId === job.id}
                         onClick={() => void handleRollbackJob(job.id)}
-                        className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold disabled:opacity-50"
+                        className="min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold disabled:opacity-50"
                       >
-                        {rollingBackJobId === job.id ? 'در حال بازگردانی...' : 'تایید بازگردانی'}
+                        {rollingBackJobId === job.id
+                          ? t('adminImport.rollingBack')
+                          : t('adminImport.confirmRollback')}
                       </button>
                       <button
                         type="button"
                         onClick={() => setConfirmRollbackJobId(null)}
-                        className="px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700"
+                        className="min-h-[36px] px-2.5 py-1.5 rounded-lg border border-line dark:border-slate-700"
                       >
-                        انصراف
+                        {t('actions.cancel')}
                       </button>
                     </div>
                   ) : (
                     <button
                       type="button"
                       onClick={() => setConfirmRollbackJobId(job.id)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                      className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span>بازگردانی (Rollback)</span>
+                      <span>{t('adminImport.rollbackBtn')}</span>
                     </button>
                   )}
                 </div>

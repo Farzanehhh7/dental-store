@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { trackEcommerceEvent } from '../lib/analytics';
+import { t } from '../lib/i18n';
 import type { CartItem, CurrencyMode } from '../types/domain';
 import { useAuth } from './auth';
+import { useCatalog } from './catalog';
 import { useContent } from './content';
 import {
   LS_CART,
@@ -19,6 +21,7 @@ export interface CartContextValue {
   darkMode: boolean;
   toggleDarkMode: () => void;
   cart: CartItem[];
+  cartPendingVariantIds: string[];
   cartOpen: boolean;
   setCartOpen: (open: boolean) => void;
   addToCart: (productId: string, variantId: string, qty?: number) => void;
@@ -38,15 +41,19 @@ const CartContext = createContext<CartContextValue | null>(null);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const { pushToast } = useAuth();
+  const { products } = useCatalog();
   const { bundles } = useContent();
 
   const [currency, setCurrencyState] = useState<CurrencyMode>(() => readJsonLS<CurrencyMode>(LS_CURRENCY, 'IRT'));
   const [darkMode, setDarkMode] = useState<boolean>(() => readJsonLS<boolean>(LS_DARK, false));
   const [cart, setCart] = useState<CartItem[]>(() => readJsonLS<CartItem[]>(LS_CART, []));
+  const [cartPendingVariantIds, setCartPendingVariantIds] = useState<string[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>(() => readJsonLS<string[]>(LS_WISHLIST, []));
   const [compareIds, setCompareIds] = useState<string[]>(() => readJsonLS<string[]>(LS_COMPARE, []));
   const [recentlyViewedIds, setRecentlyViewedIds] = useState<string[]>(() => readJsonLS<string[]>(LS_RECENT, []));
+
+  const pendingTimersRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const root = document.documentElement;
@@ -71,6 +78,23 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(LS_RECENT, JSON.stringify(recentlyViewedIds));
   }, [recentlyViewedIds]);
 
+  useEffect(() => {
+    return () => {
+      Object.values(pendingTimersRef.current).forEach((id) => window.clearTimeout(id));
+    };
+  }, []);
+
+  const markVariantOptimistic = (variantId: string) => {
+    setCartPendingVariantIds((prev) => (prev.includes(variantId) ? prev : [...prev, variantId]));
+    if (pendingTimersRef.current[variantId]) {
+      window.clearTimeout(pendingTimersRef.current[variantId]);
+    }
+    pendingTimersRef.current[variantId] = window.setTimeout(() => {
+      setCartPendingVariantIds((prev) => prev.filter((id) => id !== variantId));
+      delete pendingTimersRef.current[variantId];
+    }, 280);
+  };
+
   const setCurrency = (c: CurrencyMode) => {
     setCurrencyState(c);
     localStorage.setItem(LS_CURRENCY, JSON.stringify(c));
@@ -78,19 +102,44 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const toggleDarkMode = () => setDarkMode((d) => !d);
 
+  const getVariantStockCeiling = (productId: string, variantId: string): number | null => {
+    const product = products.find((p) => p.id === productId);
+    const variant = product?.variants.find((v) => v.id === variantId);
+    if (!variant) return null;
+    const avail = Math.max(0, (variant.stockOnHand ?? 0) - (variant.reserved ?? 0));
+    return avail > 0 ? avail : 0;
+  };
+
   const addToCart = (productId: string, variantId: string, qty = 1) => {
+    const safeQty = Math.max(1, Math.floor(qty));
+    const snapshot = cart;
+    let rolledBack = false;
+
     setCart((prev) => {
       const idx = prev.findIndex((i) => i.variantId === variantId);
+      const nextQty = idx >= 0 ? prev[idx].quantity + safeQty : safeQty;
+      const ceiling = getVariantStockCeiling(productId, variantId);
+      if (ceiling !== null && nextQty > ceiling) {
+        rolledBack = true;
+        return snapshot;
+      }
       if (idx >= 0) {
         const next = [...prev];
-        next[idx] = { ...next[idx], quantity: next[idx].quantity + qty };
+        next[idx] = { ...next[idx], quantity: nextQty };
         return next;
       }
-      return [...prev, { productId, variantId, quantity: qty }];
+      return [...prev, { productId, variantId, quantity: safeQty }];
     });
-    trackEcommerceEvent('add_to_cart', { productId, variantId, quantity: qty });
+
+    if (rolledBack) {
+      pushToast(t('cart.stockExceededRollback'), 'error');
+      return;
+    }
+
+    markVariantOptimistic(variantId);
+    trackEcommerceEvent('add_to_cart', { productId, variantId, quantity: safeQty });
     setCartOpen(true);
-    pushToast('محصول به سبد خرید اضافه شد.', 'success');
+    pushToast(t('cart.addedToast'), 'success');
   };
 
   const addBundleToCart = (bundleId: string) => {
@@ -105,11 +154,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         } else {
           next.push({ productId: item.productId, variantId: item.variantId, quantity: item.quantity });
         }
+        markVariantOptimistic(item.variantId);
       }
       return next;
     });
     setCartOpen(true);
-    pushToast(`پکیج «${bundle.nameFa}» به سبد خرید اضافه شد.`, 'success');
+    pushToast(t('cart.bundleAddedToast', { name: bundle.nameFa }), 'success');
   };
 
   const updateCartQty = (variantId: string, qty: number) => {
@@ -117,10 +167,20 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       removeFromCart(variantId);
       return;
     }
+    const existing = cart.find((i) => i.variantId === variantId);
+    if (existing) {
+      const ceiling = getVariantStockCeiling(existing.productId, variantId);
+      if (ceiling !== null && qty > ceiling) {
+        pushToast(t('cart.stockExceededRollback'), 'error');
+        return;
+      }
+    }
+    markVariantOptimistic(variantId);
     setCart((prev) => prev.map((i) => (i.variantId === variantId ? { ...i, quantity: qty } : i)));
   };
 
   const removeFromCart = (variantId: string) => {
+    markVariantOptimistic(variantId);
     setCart((prev) => prev.filter((i) => i.variantId !== variantId));
   };
 
@@ -129,7 +189,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const toggleWishlist = (productId: string) => {
     setWishlistIds((prev) => {
       const exists = prev.includes(productId);
-      pushToast(exists ? 'از علاقه‌مندی‌ها حذف شد.' : 'به لیست علاقه‌مندی‌ها اضافه شد.', 'info');
+      pushToast(exists ? t('cart.wishlistRemoved') : t('cart.wishlistAdded'), 'info');
       return exists ? prev.filter((id) => id !== productId) : [...prev, productId];
     });
   };
@@ -140,10 +200,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         return prev.filter((id) => id !== productId);
       }
       if (prev.length >= 4) {
-        pushToast('حداکثر ۴ محصول هم‌زمان قابل مقایسه است.', 'error');
+        pushToast(t('cart.compareLimitReached'), 'error');
         return prev;
       }
-      pushToast('به لیست مقایسه اضافه شد.', 'success');
+      pushToast(t('cart.compareAdded'), 'success');
       return [...prev, productId];
     });
   };
@@ -160,6 +220,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         darkMode,
         toggleDarkMode,
         cart,
+        cartPendingVariantIds,
         cartOpen,
         setCartOpen,
         addToCart,

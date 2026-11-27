@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BadgeCheck,
+  Bell,
   Building2,
   FileText,
   Handshake,
@@ -19,48 +20,14 @@ import {
   Upload,
   UserCheck,
 } from 'lucide-react';
+import { AccessibleModal } from '../components/ui/Modal';
+import { useI18n } from '../context/i18n';
+import { resolveAuthHeaders } from '../context/storeHelpers';
 import { useStore } from '../context/StoreContext';
-import { formatJalaliDate, formatJalaliDateTime, formatMoney, toPersianDigits } from '../lib/jalali';
 import { applySeoHead } from '../lib/seo';
-import { CustomerGroupCode, InvoiceRecord, Order, OrderStatus, ProformaInvoice, RfqStatus } from '../types/domain';
+import { CustomerGroupCode, InvoiceRecord, Order, OrderStatus, ProformaInvoice } from '../types/domain';
 
-type AccountTab = 'orders' | 'rfqs' | 'proformas' | 'invoices' | 'returns' | 'b2b' | 'tickets';
-
-const RFQ_STATUS_FA: Record<RfqStatus, string> = {
-  submitted: 'ثبت‌شده (در انتظار بررسی)',
-  in_review: 'در حال بررسی کارشناس',
-  quoted: 'قیمت اعلام‌شده (در انتظار تصمیم شما)',
-  accepted: 'تاییدشده توسط خریدار',
-  rejected: 'ردشده',
-  converted: 'تبدیل‌شده به پیش‌فاکتور',
-};
-
-const ORDER_STATUS_FA: Record<OrderStatus, string> = {
-  pending_payment: 'در انتظار پرداخت',
-  awaiting_review: 'در انتظار بررسی اعتبار',
-  payment_failed: 'پرداخت ناموفق',
-  paid: 'پرداخت‌شده',
-  processing: 'در حال پردازش',
-  packed: 'بسته‌بندی‌شده',
-  shipped: 'ارسال‌شده',
-  delivered: 'تحویل‌شده',
-  completed: 'تکمیل‌شده',
-  cancelled: 'لغوشده',
-  expired: 'منقضی‌شده (عدم پرداخت)',
-  refunded: 'مستردشده',
-  return_requested: 'درخواست مرجوعی',
-  returned: 'مرجوع‌شده',
-};
-
-const GROUP_FA: Record<CustomerGroupCode, string> = {
-  retail: 'مشتری عادی',
-  dentist: 'دندانپزشک تاییدشده',
-  clinic: 'کلینیک / درمانگاه',
-  lab: 'لابراتوار دندانسازی',
-  student: 'دانشجوی دندانپزشکی',
-  agent: 'نماینده رسمی',
-  wholesale: 'خریدار عمده',
-};
+type AccountTab = 'orders' | 'rfqs' | 'proformas' | 'invoices' | 'returns' | 'b2b' | 'preferences' | 'tickets';
 
 const STEPPER: OrderStatus[] = ['paid', 'processing', 'packed', 'shipped', 'delivered'];
 
@@ -68,6 +35,7 @@ export default function AccountPage() {
   const {
     authUser,
     mobileSession,
+    mobileSessionToken,
     signInWithGoogle,
     logout,
     sendMobileOtp,
@@ -102,6 +70,7 @@ export default function AccountPage() {
     addToCart,
     pushToast,
   } = useStore();
+  const { t, formatDigits, formatMoney, formatDate, formatDateTime } = useI18n();
 
   const [tab, setTab] = useState<AccountTab>('orders');
   const [printProforma, setPrintProforma] = useState<ProformaInvoice | null>(null);
@@ -147,14 +116,16 @@ export default function AccountPage() {
 
   // Return modal state
   const [returnTargetOrder, setReturnTargetOrder] = useState<Order | null>(null);
-  const [returnReason, setReturnReason] = useState('عدم تطابق با سایز/مشخصات یا آسیب بسته‌بندی');
+  const [returnReason, setReturnReason] = useState(() =>
+    t('account.defaultReturnReason', 'عدم تطابق با سایز/مشخصات یا آسیب بسته‌بندی')
+  );
   const [returnResolution, setReturnResolution] = useState<'refund' | 'replacement' | 'credit'>('refund');
 
   // Address Form
   const [addrForm, setAddrForm] = useState({
-    label: 'مطب / کلینیک',
-    province: 'تهران',
-    city: 'تهران',
+    label: t('account.defaultAddrLabel', 'مطب / کلینیک'),
+    province: t('common.tehran', 'تهران'),
+    city: t('common.tehran', 'تهران'),
     postalCode: '',
     addressLine: '',
   });
@@ -169,14 +140,27 @@ export default function AccountPage() {
   });
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
 
+  // Marketing Consent & Preferences
+  const [consentLoading, setConsentLoading] = useState(false);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [isMarketingSuppressed, setIsMarketingSuppressed] = useState(false);
+  const [consentForm, setConsentForm] = useState({
+    marketingOptIn: false,
+    smsOptIn: false,
+    emailOptIn: false,
+    abandonedCartConsent: false,
+    mobile: '',
+    email: '',
+  });
+
   useEffect(() => {
     applySeoHead({
-      title: `حساب کاربری و سوابق خرید | ${settings.storeNameFa}`,
-      description: 'پنل مشتریان و کلینیک‌ها در دنتال‌مارکت',
+      title: `${t('account.seoTitle', 'حساب کاربری و سوابق خرید')} | ${settings.storeNameFa}`,
+      description: t('account.seoDesc', 'پنل مشتریان و کلینیک‌ها در دنتال‌مارکت'),
       canonicalPath: '/account',
       robots: 'noindex, nofollow',
     });
-  }, [settings.storeNameFa]);
+  }, [settings.storeNameFa, t]);
 
   useEffect(() => {
     if (userProfile) {
@@ -202,14 +186,51 @@ export default function AccountPage() {
     }
   }, [userProfile]);
 
+  useEffect(() => {
+    if (!authUser && !mobileSessionToken) return;
+    let active = true;
+    const loadMarketingConsent = async () => {
+      setConsentLoading(true);
+      try {
+        const headers = await resolveAuthHeaders(authUser, mobileSessionToken);
+        const res = await fetch('/api/marketing/consent', {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+        });
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        if (active && data?.ok && data.consent) {
+          setIsMarketingSuppressed(Boolean(data.isSuppressed));
+          setConsentForm({
+            marketingOptIn: Boolean(data.consent.marketingOptIn),
+            smsOptIn: Boolean(data.consent.smsOptIn),
+            emailOptIn: Boolean(data.consent.emailOptIn),
+            abandonedCartConsent: Boolean(data.consent.abandonedCartConsent),
+            mobile: String(data.consent.mobile || userProfile?.mobile || mobileSession?.mobile || ''),
+            email: String(data.consent.email || authUser?.email || ''),
+          });
+        }
+      } catch {
+        // Ignore network errors
+      } finally {
+        if (active) setConsentLoading(false);
+      }
+    };
+    void loadMarketingConsent();
+    return () => {
+      active = false;
+    };
+  }, [authUser, mobileSessionToken, mobileSession?.mobile, userProfile?.mobile]);
+
   const handleGuestLookup = async (e: React.FormEvent) => {
     e.preventDefault();
     const found = await lookupGuestOrder(trackOrderNo, trackMobile);
     if (!found) {
-      pushToast('سفارشی با این شماره و موبایل یافت نشد.', 'error');
+      pushToast(t('account.toasts.guestOrderNotFound', 'سفارشی با این شماره و موبایل یافت نشد.'), 'error');
     } else {
       setTrackedGuestOrder(found);
-      pushToast('وضعیت سفارش مهمان بازیابی شد.', 'success');
+      pushToast(t('account.toasts.guestOrderFound', 'وضعیت سفارش مهمان بازیابی شد.'), 'success');
     }
   };
 
@@ -220,7 +241,11 @@ export default function AccountPage() {
       const res = await sendMobileOtp(otpMobile.trim());
       if (res.ok) {
         setOtpSent(true);
-        setOtpHint(res.sandboxCode ? `کد تایید آزمایشی (Sandbox): ${toPersianDigits(res.sandboxCode)}` : '');
+        setOtpHint(
+          res.sandboxCode
+            ? t('account.otpSandboxHint', { code: formatDigits(res.sandboxCode) })
+            : ''
+        );
       }
     } finally {
       setOtpBusy(false);
@@ -243,63 +268,63 @@ export default function AccountPage() {
 
   if (!authUser && !mobileSession) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-12 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
+      <div className="max-w-4xl mx-auto px-3 sm:px-4 py-8 sm:py-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 sm:p-8 space-y-5">
           <ShieldCheck className="w-10 h-10 text-brand" />
-          <h1 className="text-xl font-extrabold">ورود به پنل مشتریان و کلینیک‌ها</h1>
+          <h1 className="text-xl font-extrabold">{t('account.loginTitle', 'ورود به پنل مشتریان و کلینیک‌ها')}</h1>
           <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed">
-            با شماره موبایل و کد یک‌بارمصرف پیامکی (OTP) یا حساب گوگل وارد پنل سفارش‌ها، استعلام قیمت (RFQ) و پرونده B2B شوید.
+            {t('account.loginSubtitle', 'با شماره موبایل و کد یک‌بارمصرف پیامکی (OTP) یا حساب گوگل وارد پنل سفارش‌ها، استعلام قیمت (RFQ) و پرونده B2B شوید.')}
           </p>
           <button
             type="button"
             onClick={signInWithGoogle}
-            className="w-full py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors"
+            className="w-full min-h-[44px] py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors"
           >
-            ورود با حساب گوگل
+            {t('actions.signInGoogle', 'ورود با حساب گوگل')}
           </button>
 
           <div className="pt-4 border-t border-line dark:border-slate-800 space-y-2.5 text-xs">
             <p className="font-bold flex items-center gap-1.5">
-              <Smartphone className="w-4 h-4 text-brand" />
-              <span>ورود سریع با شماره موبایل (OTP)</span>
+              <Smartphone className="w-4 h-4 text-brand shrink-0" />
+              <span>{t('account.quickOtpTitle', 'ورود سریع با شماره موبایل (OTP)')}</span>
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="tel"
                 data-testid="otp-mobile-input"
                 value={otpMobile}
                 onChange={(e) => setOtpMobile(e.target.value)}
                 placeholder="0912..."
-                className="flex-1 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                className="w-full sm:flex-1 min-h-[44px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
               />
               <button
                 type="button"
                 disabled={otpBusy}
                 data-testid="otp-send-button"
                 onClick={handleGuestOtpSend}
-                className="px-3.5 py-2 rounded-lg border border-brand text-brand font-bold disabled:opacity-50"
+                className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-lg border border-brand text-brand font-bold disabled:opacity-50 whitespace-nowrap"
               >
-                ارسال کد
+                {t('account.sendCodeBtn', 'ارسال کد')}
               </button>
             </div>
             {otpSent && (
               <div className="space-y-2">
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     data-testid="otp-code-input"
                     value={otpCode}
                     onChange={(e) => setOtpCode(e.target.value)}
-                    placeholder="کد پیامکی ۶ رقمی"
-                    className="flex-1 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 tabular-nums"
+                    placeholder={t('checkout.otpCodePlaceholder', 'کد پیامکی ۶ رقمی')}
+                    className="w-full sm:flex-1 min-h-[44px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 tabular-nums"
                   />
                   <button
                     type="button"
                     disabled={otpBusy}
                     data-testid="otp-verify-button"
                     onClick={handleGuestOtpVerify}
-                    className="px-3.5 py-2 rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-50"
+                    className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-50 whitespace-nowrap"
                   >
-                    ورود به حساب
+                    {t('account.verifyLoginBtn', 'ورود به حساب')}
                   </button>
                 </div>
                 {otpHint && (
@@ -312,49 +337,51 @@ export default function AccountPage() {
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-4">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 sm:p-8 space-y-4">
           <div className="flex items-center gap-2">
-            <Search className="w-6 h-6 text-brand" />
-            <h2 className="text-xl font-extrabold">پیگیری سفارش مهمان</h2>
+            <Search className="w-6 h-6 text-brand shrink-0" />
+            <h2 className="text-xl font-extrabold">{t('account.guestTrackTitle', 'پیگیری سفارش مهمان')}</h2>
           </div>
           <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed">
-            اگر بدون ورود به حساب کاربری سفارش ثبت کرده‌اید، شماره سفارش و شماره موبایل خود را وارد کنید.
+            {t('account.guestTrackSubtitle', 'اگر بدون ورود به حساب کاربری سفارش ثبت کرده‌اید، شماره سفارش و شماره موبایل خود را وارد کنید.')}
           </p>
           <form onSubmit={handleGuestLookup} className="space-y-3 text-xs">
             <input
               required
               value={trackOrderNo}
               onChange={(e) => setTrackOrderNo(e.target.value)}
-              placeholder="شماره سفارش (مثلاً DM-1404-...)"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              placeholder={t('account.guestOrderNoPh', 'شماره سفارش (مثلاً DM-1404-...)')}
+              className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
             />
             <input
               required
               type="tel"
               value={trackMobile}
               onChange={(e) => setTrackMobile(e.target.value)}
-              placeholder="شماره همراه ثبت‌شده در سفارش"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              placeholder={t('account.guestMobilePh', 'شماره همراه ثبت‌شده در سفارش')}
+              className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
             />
-            <button type="submit" className="w-full py-2.5 rounded-xl bg-brand text-white font-bold hover:bg-brandDark">
-              استعلام وضعیت سفارش
+            <button type="submit" className="w-full min-h-[44px] py-2.5 rounded-xl bg-brand text-white font-bold hover:bg-brandDark">
+              {t('account.guestTrackBtn', 'استعلام وضعیت سفارش')}
             </button>
           </form>
 
           {trackedGuestOrder && (
             <div className="p-4 rounded-xl bg-surface/60 dark:bg-slate-800 text-xs space-y-1.5">
               <p className="font-extrabold tabular-nums">
-                {trackedGuestOrder.orderNo} — {ORDER_STATUS_FA[trackedGuestOrder.status]}
+                {trackedGuestOrder.orderNo} — {t(`orderStatus.${trackedGuestOrder.status}`, trackedGuestOrder.status)}
               </p>
-              <p>مبلغ: {formatMoney(trackedGuestOrder.grandTotal, currency)}</p>
-              <p>تاریخ: {formatJalaliDateTime(trackedGuestOrder.createdAt)}</p>
-              {trackedGuestOrder.trackingCode && <p>کد رهگیری: {trackedGuestOrder.trackingCode}</p>}
+              <p>{t('account.amountPrefix', { amount: formatMoney(trackedGuestOrder.grandTotal, currency) })}</p>
+              <p>{t('account.datePrefix', { date: formatDateTime(trackedGuestOrder.createdAt) })}</p>
+              {trackedGuestOrder.trackingCode && (
+                <p>{t('account.trackingCodePrefix', { code: trackedGuestOrder.trackingCode })}</p>
+              )}
             </div>
           )}
 
           {guestOrders.length > 0 && (
             <div className="pt-3 border-t border-line dark:border-slate-800 space-y-2 text-xs">
-              <p className="font-bold">آخرین سفارش‌های ثبت‌شده در این مرورگر:</p>
+              <p className="font-bold">{t('account.browserRecentGuestOrders', 'آخرین سفارش‌های ثبت‌شده در این مرورگر:')}</p>
               {guestOrders.slice(0, 3).map((go) => (
                 <div key={go.id} className="flex justify-between p-2 rounded-lg bg-surface/50 dark:bg-slate-800/50">
                   <span className="font-bold tabular-nums">{go.orderNo}</span>
@@ -382,7 +409,7 @@ export default function AccountPage() {
   const myProformas = proformaUid ? proformas.filter((p) => p.userId === proformaUid) : [];
   const myInvoices = invoices.filter((inv) => myOrders.some((o) => o.id === inv.orderId));
   const myReturns = returns.filter((r) => (authUser && r.userId === authUser.uid) || myOrders.some((o) => o.id === r.orderId));
-  const myTickets = authUser ? tickets.filter((t) => t.userId === authUser.uid) : [];
+  const myTickets = authUser ? tickets.filter((tk) => tk.userId === authUser.uid) : [];
   const myVerifications = authUser ? b2bVerifications.filter((b) => b.userId === authUser.uid) : [];
   const myPlans = authUser ? paymentPlans.filter((p) => p.userId === authUser.uid) : [];
   const myStockRequests = authUser ? stockRequests.filter((s) => s.userId === authUser.uid) : [];
@@ -406,7 +433,13 @@ export default function AccountPage() {
         },
       ],
     });
-    setAddrForm({ label: 'مطب / کلینیک', province: 'تهران', city: 'تهران', postalCode: '', addressLine: '' });
+    setAddrForm({
+      label: t('account.defaultAddrLabel', 'مطب / کلینیک'),
+      province: t('common.tehran', 'تهران'),
+      city: t('common.tehran', 'تهران'),
+      postalCode: '',
+      addressLine: '',
+    });
   };
 
   const handleB2BFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -434,7 +467,7 @@ export default function AccountPage() {
       setB2bForm((prev) => ({
         ...prev,
         attachmentName: file.name,
-        attachmentPreview: `فایل انتخاب‌شده: ${file.name} (${Math.ceil(file.size / 1024)} KB)`,
+        attachmentPreview: t('account.selectedFileMeta', { name: file.name, kb: Math.ceil(file.size / 1024) }),
       }));
     }
   };
@@ -472,81 +505,91 @@ export default function AccountPage() {
 
   const handleReorder = (items: { productId: string; variantId: string; quantity: number }[]) => {
     items.forEach((it) => addToCart(it.productId, it.variantId, it.quantity));
-    pushToast('اقلام سفارش مجدداً به سبد خرید اضافه شدند.', 'success');
+    pushToast(t('account.toasts.reordered', 'اقلام سفارش مجدداً به سبد خرید اضافه شدند.'), 'success');
   };
 
   const displayTitle =
-    userProfile?.displayName || authUser?.displayName || mobileSession?.displayName || `مشتری ${toPersianDigits(mobileSession?.mobile || '')}`;
-  const displayIdentity = authUser?.email || (mobileSession ? `شماره تاییدشده: ${toPersianDigits(mobileSession.mobile)}` : '');
+    userProfile?.displayName ||
+    authUser?.displayName ||
+    mobileSession?.displayName ||
+    t('account.mobileCustomerTitle', { mobile: formatDigits(mobileSession?.mobile || '') });
+  const displayIdentity =
+    authUser?.email ||
+    (mobileSession ? t('account.verifiedMobileIdentity', { mobile: formatDigits(mobileSession.mobile) }) : '');
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8 py-6 sm:py-8 space-y-6">
       {/* Header Summary Card */}
-      <div data-testid="account-authenticated-header" className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-brand/10 text-brand flex items-center justify-center font-extrabold text-xl">
-            {(displayTitle || 'ک')[0]}
+      <div
+        data-testid="account-authenticated-header"
+        className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-wrap items-center justify-between gap-4"
+      >
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded-2xl bg-brand/10 text-brand flex items-center justify-center font-extrabold text-xl">
+            {(displayTitle || 'C')[0]}
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-extrabold">{displayTitle}</h1>
+              <h1 className="text-lg sm:text-xl font-extrabold truncate">{displayTitle}</h1>
               {mobileSession && !authUser && (
                 <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  نشست موبایلی فعال
+                  {t('account.mobileSessionActive', 'نشست موبایلی فعال')}
                 </span>
               )}
             </div>
-            <p className="text-xs text-ink/60 dark:text-slate-400 mt-0.5">
-              {displayIdentity} · گروه تعرفه: <strong className="text-brand dark:text-teal-300">{GROUP_FA[customerGroup]}</strong>
+            <p className="text-xs text-ink/60 dark:text-slate-400 mt-0.5 break-words">
+              {displayIdentity} · {t('account.tariffGroupPrefix', 'گروه تعرفه:')}{' '}
+              <strong className="text-brand dark:text-teal-300">{t(`customerGroup.${customerGroup}`, customerGroup)}</strong>
             </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Link to="/wishlist" className="px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand">
-            علاقه‌مندی‌ها
+          <Link to="/wishlist" className="min-h-[40px] inline-flex items-center px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand">
+            {t('account.wishlistBtn', 'علاقه‌مندی‌ها')}
           </Link>
           {!authUser && (
             <button
               type="button"
               onClick={signInWithGoogle}
-              className="px-4 py-2 rounded-xl bg-brand text-white text-xs font-bold hover:bg-brandDark"
+              className="min-h-[40px] px-4 py-2 rounded-xl bg-brand text-white text-xs font-bold hover:bg-brandDark"
             >
-              اتصال اختیاری با گوگل برای پرونده B2B و پیش‌فاکتور
+              {t('account.linkGoogleOptionalBtn', 'اتصال اختیاری با گوگل برای پرونده B2B و پیش‌فاکتور')}
             </button>
           )}
           {mobileSession && (
             <button
               type="button"
               onClick={logoutMobile}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-400 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30"
+              className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-400 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30"
             >
               <LogOut className="w-4 h-4" />
-              <span>خروج از نشست موبایل</span>
+              <span>{t('account.logoutMobileBtn', 'خروج از نشست موبایل')}</span>
             </button>
           )}
           {authUser && (
             <button
               type="button"
               onClick={logout}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-400 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30"
+              className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-400 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30"
             >
               <LogOut className="w-4 h-4" />
-              <span>خروج</span>
+              <span>{t('actions.signOut', 'خروج')}</span>
             </button>
           )}
         </div>
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex flex-wrap gap-2 border-b border-line dark:border-slate-800 pb-3">
+      <div className="flex flex-nowrap overflow-x-auto no-scrollbar sm:flex-wrap gap-2 border-b border-line dark:border-slate-800 pb-3">
         {[
-          { id: 'orders', label: `سفارش‌ها (${toPersianDigits(myOrders.length)})`, icon: Package },
-          { id: 'rfqs', label: `استعلام قیمت و چانه‌زنی (${toPersianDigits(myRfqs.length)})`, icon: Handshake },
-          { id: 'proformas', label: `پیش‌فاکتورها (${toPersianDigits(myProformas.length)})`, icon: FileText },
-          { id: 'invoices', label: `فاکتورهای رسمی (${toPersianDigits(myInvoices.length)})`, icon: Printer },
-          { id: 'returns', label: `مرجوعی‌ها (${toPersianDigits(myReturns.length)})`, icon: RotateCcw },
-          { id: 'b2b', label: 'پروفایل حقوقی، آدرس و احراز B2B', icon: Building2 },
-          { id: 'tickets', label: `تیکت‌ها و درخواست‌ها (${toPersianDigits(myTickets.length)})`, icon: MessageSquare },
+          { id: 'orders', label: t('account.tabs.orders', { count: formatDigits(myOrders.length) }), icon: Package },
+          { id: 'rfqs', label: t('account.tabs.rfqs', { count: formatDigits(myRfqs.length) }), icon: Handshake },
+          { id: 'proformas', label: t('account.tabs.proformas', { count: formatDigits(myProformas.length) }), icon: FileText },
+          { id: 'invoices', label: t('account.tabs.invoices', { count: formatDigits(myInvoices.length) }), icon: Printer },
+          { id: 'returns', label: t('account.tabs.returns', { count: formatDigits(myReturns.length) }), icon: RotateCcw },
+          { id: 'b2b', label: t('account.tabs.b2b', 'پروفایل حقوقی، آدرس و احراز B2B'), icon: Building2 },
+          { id: 'preferences', label: t('account.tabs.preferences', 'تنظیمات اطلاع‌رسانی و حریم خصوصی'), icon: Bell },
+          { id: 'tickets', label: t('account.tabs.tickets', { count: formatDigits(myTickets.length) }), icon: MessageSquare },
         ].map((item) => {
           const Icon = item.icon;
           return (
@@ -555,13 +598,13 @@ export default function AccountPage() {
               type="button"
               data-testid={`account-tab-${item.id}`}
               onClick={() => setTab(item.id as AccountTab)}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+              className={`inline-flex items-center gap-2 whitespace-nowrap shrink-0 min-h-[44px] sm:min-h-0 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
                 tab === item.id
                   ? 'bg-brand text-white'
                   : 'bg-white dark:bg-slate-900 border border-line dark:border-slate-800 hover:border-brand'
               }`}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-4 h-4 shrink-0" />
               <span>{item.label}</span>
             </button>
           );
@@ -572,10 +615,10 @@ export default function AccountPage() {
       {tab === 'orders' && (
         <div className="space-y-4">
           {myOrders.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center space-y-3">
-              <p className="font-bold">هنوز سفارشی ثبت نکرده‌اید.</p>
-              <Link to="/category/consumables" className="inline-block px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
-                شروع خرید تجهیزات و مواد
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 sm:p-10 text-center space-y-3">
+              <p className="font-bold">{t('account.ordersEmpty', 'هنوز سفارشی ثبت نکرده‌اید.')}</p>
+              <Link to="/category/consumables" className="inline-flex items-center justify-center min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
+                {t('account.startShoppingBtn', 'شروع خرید تجهیزات و مواد')}
               </Link>
             </div>
           ) : (
@@ -585,22 +628,25 @@ export default function AccountPage() {
               return (
                 <article
                   key={order.id}
-                  className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4"
+                  className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line dark:border-slate-800 pb-4">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
                         <h2 className="text-base font-extrabold tabular-nums">{order.orderNo}</h2>
                         <span className="text-xs font-bold px-2.5 py-0.5 rounded-md bg-brand/10 text-brand dark:text-teal-300">
-                          {ORDER_STATUS_FA[order.status]}
+                          {t(`orderStatus.${order.status}`, order.status)}
                         </span>
                       </div>
                       <p className="text-xs text-ink/60 dark:text-slate-400">
-                        تاریخ ثبت: {formatJalaliDateTime(order.createdAt)} · ارسال: {order.shippingMethod}
-                        {order.trackingCode ? ` · کد رهگیری: ${order.trackingCode}` : ''}
+                        {t('account.orderMeta', {
+                          date: formatDateTime(order.createdAt),
+                          shipping: order.shippingMethod,
+                        })}
+                        {order.trackingCode ? ` · ${t('account.trackingCodePrefix', { code: order.trackingCode })}` : ''}
                       </p>
                     </div>
-                    <div className="text-left">
+                    <div className="text-end">
                       <p className="text-lg font-extrabold text-brand dark:text-teal-300 tabular-nums">
                         {formatMoney(order.grandTotal, currency)}
                       </p>
@@ -608,28 +654,30 @@ export default function AccountPage() {
                   </div>
 
                   {order.status !== 'cancelled' && order.status !== 'returned' && (
-                    <div className="grid grid-cols-5 gap-2 text-[11px]">
-                      {STEPPER.map((st, idx) => {
-                        const done = stepIdx >= idx || order.status === 'completed';
-                        return (
-                          <div key={st} className="space-y-1 text-center">
-                            <div className={`h-1.5 rounded-full ${done ? 'bg-brand' : 'bg-surface dark:bg-slate-800'}`} />
-                            <span className={done ? 'font-bold text-brand dark:text-teal-300' : 'text-ink/40'}>
-                              {ORDER_STATUS_FA[st]}
-                            </span>
-                          </div>
-                        );
-                      })}
+                    <div className="overflow-x-auto no-scrollbar">
+                      <div className="grid grid-cols-5 gap-2 min-w-[440px] sm:min-w-0 text-[11px]">
+                        {STEPPER.map((st, idx) => {
+                          const done = stepIdx >= idx || order.status === 'completed';
+                          return (
+                            <div key={st} className="space-y-1 text-center">
+                              <div className={`h-1.5 rounded-full ${done ? 'bg-brand' : 'bg-surface dark:bg-slate-800'}`} />
+                              <span className={done ? 'font-bold text-brand dark:text-teal-300' : 'text-ink/40'}>
+                                {t(`orderStatus.${st}`, st)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 
                   <div className="divide-y divide-line dark:divide-slate-800 text-xs">
                     {order.items.map((it) => (
                       <div key={it.variantId} className="py-2 flex items-center justify-between gap-4">
-                        <span>
-                          {it.titleFa} ({it.variantLabelFa}) × <strong className="tabular-nums">{toPersianDigits(it.quantity)}</strong>
+                        <span className="min-w-0">
+                          {it.titleFa} ({it.variantLabelFa}) × <strong className="tabular-nums">{formatDigits(it.quantity)}</strong>
                         </span>
-                        <span className="font-bold tabular-nums">{formatMoney(it.lineTotal, currency)}</span>
+                        <span className="font-bold tabular-nums shrink-0">{formatMoney(it.lineTotal, currency)}</span>
                       </div>
                     ))}
                   </div>
@@ -640,35 +688,35 @@ export default function AccountPage() {
                         <button
                           type="button"
                           onClick={() => verifyOnlinePayment(order.id)}
-                          className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
+                          className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
                         >
-                          پرداخت آنلاین فوری
+                          {t('account.payNowBtn', 'پرداخت آنلاین فوری')}
                         </button>
                         <button
                           type="button"
                           onClick={() => cancelOwnOrder(order.id)}
-                          className="px-4 py-2 rounded-xl border border-rose-300 text-rose-700 text-xs font-bold"
+                          className="min-h-[40px] px-4 py-2 rounded-xl border border-rose-300 text-rose-700 text-xs font-bold"
                         >
-                          لغو سفارش
+                          {t('account.cancelOrderBtn', 'لغو سفارش')}
                         </button>
                       </>
                     )}
                     <button
                       type="button"
                       onClick={() => handleReorder(order.items)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand"
+                      className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
-                      <span>سفارش مجدد</span>
+                      <span>{t('account.reorderBtn', 'سفارش مجدد')}</span>
                     </button>
                     {canReturn && (
                       <button
                         type="button"
                         onClick={() => setReturnTargetOrder(order)}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-amber-300 text-amber-700 dark:text-amber-300 text-xs font-bold"
+                        className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 rounded-xl border border-amber-300 text-amber-700 dark:text-amber-300 text-xs font-bold"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
-                        <span>درخواست مرجوعی کالا</span>
+                        <span>{t('account.requestReturnBtn', 'درخواست مرجوعی کالا')}</span>
                       </button>
                     )}
                   </div>
@@ -679,14 +727,14 @@ export default function AccountPage() {
         </div>
       )}
 
-      {/* Tab 1.5: RFQs (استعلام قیمت و مذاکره دوطرفه) */}
+      {/* Tab 1.5: RFQs */}
       {tab === 'rfqs' && (
         <div className="space-y-4">
           {myRfqs.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center space-y-3">
-              <p className="font-bold">هنوز درخواست استعلام قیمتی ثبت نکرده‌اید.</p>
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 sm:p-10 text-center space-y-3">
+              <p className="font-bold">{t('account.rfqEmptyTitle', 'هنوز درخواست استعلام قیمتی ثبت نکرده‌اید.')}</p>
               <p className="text-xs text-ink/60 dark:text-slate-400">
-                در صفحه هر محصول (به‌خصوص تجهیزات سرمایه‌ای و خریدهای عمده) می‌توانید دکمه «استعلام قیمت همکار / خرید عمده» را بزنید.
+                {t('account.rfqEmptySub', 'در صفحه هر محصول (به‌خصوص تجهیزات سرمایه‌ای و خریدهای عمده) می‌توانید دکمه «استعلام قیمت همکار / خرید عمده» را بزنید.')}
               </p>
             </div>
           ) : (
@@ -694,31 +742,35 @@ export default function AccountPage() {
               <article
                 key={rfq.id}
                 data-testid={`rfq-card-${rfq.id}`}
-                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 text-xs"
+                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 text-xs"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line dark:border-slate-800 pb-3">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-sm font-extrabold tabular-nums">{rfq.rfqNo} — {rfq.productTitleFa}</h2>
                       <span className="px-2.5 py-0.5 rounded-md bg-brand/10 text-brand dark:text-teal-300 font-bold">
-                        {RFQ_STATUS_FA[rfq.status]}
+                        {t(`account.rfqStatus.${rfq.status}`, rfq.status)}
                       </span>
                     </div>
                     <p className="text-ink/60 dark:text-slate-400 mt-1 tabular-nums">
-                      تعداد درخواستی: {toPersianDigits(rfq.quantity)} عدد
-                      {rfq.targetUnitPrice ? ` · قیمت پیشنهادی اولیه شما: ${formatMoney(rfq.targetUnitPrice, currency)}` : ''}
-                      {rfq.validUntil ? ` · اعتبار پیشنهاد: ${formatJalaliDate(rfq.validUntil)}` : ''}
+                      {t('account.rfqQtyMeta', { count: formatDigits(rfq.quantity) })}
+                      {rfq.targetUnitPrice
+                        ? ` · ${t('account.rfqTargetPriceMeta', { price: formatMoney(rfq.targetUnitPrice, currency) })}`
+                        : ''}
+                      {rfq.validUntil
+                        ? ` · ${t('account.rfqValidUntilMeta', { date: formatDate(rfq.validUntil) })}`
+                        : ''}
                     </p>
                   </div>
                   {rfq.quotedUnitPrice && (
-                    <div className="text-left">
-                      <p className="text-[11px] text-ink/60">پیشنهاد رسمی فروشنده (واحد)</p>
+                    <div className="text-end">
+                      <p className="text-[11px] text-ink/60">{t('account.rfqQuotedUnitLabel', 'پیشنهاد رسمی فروشنده (واحد)')}</p>
                       <p className="text-base font-extrabold text-brand dark:text-teal-300 tabular-nums">
                         {formatMoney(rfq.quotedUnitPrice, currency)}
                       </p>
                       {rfq.quotedTotal && (
                         <p className="text-[11px] font-bold text-ink/70 tabular-nums">
-                          جمع کل: {formatMoney(rfq.quotedTotal, currency)}
+                          {t('account.rfqQuotedTotalMeta', { total: formatMoney(rfq.quotedTotal, currency) })}
                         </p>
                       )}
                     </div>
@@ -738,12 +790,12 @@ export default function AccountPage() {
                     >
                       <div className="flex justify-between items-center text-[11px] text-ink/65 dark:text-slate-400">
                         <span className="font-bold">{m.authorName}</span>
-                        <span className="tabular-nums">{formatJalaliDateTime(m.createdAt)}</span>
+                        <span className="tabular-nums">{formatDateTime(m.createdAt)}</span>
                       </div>
                       <p className="mt-1 leading-relaxed">{m.body}</p>
                       {m.proposedUnitPrice ? (
                         <p className="mt-1 font-bold text-brand tabular-nums">
-                          قیمت پیشنهادی مطرح‌شده: {formatMoney(m.proposedUnitPrice, currency)}
+                          {t('account.rfqProposedUnitPrice', { price: formatMoney(m.proposedUnitPrice, currency) })}
                         </p>
                       ) : null}
                     </div>
@@ -755,16 +807,16 @@ export default function AccountPage() {
                     <button
                       type="button"
                       onClick={() => respondRfq(rfq.id, 'accepted')}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700"
+                      className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700"
                     >
-                      تایید قیمت اعلام‌شده
+                      {t('account.rfqAcceptBtn', 'تایید قیمت اعلام‌شده')}
                     </button>
                     <button
                       type="button"
                       onClick={() => respondRfq(rfq.id, 'rejected')}
-                      className="px-4 py-2 rounded-xl border border-rose-300 text-rose-700 font-bold"
+                      className="min-h-[40px] px-4 py-2 rounded-xl border border-rose-300 text-rose-700 font-bold"
                     >
-                      رد پیشنهاد قیمت
+                      {t('account.rfqRejectBtn', 'رد پیشنهاد قیمت')}
                     </button>
                   </div>
                 )}
@@ -774,15 +826,15 @@ export default function AccountPage() {
                     <input
                       value={rfqReplyTexts[rfq.id] ?? ''}
                       onChange={(e) => setRfqReplyTexts({ ...rfqReplyTexts, [rfq.id]: e.target.value })}
-                      placeholder="پیام یا توضیح چانه‌زنی جدید برای واحد فروش..."
-                      className="sm:col-span-7 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                      placeholder={t('account.rfqReplyPh', 'پیام یا توضیح چانه‌زنی جدید برای واحد فروش...')}
+                      className="sm:col-span-7 min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                     />
                     <input
                       type="number"
                       value={rfqCounterPrices[rfq.id] ?? ''}
                       onChange={(e) => setRfqCounterPrices({ ...rfqCounterPrices, [rfq.id]: e.target.value })}
-                      placeholder="قیمت پیشنهادی واحد (اختیاری)"
-                      className="sm:col-span-3 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                      placeholder={t('account.rfqCounterPricePh', 'قیمت پیشنهادی واحد (اختیاری)')}
+                      className="sm:col-span-3 min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                     />
                     <button
                       type="button"
@@ -800,10 +852,10 @@ export default function AccountPage() {
                           setRfqCounterPrices({ ...rfqCounterPrices, [rfq.id]: '' });
                         }
                       }}
-                      className="sm:col-span-2 inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-brand text-white font-bold"
+                      className="sm:col-span-2 min-h-[40px] inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-brand text-white font-bold"
                     >
                       <Send className="w-3.5 h-3.5" />
-                      <span>ارسال</span>
+                      <span>{t('actions.send', 'ارسال')}</span>
                     </button>
                   </div>
                 )}
@@ -817,20 +869,21 @@ export default function AccountPage() {
       {tab === 'proformas' && (
         <div className="space-y-4">
           {myProformas.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center text-sm text-ink/60">
-              پیش‌فاکتوری برای حساب شما صادر نشده است.
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 sm:p-10 text-center text-sm text-ink/60">
+              {t('account.proformasEmpty', 'پیش‌فاکتوری برای حساب شما صادر نشده است.')}
             </div>
           ) : (
             myProformas.map((pf) => (
               <div
                 key={pf.id}
-                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4"
+                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-extrabold tabular-nums">{pf.proformaNo}</h2>
                     <p className="text-xs text-ink/60 dark:text-slate-400">
-                      معتبر تا {formatJalaliDate(pf.validUntil)} · وضعیت: <strong>{pf.status}</strong>
+                      {t('account.proformaValidMeta', { date: formatDate(pf.validUntil) })} · {t('account.statusPrefix', 'وضعیت:')}{' '}
+                      <strong>{t(`proformaStatus.${pf.status}`, pf.status)}</strong>
                     </p>
                   </div>
                   <p className="text-lg font-extrabold text-brand tabular-nums">{formatMoney(pf.grandTotal, currency)}</p>
@@ -842,17 +895,17 @@ export default function AccountPage() {
                   <button
                     type="button"
                     onClick={() => setPrintProforma(pf)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand"
+                    className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand"
                   >
                     <Printer className="w-3.5 h-3.5" />
-                    <span>پیش‌نمایش چاپ RTL</span>
+                    <span>{t('account.printPreviewBtn', 'پیش‌نمایش چاپ RTL')}</span>
                   </button>
                   {pf.shareToken && (
                     <Link
                       to={`/proforma/${pf.shareToken}`}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand"
+                      className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold hover:border-brand"
                     >
-                      لینک اشتراک‌گذاری کلینیک
+                      {t('account.shareLinkClinicBtn', 'لینک اشتراک‌گذاری کلینیک')}
                     </Link>
                   )}
                   {(pf.status === 'draft' || pf.status === 'sent' || pf.status === 'viewed') && (
@@ -860,16 +913,16 @@ export default function AccountPage() {
                       <button
                         type="button"
                         onClick={() => respondProforma(pf.id, 'accepted')}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+                        className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
                       >
-                        تایید پیش‌فاکتور
+                        {t('account.acceptProformaBtn', 'تایید پیش‌فاکتور')}
                       </button>
                       <button
                         type="button"
                         onClick={() => respondProforma(pf.id, 'rejected')}
-                        className="px-4 py-2 rounded-xl border border-rose-300 text-rose-700 text-xs font-bold"
+                        className="min-h-[40px] px-4 py-2 rounded-xl border border-rose-300 text-rose-700 text-xs font-bold"
                       >
-                        رد پیش‌فاکتور
+                        {t('account.rejectProformaBtn', 'رد پیش‌فاکتور')}
                       </button>
                     </>
                   )}
@@ -884,34 +937,38 @@ export default function AccountPage() {
       {tab === 'invoices' && (
         <div className="space-y-4">
           {myInvoices.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center text-sm text-ink/60">
-              هنوز فاکتور رسمی برای سفارش‌های شما صادر نشده است.
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 sm:p-10 text-center text-sm text-ink/60">
+              {t('account.invoicesEmpty', 'هنوز فاکتور رسمی برای سفارش‌های شما صادر نشده است.')}
             </div>
           ) : (
             myInvoices.map((inv) => (
               <div
                 key={inv.id}
-                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4 text-xs"
+                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-wrap items-center justify-between gap-4 text-xs"
               >
                 <div className="space-y-1">
                   <h2 className="text-base font-extrabold tabular-nums">
-                    {inv.invoiceNo} ({inv.isOfficial ? 'فاکتور رسمی مالیاتی' : 'فاکتور فروش'})
+                    {inv.invoiceNo} ({inv.isOfficial ? t('account.officialTaxInvoice', 'فاکتور رسمی مالیاتی') : t('account.salesInvoice', 'فاکتور فروش')})
                   </h2>
                   <p className="text-ink/60 dark:text-slate-400">
-                    سفارش: {inv.orderNo} · تاریخ صدور: {formatJalaliDate(inv.issuedAt)} · وضعیت: {inv.status}
+                    {t('account.invoiceMeta', {
+                      orderNo: inv.orderNo,
+                      date: formatDate(inv.issuedAt),
+                      status: inv.status,
+                    })}
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span className="text-base font-extrabold text-brand tabular-nums">
                     {formatMoney(inv.grandTotal, currency)}
                   </span>
                   <button
                     type="button"
                     onClick={() => setPrintInvoice(inv)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 font-bold"
+                    className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 rounded-xl border border-line dark:border-slate-700 font-bold"
                   >
                     <Printer className="w-4 h-4" />
-                    <span>مشاهده و چاپ</span>
+                    <span>{t('account.viewAndPrintBtn', 'مشاهده و چاپ')}</span>
                   </button>
                 </div>
               </div>
@@ -924,22 +981,32 @@ export default function AccountPage() {
       {tab === 'returns' && (
         <div className="space-y-4">
           {myReturns.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-10 text-center text-sm text-ink/60">
-              درخواست مرجوعی ثبت‌شده‌ای ندارید.
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 sm:p-10 text-center text-sm text-ink/60">
+              {t('account.returnsEmpty', 'درخواست مرجوعی ثبت‌شده‌ای ندارید.')}
             </div>
           ) : (
             myReturns.map((ret) => (
               <div
                 key={ret.id}
-                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-2 text-xs"
+                className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-2 text-xs"
               >
-                <div className="flex justify-between items-center">
-                  <strong className="text-sm tabular-nums">{ret.returnNo} — سفارش {ret.orderNo}</strong>
+                <div className="flex flex-wrap justify-between items-center gap-2">
+                  <strong className="text-sm tabular-nums">
+                    {ret.returnNo} — {t('account.orderPrefix', { orderNo: ret.orderNo })}
+                  </strong>
                   <span className="font-bold text-brand">{ret.status}</span>
                 </div>
-                <p>علت: {ret.reasonFa}</p>
+                <p>{t('account.reasonPrefix', { reason: ret.reasonFa })}</p>
                 <p className="text-ink/60">
-                  درخواست: {ret.resolution === 'refund' ? 'استرداد وجه' : ret.resolution === 'replacement' ? 'تعویض کالا' : 'اعتبار حساب'} · مبلغ: {formatMoney(ret.refundAmount, currency)}
+                  {t('account.returnResolutionMeta', {
+                    resolution:
+                      ret.resolution === 'refund'
+                        ? t('account.resRefund', 'استرداد وجه')
+                        : ret.resolution === 'replacement'
+                        ? t('account.resReplacement', 'تعویض کالا')
+                        : t('account.resCredit', 'اعتبار حساب'),
+                    amount: formatMoney(ret.refundAmount, currency),
+                  })}
                 </p>
               </div>
             ))
@@ -949,13 +1016,13 @@ export default function AccountPage() {
 
       {/* Tab 5: B2B Verification, Legal Profile & Addresses */}
       {tab === 'b2b' && !authUser && (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 text-center space-y-3 text-xs">
-          <p className="font-extrabold text-base">پرونده حقوقی و احراز هویت B2B نیازمند اتصال به حساب کاربری است</p>
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 sm:p-8 text-center space-y-3 text-xs">
+          <p className="font-extrabold text-base">{t('account.b2bNeedsGoogleTitle', 'پرونده حقوقی و احراز هویت B2B نیازمند اتصال به حساب کاربری است')}</p>
           <p className="text-ink/70 dark:text-slate-400">
-            شما با نشست موبایلی وارد شده‌اید؛ برای ثبت مدارک نظام پزشکی و دریافت فاکتور رسمی حقوقی، حساب گوگل خود را متصل کنید.
+            {t('account.b2bNeedsGoogleDesc', 'شما با نشست موبایلی وارد شده‌اید؛ برای ثبت مدارک نظام پزشکی و دریافت فاکتور رسمی حقوقی، حساب گوگل خود را متصل کنید.')}
           </p>
-          <button type="button" onClick={signInWithGoogle} className="px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
-            اتصال با حساب گوگل
+          <button type="button" onClick={signInWithGoogle} className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
+            {t('account.connectGoogleBtn', 'اتصال با حساب گوگل')}
           </button>
         </div>
       )}
@@ -963,170 +1030,170 @@ export default function AccountPage() {
         <div className="space-y-6">
           <form
             onSubmit={handleProfileSave}
-            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4 text-xs"
+            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 text-xs"
           >
-            <h2 className="text-lg font-extrabold">مشخصات پروفایل و اطلاعات فاکتور رسمی حقوقی</h2>
+            <h2 className="text-lg font-extrabold">{t('account.legalProfileTitle', 'مشخصات پروفایل و اطلاعات فاکتور رسمی حقوقی')}</h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <label className="space-y-1">
-                <span className="font-bold">نام و نام خانوادگی</span>
+                <span className="font-bold">{t('account.profile.displayName', 'نام و نام خانوادگی')}</span>
                 <input
                   value={profileForm.displayName}
                   onChange={(e) => setProfileForm({ ...profileForm, displayName: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">موبایل</span>
+                <span className="font-bold">{t('account.profile.mobile', 'موبایل')}</span>
                 <input
                   value={profileForm.mobile}
                   onChange={(e) => setProfileForm({ ...profileForm, mobile: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">نوع حساب</span>
+                <span className="font-bold">{t('account.profile.accountType', 'نوع حساب')}</span>
                 <select
                   value={profileForm.accountType}
                   onChange={(e) => setProfileForm({ ...profileForm, accountType: e.target.value as 'individual' | 'clinic' | 'lab' | 'student' | 'agent' | 'company' })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 >
-                  <option value="individual">حقیقی (پزشک / فردی)</option>
-                  <option value="clinic">کلینیک / درمانگاه</option>
-                  <option value="company">حقوقی (شرکت)</option>
-                  <option value="lab">لابراتوار دندانسازی</option>
+                  <option value="individual">{t('account.accountTypes.individual', 'حقیقی (پزشک / فردی)')}</option>
+                  <option value="clinic">{t('account.accountTypes.clinic', 'کلینیک / درمانگاه')}</option>
+                  <option value="company">{t('account.accountTypes.company', 'حقوقی (شرکت)')}</option>
+                  <option value="lab">{t('customerGroup.lab', 'لابراتوار دندانسازی')}</option>
                 </select>
               </label>
               <label className="space-y-1">
-                <span className="font-bold">نام کلینیک / شرکت حقوقی</span>
+                <span className="font-bold">{t('account.profile.legalCompanyName', 'نام کلینیک / شرکت حقوقی')}</span>
                 <input
                   value={profileForm.legalCompanyName}
                   onChange={(e) => setProfileForm({ ...profileForm, legalCompanyName: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">کد اقتصادی</span>
+                <span className="font-bold">{t('account.profile.economicCode', 'کد اقتصادی')}</span>
                 <input
                   value={profileForm.economicCode}
                   onChange={(e) => setProfileForm({ ...profileForm, economicCode: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">شناسه ملی</span>
+                <span className="font-bold">{t('account.profile.nationalId', 'شناسه ملی')}</span>
                 <input
                   value={profileForm.nationalId}
                   onChange={(e) => setProfileForm({ ...profileForm, nationalId: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">شماره ثبت</span>
+                <span className="font-bold">{t('account.profile.registrationNo', 'شماره ثبت')}</span>
                 <input
                   value={profileForm.registrationNo}
                   onChange={(e) => setProfileForm({ ...profileForm, registrationNo: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">شماره نظام پزشکی</span>
+                <span className="font-bold">{t('account.profile.medicalCouncilNo', 'شماره نظام پزشکی')}</span>
                 <input
                   value={profileForm.medicalCouncilNo}
                   onChange={(e) => setProfileForm({ ...profileForm, medicalCouncilNo: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
               <label className="space-y-1">
-                <span className="font-bold">تخصص</span>
+                <span className="font-bold">{t('account.profile.specialty', 'تخصص')}</span>
                 <input
                   value={profileForm.specialty}
                   onChange={(e) => setProfileForm({ ...profileForm, specialty: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
               </label>
             </div>
-            <button type="submit" className="px-5 py-2 rounded-xl bg-brand text-white font-bold">
-              ذخیره اطلاعات پروفایل و حقوقی
+            <button type="submit" className="min-h-[44px] px-5 py-2 rounded-xl bg-brand text-white font-bold">
+              {t('account.saveProfileBtn', 'ذخیره اطلاعات پروفایل و حقوقی')}
             </button>
           </form>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <form
               onSubmit={handleB2BSubmit}
-              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4"
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4"
             >
               <div className="flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-brand" />
-                <h2 className="text-lg font-extrabold">درخواست احراز هویت حرفه‌ای (B2B)</h2>
+                <UserCheck className="w-5 h-5 text-brand shrink-0" />
+                <h2 className="text-lg font-extrabold">{t('account.b2bVerifyTitle', 'درخواست احراز هویت حرفه‌ای (B2B)')}</h2>
               </div>
               <p className="text-xs text-ink/60 dark:text-slate-400 leading-relaxed">
-                پس از تایید شماره نظام پزشکی یا مجوز کلینیک، قیمت‌های ویژه همکار، خرید چکی/اعتباری و فاکتور رسمی برای شما فعال می‌شود.
+                {t('account.b2bVerifyDesc', 'پس از تایید شماره نظام پزشکی یا مجوز کلینیک، قیمت‌های ویژه همکار، خرید چکی/اعتباری و فاکتور رسمی برای شما فعال می‌شود.')}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <label className="space-y-1">
-                  <span className="font-bold">نام متقاضی *</span>
+                  <span className="font-bold">{t('account.b2b.applicantName', 'نام متقاضی *')}</span>
                   <input
                     required
                     value={b2bForm.applicantName}
                     onChange={(e) => setB2bForm({ ...b2bForm, applicantName: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                 </label>
                 <label className="space-y-1">
-                  <span className="font-bold">موبایل *</span>
+                  <span className="font-bold">{t('account.b2b.mobile', 'موبایل *')}</span>
                   <input
                     required
                     value={b2bForm.mobile}
                     onChange={(e) => setB2bForm({ ...b2bForm, mobile: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                 </label>
                 <label className="space-y-1">
-                  <span className="font-bold">گروه درخواستی *</span>
+                  <span className="font-bold">{t('account.b2b.requestedGroup', 'گروه درخواستی *')}</span>
                   <select
                     value={b2bForm.requestedGroup}
                     onChange={(e) => setB2bForm({ ...b2bForm, requestedGroup: e.target.value as Exclude<CustomerGroupCode, 'retail'> })}
-                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   >
-                    <option value="dentist">دندانپزشک</option>
-                    <option value="clinic">کلینیک / درمانگاه</option>
-                    <option value="lab">لابراتوار دندانسازی</option>
-                    <option value="student">دانشجوی دندانپزشکی</option>
-                    <option value="agent">نماینده استانی</option>
-                    <option value="wholesale">همکار عمده‌فروش</option>
+                    <option value="dentist">{t('customerGroup.dentist', 'دندانپزشک')}</option>
+                    <option value="clinic">{t('customerGroup.clinic', 'کلینیک / درمانگاه')}</option>
+                    <option value="lab">{t('customerGroup.lab', 'لابراتوار دندانسازی')}</option>
+                    <option value="student">{t('customerGroup.student', 'دانشجو')}</option>
+                    <option value="agent">{t('customerGroup.agent', 'نماینده فروش')}</option>
+                    <option value="wholesale">{t('customerGroup.wholesale', 'همکار عمده')}</option>
                   </select>
                 </label>
                 <label className="space-y-1">
-                  <span className="font-bold">شماره نظام پزشکی / دانشجویی *</span>
+                  <span className="font-bold">{t('account.b2b.councilNo', 'شماره نظام پزشکی / دانشجویی *')}</span>
                   <input
                     required
                     value={b2bForm.medicalCouncilNo}
                     onChange={(e) => setB2bForm({ ...b2bForm, medicalCouncilNo: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                 </label>
                 <label className="space-y-1 sm:col-span-2">
-                  <span className="font-bold">نام مطب / کلینیک / مرکز *</span>
+                  <span className="font-bold">{t('account.b2b.clinicName', 'نام مطب / کلینیک / مرکز *')}</span>
                   <input
                     required
                     value={b2bForm.clinicName}
                     onChange={(e) => setB2bForm({ ...b2bForm, clinicName: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                 </label>
                 <label className="space-y-1 sm:col-span-2">
-                  <span className="font-bold">آپلود تصویر کارت نظام پزشکی یا پروانه کسب</span>
-                  <label className="flex items-center justify-center gap-2 px-3 py-3 rounded-xl border border-dashed border-line dark:border-slate-700 cursor-pointer hover:border-brand">
-                    <Upload className="w-4 h-4 text-brand" />
-                    <span>{b2bForm.attachmentName || 'انتخاب فایل (تصویر یا PDF)'}</span>
+                  <span className="font-bold">{t('account.b2b.uploadDocLabel', 'آپلود تصویر کارت نظام پزشکی یا پروانه کسب')}</span>
+                  <label className="flex items-center justify-center gap-2 min-h-[44px] px-3 py-3 rounded-xl border border-dashed border-line dark:border-slate-700 cursor-pointer hover:border-brand">
+                    <Upload className="w-4 h-4 text-brand shrink-0" />
+                    <span>{b2bForm.attachmentName || t('account.b2b.selectFileHint', 'انتخاب فایل (تصویر یا PDF)')}</span>
                     <input type="file" accept="image/*,.pdf" onChange={handleB2BFileUpload} className="hidden" />
                   </label>
                   {b2bForm.attachmentPreview.startsWith('data:image') && (
-                    <img src={b2bForm.attachmentPreview} alt="پیش‌نمایش مدرک" className="h-20 rounded-lg border border-line mt-2" />
+                    <img src={b2bForm.attachmentPreview} alt={t('account.b2b.previewAlt', 'پیش‌نمایش مدرک')} className="h-20 rounded-lg border border-line mt-2" />
                   )}
                 </label>
                 <label className="space-y-1 sm:col-span-2">
-                  <span className="font-bold">خلاصه مدارک / شماره پروانه</span>
+                  <span className="font-bold">{t('account.b2b.docSummaryLabel', 'خلاصه مدارک / شماره پروانه')}</span>
                   <textarea
                     rows={2}
                     value={b2bForm.documentSummary}
@@ -1135,21 +1202,25 @@ export default function AccountPage() {
                   />
                 </label>
               </div>
-              <button type="submit" className="px-5 py-2.5 rounded-xl bg-brand text-white text-xs font-bold hover:bg-brandDark">
-                ارسال درخواست احراز هویت
+              <button type="submit" className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white text-xs font-bold hover:bg-brandDark">
+                {t('account.b2b.submitBtn', 'ارسال درخواست احراز هویت')}
               </button>
 
               {myVerifications.length > 0 && (
                 <div className="pt-3 border-t border-line dark:border-slate-800 space-y-2">
-                  <h3 className="text-xs font-bold">وضعیت درخواست‌های ارسال‌شده:</h3>
+                  <h3 className="text-xs font-bold">{t('account.b2b.submittedHeading', 'وضعیت درخواست‌های ارسال‌شده:')}</h3>
                   {myVerifications.map((v) => (
-                    <div key={v.id} className="p-3 rounded-xl bg-surface/60 dark:bg-slate-800 text-xs flex justify-between items-center">
+                    <div key={v.id} className="p-3 rounded-xl bg-surface/60 dark:bg-slate-800 text-xs flex flex-wrap justify-between items-center gap-2">
                       <span>
-                        {v.clinicName} ({GROUP_FA[v.requestedGroup]})
+                        {v.clinicName} ({t(`customerGroup.${v.requestedGroup}`, v.requestedGroup)})
                       </span>
                       <span className="font-bold flex items-center gap-1">
                         <BadgeCheck className="w-3.5 h-3.5 text-brand" />
-                        {v.status === 'approved' ? 'تاییدشده' : v.status === 'rejected' ? 'ردشده' : 'در حال بررسی'}
+                        {v.status === 'approved'
+                          ? t('account.b2b.statusApproved', 'تاییدشده')
+                          : v.status === 'rejected'
+                          ? t('account.b2b.statusRejected', 'ردشده')
+                          : t('account.b2b.statusPending', 'در حال بررسی')}
                       </span>
                     </div>
                   ))}
@@ -1157,19 +1228,23 @@ export default function AccountPage() {
               )}
             </form>
 
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
               <div className="flex items-center gap-2">
-                <MapPin className="w-5 h-5 text-brand" />
-                <h2 className="text-lg font-extrabold">نشانی‌های ثبت‌شده</h2>
+                <MapPin className="w-5 h-5 text-brand shrink-0" />
+                <h2 className="text-lg font-extrabold">{t('account.addresses.heading', 'نشانی‌های ثبت‌شده')}</h2>
               </div>
 
               <div className="space-y-2">
                 {(userProfile?.addresses ?? []).length === 0 ? (
-                  <p className="text-xs text-ink/50">هنوز نشانی ثابتی ذخیره نکرده‌اید.</p>
+                  <p className="text-xs text-ink/50">{t('account.addresses.empty', 'هنوز نشانی ثابتی ذخیره نکرده‌اید.')}</p>
                 ) : (
                   userProfile?.addresses?.map((a) => (
                     <div key={a.id} className="p-3 rounded-xl border border-line dark:border-slate-800 text-xs space-y-1">
-                      <p className="font-bold">{a.label} — {a.province}، {a.city}</p>
+                      <p className="font-bold">
+                        {a.label} — {a.province}
+                        {t('common.listSeparator', '، ')}
+                        {a.city}
+                      </p>
                       <p className="text-ink/70 dark:text-slate-400">{a.addressLine}</p>
                     </div>
                   ))
@@ -1177,43 +1252,43 @@ export default function AccountPage() {
               </div>
 
               <form onSubmit={handleSaveAddress} className="space-y-3 pt-3 border-t border-line dark:border-slate-800 text-xs">
-                <h3 className="font-bold">افزودن نشانی جدید</h3>
-                <div className="grid grid-cols-2 gap-2">
+                <h3 className="font-bold">{t('account.addresses.addTitle', 'افزودن نشانی جدید')}</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input
                     value={addrForm.label}
                     onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
-                    placeholder="عنوان (مثلاً مطب ونک)"
-                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    placeholder={t('account.addresses.titlePh', 'عنوان (مثلاً مطب ونک)')}
+                    className="min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                   <input
                     value={addrForm.postalCode}
                     onChange={(e) => setAddrForm({ ...addrForm, postalCode: e.target.value })}
-                    placeholder="کد پستی"
-                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    placeholder={t('account.addresses.postalCodePh', 'کد پستی')}
+                    className="min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                   <input
                     value={addrForm.province}
                     onChange={(e) => setAddrForm({ ...addrForm, province: e.target.value })}
-                    placeholder="استان"
-                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    placeholder={t('account.addresses.provincePh', 'استان')}
+                    className="min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                   <input
                     value={addrForm.city}
                     onChange={(e) => setAddrForm({ ...addrForm, city: e.target.value })}
-                    placeholder="شهر"
-                    className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    placeholder={t('account.addresses.cityPh', 'شهر')}
+                    className="min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                   <textarea
                     rows={2}
                     required
                     value={addrForm.addressLine}
                     onChange={(e) => setAddrForm({ ...addrForm, addressLine: e.target.value })}
-                    placeholder="نشانی کامل..."
-                    className="col-span-2 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                    placeholder={t('account.addresses.linePh', 'نشانی کامل...')}
+                    className="sm:col-span-2 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                   />
                 </div>
-                <button type="submit" className="px-4 py-2 rounded-xl bg-brand text-white font-bold">
-                  ذخیره نشانی
+                <button type="submit" className="min-h-[40px] px-4 py-2 rounded-xl bg-brand text-white font-bold">
+                  {t('account.addresses.saveBtn', 'ذخیره نشانی')}
                 </button>
               </form>
             </div>
@@ -1221,15 +1296,193 @@ export default function AccountPage() {
         </div>
       )}
 
+      {/* Tab 5.5: Marketing Consent & Privacy Preferences */}
+      {tab === 'preferences' && (
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line dark:border-slate-800 pb-4">
+            <div className="flex items-center gap-2">
+              <Bell className="w-5 h-5 text-brand shrink-0" />
+              <div>
+                <h2 className="text-base font-extrabold">{t('account.preferences.title', 'تنظیمات رضایت تبلیغاتی و اطلاع‌رسانی')}</h2>
+                <p className="text-ink/60 dark:text-slate-400">
+                  {t('account.preferences.subtitle', 'دریافت پیام‌های تخفیف و یادآوری سبد خرید رهاشده تنها با رضایت صریح شما انجام می‌شود.')}
+                </p>
+              </div>
+            </div>
+            {isMarketingSuppressed && (
+              <span className="px-3 py-1 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 font-bold">
+                {t('account.preferences.suppressedBadge', 'شماره/ایمیل شما در لیست عدم ارسال است (با فعال‌سازی و ذخیره خارج می‌شود)')}
+              </span>
+            )}
+          </div>
+
+          {consentLoading ? (
+            <p className="text-ink/60 dark:text-slate-400 py-4">{t('account.preferences.loading', 'در حال بارگذاری تنظیمات فعلی...')}</p>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setConsentSaving(true);
+                try {
+                  const headers = await resolveAuthHeaders(authUser, mobileSessionToken);
+                  const res = await fetch('/api/marketing/consent', {
+                    method: 'PUT',
+                    headers,
+                    credentials: 'include',
+                    body: JSON.stringify({
+                      marketingOptIn: consentForm.marketingOptIn,
+                      smsOptIn: consentForm.smsOptIn,
+                      emailOptIn: consentForm.emailOptIn,
+                      abandonedCartConsent: consentForm.abandonedCartConsent,
+                      mobile: consentForm.mobile.trim() || undefined,
+                      email: consentForm.email.trim() || undefined,
+                    }),
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (!res.ok || !data?.ok) {
+                    pushToast(data?.message || t('account.toasts.consentSaveError', 'خطا در ذخیره تنظیمات اطلاع‌رسانی'), 'error');
+                    return;
+                  }
+                  setIsMarketingSuppressed(false);
+                  if (data.consent) {
+                    setConsentForm((prev) => ({
+                      ...prev,
+                      marketingOptIn: Boolean(data.consent.marketingOptIn),
+                      smsOptIn: Boolean(data.consent.smsOptIn),
+                      emailOptIn: Boolean(data.consent.emailOptIn),
+                      abandonedCartConsent: Boolean(data.consent.abandonedCartConsent),
+                      mobile: String(data.consent.mobile || prev.mobile || ''),
+                      email: String(data.consent.email || prev.email || ''),
+                    }));
+                    window.dispatchEvent(
+                      new CustomEvent('dm:marketing-consent-updated', {
+                        detail: { abandonedCartConsent: Boolean(data.consent.abandonedCartConsent) },
+                      })
+                    );
+                  }
+                  pushToast(t('account.toasts.consentSaved', 'تنظیمات رضایت تبلیغاتی و حریم خصوصی با موفقیت ذخیره شد.'), 'success');
+                } catch {
+                  pushToast(t('common.serverError', 'خطا در ارتباط با سرور'), 'error');
+                } finally {
+                  setConsentSaving(false);
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="font-bold">{t('account.preferences.smsMobileLabel', 'شماره موبایل دریافت پیامک')}</span>
+                  <input
+                    dir="ltr"
+                    type="tel"
+                    value={consentForm.mobile}
+                    onChange={(e) => setConsentForm((prev) => ({ ...prev, mobile: e.target.value }))}
+                    placeholder="0912..."
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-left tabular-nums"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-bold">{t('account.preferences.emailLabel', 'ایمیل اطلاع‌رسانی')}</span>
+                  <input
+                    dir="ltr"
+                    type="email"
+                    value={consentForm.email}
+                    onChange={(e) => setConsentForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="clinic@example.com"
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-left"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="flex items-start gap-2.5 p-3.5 rounded-xl border border-line dark:border-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentForm.marketingOptIn}
+                    onChange={(e) =>
+                      setConsentForm((prev) => ({ ...prev, marketingOptIn: e.target.checked }))
+                    }
+                    className="mt-0.5 accent-brand"
+                  />
+                  <div>
+                    <p className="font-bold">{t('account.preferences.marketingOptInTitle', 'دریافت کمپین‌ها و جشنواره‌های تخفیف')}</p>
+                    <p className="text-ink/60 dark:text-slate-400">
+                      {t('account.preferences.marketingOptInDesc', 'اطلاع از تخفیف‌های ویژه کلینیک‌ها و موجودی جدید تجهیزات')}
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-3.5 rounded-xl border border-line dark:border-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentForm.abandonedCartConsent}
+                    onChange={(e) =>
+                      setConsentForm((prev) => ({ ...prev, abandonedCartConsent: e.target.checked }))
+                    }
+                    className="mt-0.5 accent-brand"
+                  />
+                  <div>
+                    <p className="font-bold">{t('account.preferences.cartOptInTitle', 'ذخیره سروری سبد خرید و ارسال یادآور')}</p>
+                    <p className="text-ink/60 dark:text-slate-400">
+                      {t('account.preferences.cartOptInDesc', 'همگام‌سازی سبد خرید بین دستگاه‌ها و یادآوری سبد ناتمام (حداکثر ۱ بار در ۲۴ ساعت)')}
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-3.5 rounded-xl border border-line dark:border-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentForm.smsOptIn}
+                    onChange={(e) => setConsentForm((prev) => ({ ...prev, smsOptIn: e.target.checked }))}
+                    className="mt-0.5 accent-brand"
+                  />
+                  <div>
+                    <p className="font-bold">{t('account.preferences.smsOptInTitle', 'اجازه ارسال پیامک (SMS)')}</p>
+                    <p className="text-ink/60 dark:text-slate-400">
+                      {t('account.preferences.smsOptInDesc', 'با رعایت ساعات سکوت (۲۲ تا ۸ صبح) و امکان لغو با ارسال «لغو» یا «۱۱»')}
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-3.5 rounded-xl border border-line dark:border-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentForm.emailOptIn}
+                    onChange={(e) =>
+                      setConsentForm((prev) => ({ ...prev, emailOptIn: e.target.checked }))
+                    }
+                    className="mt-0.5 accent-brand"
+                  />
+                  <div>
+                    <p className="font-bold">{t('account.preferences.emailOptInTitle', 'اجازه ارسال ایمیل تبلیغاتی')}</p>
+                    <p className="text-ink/60 dark:text-slate-400">
+                      {t('account.preferences.emailOptInDesc', 'ارسال خبرنامه تخصصی دندانپزشکی و لینک لغو اشتراک یک‌کلیکی')}
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <button
+                type="submit"
+                disabled={consentSaving}
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white font-bold hover:bg-brandDark disabled:opacity-50"
+              >
+                {consentSaving ? t('common.saving', 'در حال ذخیره...') : t('account.preferences.saveBtn', 'ذخیره تنظیمات اطلاع‌رسانی')}
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
       {/* Tab 6: Tickets & Credit/Stock Requests */}
       {tab === 'tickets' && !authUser && (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 text-center space-y-3 text-xs">
-          <p className="font-extrabold text-base">تیکت پشتیبانی ابری نیازمند اتصال با حساب گوگل است</p>
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 sm:p-8 text-center space-y-3 text-xs">
+          <p className="font-extrabold text-base">{t('account.ticketsNeedGoogleTitle', 'تیکت پشتیبانی ابری نیازمند اتصال با حساب گوگل است')}</p>
           <p className="text-ink/70 dark:text-slate-400">
-            برای گفتگو با پشتیبانی در مورد استعلام قیمت‌ها می‌توانید از تب «استعلام قیمت و چانه‌زنی» استفاده کنید یا برای تیکت پشتیبانی با گوگل متصل شوید.
+            {t('account.ticketsNeedGoogleDesc', 'برای گفتگو با پشتیبانی در مورد استعلام قیمت‌ها می‌توانید از تب «استعلام قیمت و چانه‌زنی» استفاده کنید یا برای تیکت پشتیبانی با گوگل متصل شوید.')}
           </p>
-          <button type="button" onClick={signInWithGoogle} className="px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
-            اتصال با حساب گوگل
+          <button type="button" onClick={signInWithGoogle} className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
+            {t('account.connectGoogleBtn', 'اتصال با حساب گوگل')}
           </button>
         </div>
       )}
@@ -1237,60 +1490,60 @@ export default function AccountPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <form
             onSubmit={handleTicketSubmit}
-            className="lg:col-span-5 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3 text-xs"
+            className="lg:col-span-5 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-3 text-xs"
           >
-            <h2 className="text-base font-extrabold">ارسال تیکت پشتیبانی جدید</h2>
+            <h2 className="text-base font-extrabold">{t('account.tickets.newTitle', 'ارسال تیکت پشتیبانی جدید')}</h2>
             <input
               required
               value={ticketForm.subject}
               onChange={(e) => setTicketForm({ ...ticketForm, subject: e.target.value })}
-              placeholder="موضوع تیکت..."
-              className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              placeholder={t('account.tickets.subjectPh', 'موضوع تیکت...')}
+              className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
             />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
                 value={ticketForm.department}
                 onChange={(e) => setTicketForm({ ...ticketForm, department: e.target.value as typeof ticketForm.department })}
-                className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                className="min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
               >
-                <option value="support">پشتیبانی و پیگیری</option>
-                <option value="sales">فروش و پیش‌فاکتور</option>
-                <option value="technical">خدمات فنی تجهیزات</option>
-                <option value="accounting">امور مالی و فاکتور</option>
+                <option value="support">{t('account.tickets.deptSupport', 'پشتیبانی و پیگیری')}</option>
+                <option value="sales">{t('account.tickets.deptSales', 'فروش و پیش‌فاکتور')}</option>
+                <option value="technical">{t('account.tickets.deptTechnical', 'خدمات فنی تجهیزات')}</option>
+                <option value="accounting">{t('account.tickets.deptAccounting', 'امور مالی و فاکتور')}</option>
               </select>
               <select
                 value={ticketForm.priority}
                 onChange={(e) => setTicketForm({ ...ticketForm, priority: e.target.value as typeof ticketForm.priority })}
-                className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                className="min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
               >
-                <option value="normal">اولویت عادی</option>
-                <option value="high">اولویت بالا</option>
-                <option value="urgent">فوری (اختلال دستگاه)</option>
+                <option value="normal">{t('account.tickets.prioNormal', 'اولویت عادی')}</option>
+                <option value="high">{t('account.tickets.prioHigh', 'اولویت بالا')}</option>
+                <option value="urgent">{t('account.tickets.prioUrgent', 'فوری (اختلال دستگاه)')}</option>
               </select>
             </div>
             <input
               value={ticketForm.orderNo}
               onChange={(e) => setTicketForm({ ...ticketForm, orderNo: e.target.value })}
-              placeholder="شماره سفارش مرتبط (اختیاری)"
-              className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              placeholder={t('account.tickets.orderNoPh', 'شماره سفارش مرتبط (اختیاری)')}
+              className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
             />
             <textarea
               required
               rows={3}
               value={ticketForm.body}
               onChange={(e) => setTicketForm({ ...ticketForm, body: e.target.value })}
-              placeholder="شرح پیام..."
+              placeholder={t('account.tickets.bodyPh', 'شرح پیام...')}
               className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
             />
-            <button type="submit" className="px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
-              ثبت تیکت
+            <button type="submit" className="min-h-[44px] px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
+              {t('account.tickets.submitBtn', 'ثبت تیکت')}
             </button>
           </form>
 
           <div className="lg:col-span-7 space-y-4">
             {myTickets.map((tk) => (
-              <div key={tk.id} className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-                <div className="flex justify-between items-center text-xs">
+              <div key={tk.id} className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+                <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
                   <strong className="text-sm">{tk.subject}</strong>
                   <span className="tabular-nums text-brand font-bold">{tk.ticketNo} · {tk.status}</span>
                 </div>
@@ -1303,18 +1556,18 @@ export default function AccountPage() {
                       }`}
                     >
                       <p className="font-bold text-[11px] text-ink/70 dark:text-slate-300">
-                        {m.authorName} · {formatJalaliDateTime(m.createdAt)}
+                        {m.authorName} · {formatDateTime(m.createdAt)}
                       </p>
                       <p className="mt-1 leading-relaxed">{m.body}</p>
                     </div>
                   ))}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     value={replyTexts[tk.id] ?? ''}
                     onChange={(e) => setReplyTexts({ ...replyTexts, [tk.id]: e.target.value })}
-                    placeholder="ارسال پاسخ جدید..."
-                    className="flex-1 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
+                    placeholder={t('account.tickets.replyPh', 'ارسال پاسخ جدید...')}
+                    className="w-full sm:flex-1 min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
                   />
                   <button
                     type="button"
@@ -1324,19 +1577,19 @@ export default function AccountPage() {
                       await replyTicket(tk.id, txt, false);
                       setReplyTexts({ ...replyTexts, [tk.id]: '' });
                     }}
-                    className="px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold"
+                    className="w-full sm:w-auto min-h-[40px] px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold whitespace-nowrap"
                   >
-                    ارسال
+                    {t('actions.send', 'ارسال')}
                   </button>
                 </div>
               </div>
             ))}
 
             {myPlans.length > 0 && (
-              <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-2">
-                <h3 className="text-sm font-extrabold">پرونده‌های خرید اعتباری / چکی</h3>
+              <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-2">
+                <h3 className="text-sm font-extrabold">{t('account.creditPlansTitle', 'پرونده‌های خرید اعتباری / چکی')}</h3>
                 {myPlans.map((pl) => (
-                  <div key={pl.id} className="text-xs flex justify-between py-2 border-b border-line dark:border-slate-800 last:border-0">
+                  <div key={pl.id} className="text-xs flex flex-wrap justify-between gap-2 py-2 border-b border-line dark:border-slate-800 last:border-0">
                     <span>{pl.proposedTermsFa}</span>
                     <span className="font-bold tabular-nums">{formatMoney(pl.requestedAmount, currency)} · {pl.status}</span>
                   </div>
@@ -1345,10 +1598,10 @@ export default function AccountPage() {
             )}
 
             {myStockRequests.length > 0 && (
-              <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-2">
-                <h3 className="text-sm font-extrabold">درخواست‌های تامین کالای ناموجود</h3>
+              <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-2">
+                <h3 className="text-sm font-extrabold">{t('account.stockRequestsTitle', 'درخواست‌های تامین کالای ناموجود')}</h3>
                 {myStockRequests.map((sr) => (
-                  <div key={sr.id} className="text-xs flex justify-between py-2 border-b border-line dark:border-slate-800 last:border-0">
+                  <div key={sr.id} className="text-xs flex flex-wrap justify-between gap-2 py-2 border-b border-line dark:border-slate-800 last:border-0">
                     <span>{sr.titleText}</span>
                     <span className="font-bold text-brand">{sr.status}</span>
                   </div>
@@ -1360,15 +1613,23 @@ export default function AccountPage() {
       )}
 
       {/* Return Request Modal */}
-      {returnTargetOrder && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <form
-            onSubmit={handleReturnSubmit}
-            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 text-xs"
-          >
-            <h2 className="text-base font-extrabold">ثبت درخواست مرجوعی سفارش {returnTargetOrder.orderNo}</h2>
+      <AccessibleModal
+        open={Boolean(returnTargetOrder)}
+        onClose={() => setReturnTargetOrder(null)}
+        ariaLabel={
+          returnTargetOrder
+            ? t('account.returnModal.title', { orderNo: returnTargetOrder.orderNo })
+            : t('account.requestReturnBtn', 'درخواست مرجوعی کالا')
+        }
+        panelClassName="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-xs"
+      >
+        {returnTargetOrder && (
+          <form onSubmit={handleReturnSubmit} className="space-y-4">
+            <h2 className="text-base font-extrabold">
+              {t('account.returnModal.title', { orderNo: returnTargetOrder.orderNo })}
+            </h2>
             <label className="block space-y-1">
-              <span className="font-bold">علت مرجوعی</span>
+              <span className="font-bold">{t('account.returnModal.reasonLabel', 'علت مرجوعی')}</span>
               <textarea
                 required
                 rows={3}
@@ -1378,130 +1639,166 @@ export default function AccountPage() {
               />
             </label>
             <label className="block space-y-1">
-              <span className="font-bold">نحوه تسویه مورد نظر</span>
+              <span className="font-bold">{t('account.returnModal.resolutionLabel', 'نحوه تسویه مورد نظر')}</span>
               <select
                 value={returnResolution}
                 onChange={(e) => setReturnResolution(e.target.value as typeof returnResolution)}
-                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
               >
-                <option value="refund">استرداد وجه به حساب بانکی</option>
-                <option value="replacement">تعویض کالا</option>
-                <option value="credit">شارژ اعتبار کیف پول مطب</option>
+                <option value="refund">{t('account.returnModal.optRefund', 'استرداد وجه به حساب بانکی')}</option>
+                <option value="replacement">{t('account.returnModal.optReplacement', 'تعویض کالا')}</option>
+                <option value="credit">{t('account.returnModal.optCredit', 'شارژ اعتبار کیف پول مطب')}</option>
               </select>
             </label>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setReturnTargetOrder(null)} className="px-4 py-2 rounded-lg border border-line font-bold">
-                انصراف
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setReturnTargetOrder(null)} className="min-h-[40px] px-4 py-2 rounded-lg border border-line font-bold">
+                {t('actions.cancel', 'انصراف')}
               </button>
-              <button type="submit" className="px-5 py-2 rounded-lg bg-brand text-white font-bold">
-                ثبت درخواست مرجوعی
+              <button type="submit" className="min-h-[40px] px-5 py-2 rounded-lg bg-brand text-white font-bold">
+                {t('account.returnModal.submitBtn', 'ثبت درخواست مرجوعی')}
               </button>
             </div>
           </form>
-        </div>
-      )}
+        )}
+      </AccessibleModal>
 
       {/* Printable Proforma Modal */}
-      {printProforma && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="bg-white text-ink rounded-2xl max-w-2xl w-full p-8 space-y-5 shadow-2xl">
-            <div className="flex justify-between items-start border-b border-line pb-4">
+      <AccessibleModal
+        open={Boolean(printProforma)}
+        onClose={() => setPrintProforma(null)}
+        ariaLabel={t('account.printProformaModal.aria', 'پیش‌فاکتور رسمی')}
+        panelClassName="bg-white text-ink rounded-2xl max-w-2xl w-full p-4 sm:p-8 space-y-4 sm:space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto"
+      >
+        {printProforma && (
+          <>
+            <div className="flex flex-wrap justify-between items-start gap-3 border-b border-line pb-4">
               <div>
-                <h2 className="text-xl font-extrabold text-brand">{settings.storeNameFa} — پیش‌فاکتور رسمی</h2>
-                <p className="text-xs text-ink/60 mt-1">کد IMED: {settings.imedRegistryCode} · تلفن: {settings.phone}</p>
+                <h2 className="text-lg sm:text-xl font-extrabold text-brand">
+                  {settings.storeNameFa} — {t('account.printProformaModal.docType', 'پیش‌فاکتور رسمی')}
+                </h2>
+                <p className="text-xs text-ink/60 mt-1">
+                  {t('account.printProformaModal.imedPhoneMeta', { imed: settings.imedRegistryCode, phone: settings.phone })}
+                </p>
               </div>
-              <div className="text-left text-xs space-y-1">
-                <p className="font-extrabold tabular-nums">شماره: {printProforma.proformaNo}</p>
-                <p>اعتبار تا: {formatJalaliDate(printProforma.validUntil)}</p>
+              <div className="text-end text-xs space-y-1">
+                <p className="font-extrabold tabular-nums">
+                  {t('account.printProformaModal.numberMeta', { no: printProforma.proformaNo })}
+                </p>
+                <p>{t('account.proformaValidMeta', { date: formatDate(printProforma.validUntil) })}</p>
               </div>
             </div>
             <div className="text-xs space-y-1">
-              <p>خریدار: <strong>{printProforma.contactName}</strong> {printProforma.clinicName ? `(${printProforma.clinicName})` : ''}</p>
-              <p>تلفن: <span className="tabular-nums">{printProforma.contactMobile}</span></p>
+              <p>
+                {t('account.printProformaModal.buyerLabel', 'خریدار:')} <strong>{printProforma.contactName}</strong>{' '}
+                {printProforma.clinicName ? `(${printProforma.clinicName})` : ''}
+              </p>
+              <p>
+                {t('account.printProformaModal.phoneLabel', 'تلفن:')}{' '}
+                <span className="tabular-nums">{printProforma.contactMobile}</span>
+              </p>
             </div>
-            <table className="w-full text-xs border-collapse border border-line">
-              <thead>
-                <tr className="bg-surface">
-                  <th className="border border-line p-2 text-right">شرح کالا</th>
-                  <th className="border border-line p-2">تعداد</th>
-                  <th className="border border-line p-2">فی</th>
-                  <th className="border border-line p-2">جمع</th>
-                </tr>
-              </thead>
-              <tbody>
-                {printProforma.items.map((it) => (
-                  <tr key={it.variantId}>
-                    <td className="border border-line p-2">{it.titleFa} ({it.variantLabelFa})</td>
-                    <td className="border border-line p-2 text-center tabular-nums">{toPersianDigits(it.quantity)}</td>
-                    <td className="border border-line p-2 text-center tabular-nums">{formatMoney(it.unitPrice, currency)}</td>
-                    <td className="border border-line p-2 text-center tabular-nums">{formatMoney(it.lineTotal, currency)}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[440px] text-xs border-collapse border border-line">
+                <thead>
+                  <tr className="bg-surface">
+                    <th className="border border-line p-2 text-start">{t('account.printProformaModal.colDesc', 'شرح کالا')}</th>
+                    <th className="border border-line p-2">{t('account.printProformaModal.colQty', 'تعداد')}</th>
+                    <th className="border border-line p-2">{t('account.printProformaModal.colUnit', 'فی')}</th>
+                    <th className="border border-line p-2">{t('account.printProformaModal.colSum', 'جمع')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="flex justify-between items-center text-sm font-extrabold pt-2">
-              <span>جمع کل قابل پرداخت با مالیات:</span>
+                </thead>
+                <tbody>
+                  {printProforma.items.map((it) => (
+                    <tr key={it.variantId}>
+                      <td className="border border-line p-2">{it.titleFa} ({it.variantLabelFa})</td>
+                      <td className="border border-line p-2 text-center tabular-nums">{formatDigits(it.quantity)}</td>
+                      <td className="border border-line p-2 text-center tabular-nums">{formatMoney(it.unitPrice, currency)}</td>
+                      <td className="border border-line p-2 text-center tabular-nums">{formatMoney(it.lineTotal, currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap justify-between items-center gap-2 text-sm font-extrabold pt-2">
+              <span>{t('account.printProformaModal.grandTotalLabel', 'جمع کل قابل پرداخت با مالیات:')}</span>
               <span className="tabular-nums text-brand">{formatMoney(printProforma.grandTotal, currency)}</span>
             </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <button type="button" onClick={() => window.print()} className="px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold">
-                چاپ / ذخیره PDF
+            <div className="flex flex-wrap justify-end gap-2 pt-4">
+              <button type="button" onClick={() => window.print()} className="min-h-[40px] px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold">
+                {t('account.printSavePdfBtn', 'چاپ / ذخیره PDF')}
               </button>
-              <button type="button" onClick={() => setPrintProforma(null)} className="px-4 py-2 rounded-lg border border-line text-xs font-bold">
-                بستن
+              <button type="button" onClick={() => setPrintProforma(null)} className="min-h-[40px] px-4 py-2 rounded-lg border border-line text-xs font-bold">
+                {t('actions.close', 'بستن')}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </AccessibleModal>
 
       {/* Printable Official Invoice Modal */}
-      {printInvoice && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="bg-white text-ink rounded-2xl max-w-2xl w-full p-8 space-y-5 shadow-2xl text-xs">
-            <div className="flex justify-between items-start border-b border-line pb-4">
+      <AccessibleModal
+        open={Boolean(printInvoice)}
+        onClose={() => setPrintInvoice(null)}
+        ariaLabel={t('account.printInvoiceModal.aria', 'فاکتور فروش')}
+        panelClassName="bg-white text-ink rounded-2xl max-w-2xl w-full p-4 sm:p-8 space-y-4 sm:space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto text-xs"
+      >
+        {printInvoice && (
+          <>
+            <div className="flex flex-wrap justify-between items-start gap-3 border-b border-line pb-4">
               <div>
-                <h2 className="text-xl font-extrabold text-brand">
-                  {settings.storeNameFa} — {printInvoice.isOfficial ? 'صورتحساب فروش رسمی کالا و خدمات' : 'فاکتور فروش'}
+                <h2 className="text-lg sm:text-xl font-extrabold text-brand">
+                  {settings.storeNameFa} —{' '}
+                  {printInvoice.isOfficial
+                    ? t('account.printInvoiceModal.officialTitle', 'صورتحساب فروش رسمی کالا و خدمات')
+                    : t('account.salesInvoice', 'فاکتور فروش')}
                 </h2>
-                <p className="text-ink/60 mt-1">نشانی فروشنده: {settings.addressFa}</p>
+                <p className="text-ink/60 mt-1">{t('account.printInvoiceModal.sellerAddress', { address: settings.addressFa })}</p>
               </div>
-              <div className="text-left space-y-1">
-                <p className="font-extrabold tabular-nums">شماره فاکتور: {printInvoice.invoiceNo}</p>
-                <p>تاریخ صدور: {formatJalaliDate(printInvoice.issuedAt)}</p>
+              <div className="text-end space-y-1">
+                <p className="font-extrabold tabular-nums">
+                  {t('account.printInvoiceModal.invoiceNoLabel', { no: printInvoice.invoiceNo })}
+                </p>
+                <p>{t('account.printInvoiceModal.issuedAtLabel', { date: formatDate(printInvoice.issuedAt) })}</p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-surface/60">
-              <p>نام خریدار: <strong>{printInvoice.customerName}</strong></p>
-              <p>شناسه ملی / کدملی: <strong className="tabular-nums">{printInvoice.nationalId || '—'}</strong></p>
-              <p>کد اقتصادی: <strong className="tabular-nums">{printInvoice.economicCode || '—'}</strong></p>
-              <p>وضعیت فاکتور: <strong>{printInvoice.status === 'issued' ? 'صادرشده' : 'باطل‌شده'}</strong></p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-surface/60">
+              <p>{t('account.printInvoiceModal.buyerNameLabel', 'نام خریدار:')} <strong>{printInvoice.customerName}</strong></p>
+              <p>{t('account.printInvoiceModal.nationalIdLabel', 'شناسه ملی / کدملی:')} <strong className="tabular-nums">{printInvoice.nationalId || '—'}</strong></p>
+              <p>{t('account.printInvoiceModal.economicCodeLabel', 'کد اقتصادی:')} <strong className="tabular-nums">{printInvoice.economicCode || '—'}</strong></p>
+              <p>
+                {t('account.printInvoiceModal.statusLabel', 'وضعیت فاکتور:')}{' '}
+                <strong>
+                  {printInvoice.status === 'issued'
+                    ? t('account.printInvoiceModal.statusIssued', 'صادرشده')
+                    : t('account.printInvoiceModal.statusVoid', 'باطل‌شده')}
+                </strong>
+              </p>
             </div>
             <div className="space-y-2 border-t border-line pt-3">
               <div className="flex justify-between">
-                <span>جمع خالص اقلام:</span>
+                <span>{t('account.printInvoiceModal.netSubtotalLabel', 'جمع خالص اقلام:')}</span>
                 <strong className="tabular-nums">{formatMoney(printInvoice.subtotal, currency)}</strong>
               </div>
               <div className="flex justify-between">
-                <span>مالیات بر ارزش افزوده:</span>
+                <span>{t('account.printInvoiceModal.vatLabel', 'مالیات بر ارزش افزوده:')}</span>
                 <strong className="tabular-nums">{formatMoney(printInvoice.taxTotal, currency)}</strong>
               </div>
               <div className="flex justify-between text-sm font-extrabold text-brand border-t border-line pt-2">
-                <span>مبلغ قابل پرداخت نهایی:</span>
+                <span>{t('account.printInvoiceModal.grandTotalLabel', 'مبلغ قابل پرداخت نهایی:')}</span>
                 <span className="tabular-nums">{formatMoney(printInvoice.grandTotal, currency)}</span>
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-3">
-              <button type="button" onClick={() => window.print()} className="px-4 py-2 rounded-lg bg-brand text-white font-bold">
-                چاپ فاکتور
+            <div className="flex flex-wrap justify-end gap-2 pt-3">
+              <button type="button" onClick={() => window.print()} className="min-h-[40px] px-4 py-2 rounded-lg bg-brand text-white font-bold">
+                {t('account.printInvoiceModal.printBtn', 'چاپ فاکتور')}
               </button>
-              <button type="button" onClick={() => setPrintInvoice(null)} className="px-4 py-2 rounded-lg border border-line font-bold">
-                بستن
+              <button type="button" onClick={() => setPrintInvoice(null)} className="min-h-[40px] px-4 py-2 rounded-lg border border-line font-bold">
+                {t('actions.close', 'بستن')}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </AccessibleModal>
     </div>
   );
 }

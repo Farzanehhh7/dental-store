@@ -1,4 +1,5 @@
 import type {
+  AbandonedCartRecord,
   B2BVerification,
   BlogPost,
   Brand,
@@ -105,6 +106,7 @@ export interface ReportDataset {
   notFoundLogs: NotFoundLog[];
   reviews: Review[];
   questions: ProductQuestion[];
+  abandonedCarts?: AbandonedCartRecord[];
   settings: SiteSettings;
   now?: Date;
 }

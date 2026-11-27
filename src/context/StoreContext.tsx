@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { StoreContextValue } from './storeTypes';
 import { AuthProvider, useAuth } from './auth';
 import { CatalogProvider, useCatalog } from './catalog';
@@ -6,6 +6,7 @@ import { ContentProvider, useContent } from './content';
 import { CartProvider, useCart } from './cart';
 import { RfqProvider, useRfq } from './rfq';
 import { OrdersProvider, useOrders } from './orders';
+import { resolveAuthHeaders } from './storeHelpers';
 
 export type { AdminStaffRecord } from './storeTypes';
 
@@ -143,6 +144,7 @@ function StoreContextComposer({ children }: { children: React.ReactNode }) {
     darkMode,
     toggleDarkMode,
     cart,
+    cartPendingVariantIds,
     cartOpen,
     setCartOpen,
     addToCart,
@@ -212,6 +214,86 @@ function StoreContextComposer({ children }: { children: React.ReactNode }) {
     convertProformaToOrder,
     updatePaymentPlanStatus,
   } = useOrders();
+
+  const [abandonedCartConsent, setAbandonedCartConsent] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const loadConsent = async () => {
+      if (!authUser && !mobileSessionToken) {
+        if (active) setAbandonedCartConsent(false);
+        return;
+      }
+      try {
+        const headers = await resolveAuthHeaders(authUser, mobileSessionToken);
+        const res = await fetch('/api/marketing/consent', {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+        });
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        if (active && data?.ok && data.consent) {
+          setAbandonedCartConsent(Boolean(data.consent.abandonedCartConsent));
+        }
+      } catch {
+        // Ignore transient offline failures
+      }
+    };
+    void loadConsent();
+
+    const handleConsentUpdate = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ abandonedCartConsent?: boolean }>).detail;
+      if (typeof detail?.abandonedCartConsent === 'boolean') {
+        setAbandonedCartConsent(detail.abandonedCartConsent);
+      } else {
+        void loadConsent();
+      }
+    };
+    window.addEventListener('dm:marketing-consent-updated', handleConsentUpdate);
+    return () => {
+      active = false;
+      window.removeEventListener('dm:marketing-consent-updated', handleConsentUpdate);
+    };
+  }, [authUser, mobileSessionToken]);
+
+  useEffect(() => {
+    if (!authUser && !mobileSessionToken) return;
+    if (!abandonedCartConsent && cart.length === 0) return;
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const headers = await resolveAuthHeaders(authUser, mobileSessionToken);
+          await fetch('/api/cart/sync', {
+            method: 'POST',
+            headers,
+            credentials: 'include',
+            body: JSON.stringify({
+              items: cart,
+              consentGranted: abandonedCartConsent,
+              customerName:
+                userProfile?.displayName || authUser?.displayName || mobileSession?.displayName || undefined,
+              mobile: userProfile?.mobile || mobileSession?.mobile || undefined,
+              email: authUser?.email || undefined,
+            }),
+          });
+        } catch {
+          // Ignore background sync failures
+        }
+      })();
+    }, 800);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    cart,
+    abandonedCartConsent,
+    authUser,
+    mobileSessionToken,
+    mobileSession,
+    userProfile?.displayName,
+    userProfile?.mobile,
+  ]);
 
   return (
     <StoreContext.Provider
@@ -289,6 +371,7 @@ function StoreContextComposer({ children }: { children: React.ReactNode }) {
         respondRfq,
         convertRfqToProforma,
         cart,
+        cartPendingVariantIds,
         cartOpen,
         setCartOpen,
         addToCart,

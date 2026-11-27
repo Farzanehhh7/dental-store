@@ -7,7 +7,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { formatJalaliDateTime, formatMoney, toPersianDigits } from '../../lib/jalali';
+import { useI18n } from '../../context/i18n';
+import { AccessibleModal } from '../../components/ui/Modal';
 import { CustomerGroupCode, UserProfile } from '../../types/domain';
 
 export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'support' }) {
@@ -28,6 +29,7 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
     moderateReview,
     answerQuestion,
   } = useStore();
+  const { t, formatDateTime, formatDigits, formatMoney } = useI18n();
 
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
   const [answerTexts, setAnswerTexts] = useState<Record<string, string>>({});
@@ -36,39 +38,52 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
   if (mode === 'customers') {
     return (
       <div className="space-y-6">
-        <h1 className="text-xl font-extrabold">مدیریت مشتریان، تعرفه‌های B2B و تایید صلاحیت پزشکی</h1>
+        <h1 className="text-lg sm:text-xl font-extrabold">{t('adminCustomers.title')}</h1>
 
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-          <h2 className="text-base font-extrabold">صف درخواست‌های احراز هویت حرفه‌ای B2B</h2>
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+          <h2 className="text-base font-extrabold">{t('adminCustomers.b2bQueueTitle')}</h2>
           <div className="space-y-2 text-xs">
             {b2bVerifications.map((v) => (
-              <div key={v.id} className="p-4 rounded-xl border border-line dark:border-slate-800 flex flex-wrap justify-between items-center gap-3">
-                <div className="space-y-1">
-                  <p className="font-bold text-sm">{v.applicantName} — {v.clinicName}</p>
-                  <p className="text-ink/60 tabular-nums">
-                    گروه درخواستی: {v.requestedGroup} · نظام پزشکی: {v.medicalCouncilNo} · موبایل: {v.mobile}
+              <div
+                key={v.id}
+                className="p-4 rounded-xl border border-line dark:border-slate-800 flex flex-wrap justify-between items-center gap-3"
+              >
+                <div className="space-y-1 min-w-0 flex-1">
+                  <p className="font-bold text-sm">
+                    {v.applicantName} — {v.clinicName}
+                  </p>
+                  <p className="text-ink/60 tabular-nums break-words">
+                    {t('adminCustomers.requestedGroupLabel', {
+                      group: t(`customerGroup.${v.requestedGroup}`, v.requestedGroup),
+                      councilNo: v.medicalCouncilNo,
+                      mobile: v.mobile,
+                    })}
                   </p>
                   {v.attachmentPreview && (
-                    <img src={v.attachmentPreview} alt={v.attachmentName || 'مدرک'} className="h-16 rounded border border-line mt-1" />
+                    <img
+                      src={v.attachmentPreview}
+                      alt={v.attachmentName || t('adminCustomers.attachmentAlt')}
+                      className="h-16 rounded border border-line mt-1"
+                    />
                   )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-brand">{v.status}</span>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <span className="font-bold text-brand">{t(`b2bStatus.${v.status}`, v.status)}</span>
                   {v.status === 'pending' && (
                     <>
                       <button
                         type="button"
                         onClick={() => reviewB2BVerification(v.id, 'approved')}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold"
+                        className="min-h-[38px] px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold"
                       >
-                        تایید و ارتقای گروه
+                        {t('adminCustomers.approveAndUpgrade')}
                       </button>
                       <button
                         type="button"
-                        onClick={() => reviewB2BVerification(v.id, 'rejected', 'مدارک ناخوانا است')}
-                        className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 font-bold"
+                        onClick={() => reviewB2BVerification(v.id, 'rejected', t('adminCustomers.rejectDefaultReason'))}
+                        className="min-h-[38px] px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 font-bold"
                       >
-                        رد
+                        {t('adminCustomers.reject')}
                       </button>
                     </>
                   )}
@@ -78,33 +93,41 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-          <h2 className="text-base font-extrabold">فهرست مشتریان و پرونده کاربری ({toPersianDigits(usersList.length)})</h2>
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+          <h2 className="text-base font-extrabold">
+            {t('adminCustomers.usersListTitle', { count: formatDigits(usersList.length) })}
+          </h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full min-w-[600px] text-xs">
               <thead className="border-b border-line dark:border-slate-800 text-ink/60">
                 <tr>
-                  <th className="py-2 text-right">نام</th>
-                  <th className="py-2 text-right">ایمیل / موبایل</th>
-                  <th className="py-2 text-right">گروه تعرفه</th>
-                  <th className="py-2 text-right">وضعیت</th>
-                  <th className="py-2 text-right">عملیات</th>
+                  <th className="py-2 px-2 text-start">{t('adminCustomers.colName')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminCustomers.colContact')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminCustomers.colGroup')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminCustomers.colStatus')}</th>
+                  <th className="py-2 px-2 text-start">{t('adminCustomers.colActions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line dark:divide-slate-800">
                 {usersList.map((u) => (
                   <tr key={u.uid}>
-                    <td className="py-2.5 font-bold">{u.displayName || 'کاربر'}</td>
-                    <td className="py-2.5">{u.email} {u.mobile ? `· ${u.mobile}` : ''}</td>
-                    <td className="py-2.5 font-bold text-brand">{u.customerGroup}</td>
-                    <td className="py-2.5">{u.isBlocked ? 'مسدود' : u.b2bStatus}</td>
-                    <td className="py-2.5">
+                    <td className="py-2.5 px-2 font-bold">{u.displayName || t('adminCustomers.defaultUser')}</td>
+                    <td className="py-2.5 px-2">
+                      {u.email} {u.mobile ? `· ${u.mobile}` : ''}
+                    </td>
+                    <td className="py-2.5 px-2 font-bold text-brand">
+                      {t(`customerGroup.${u.customerGroup}`, u.customerGroup)}
+                    </td>
+                    <td className="py-2.5 px-2">
+                      {u.isBlocked ? t('adminCustomers.blocked') : t(`b2bStatus.${u.b2bStatus}`, u.b2bStatus)}
+                    </td>
+                    <td className="py-2.5 px-2">
                       <button
                         type="button"
                         onClick={() => setSelectedUser(u)}
-                        className="px-2.5 py-1 rounded border border-brand text-brand font-bold"
+                        className="min-h-[36px] px-3 py-1 rounded-lg border border-brand text-brand font-bold whitespace-nowrap"
                       >
-                        پرونده / تغییر گروه
+                        {t('adminCustomers.manageProfileBtn')}
                       </button>
                     </td>
                   </tr>
@@ -114,20 +137,47 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
           </div>
         </div>
 
-        {selectedUser && (
-          <div className="fixed inset-0 z-50 bg-black/55 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 text-xs">
-              <div className="flex justify-between items-center">
-                <h2 className="text-base font-extrabold flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-brand" />
-                  <span>پرونده مشتری: {selectedUser.displayName || selectedUser.email}</span>
+        <AccessibleModal
+          open={Boolean(selectedUser)}
+          onClose={() => setSelectedUser(null)}
+          ariaLabel={t('adminCustomers.profileModalAria')}
+          panelClassName="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-lg w-full p-4 sm:p-6 space-y-4 text-xs shadow-2xl max-h-[90vh] overflow-y-auto"
+        >
+          {selectedUser && (
+            <>
+              <div className="flex justify-between items-center gap-2">
+                <h2 className="text-base font-extrabold flex items-center gap-2 min-w-0">
+                  <UserCheck className="w-4 h-4 text-brand shrink-0" />
+                  <span className="truncate">
+                    {t('adminCustomers.userProfileTitle', { name: selectedUser.displayName || selectedUser.email || t('adminCustomers.defaultUser') })}
+                  </span>
                 </h2>
-                <button type="button" onClick={() => setSelectedUser(null)}><X className="w-5 h-5" /></button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedUser(null)}
+                  aria-label={t('common.close')}
+                  className="min-w-[40px] min-h-[40px] inline-flex items-center justify-center rounded-lg hover:bg-surface dark:hover:bg-slate-800 shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <p>موبایل: {selectedUser.mobile || '—'} · کلینیک: {selectedUser.clinicName || '—'}</p>
-              <p>تعداد سفارش‌ها: {toPersianDigits(orders.filter((o) => o.userId === selectedUser.uid).length)} · مجموع خرید: {formatMoney(orders.filter((o) => o.userId === selectedUser.uid).reduce((s, o) => s + o.grandTotal, 0), currency)}</p>
+              <p>
+                {t('adminCustomers.mobileAndClinic', {
+                  mobile: selectedUser.mobile || '—',
+                  clinic: selectedUser.clinicName || '—',
+                })}
+              </p>
+              <p className="tabular-nums">
+                {t('adminCustomers.ordersSummary', {
+                  count: formatDigits(orders.filter((o) => o.userId === selectedUser.uid).length),
+                  total: formatMoney(
+                    orders.filter((o) => o.userId === selectedUser.uid).reduce((s, o) => s + o.grandTotal, 0),
+                    currency
+                  ),
+                })}
+              </p>
               <label className="block space-y-1">
-                <span className="font-bold">تغییر گروه قیمتی:</span>
+                <span className="font-bold">{t('adminCustomers.changePricingGroup')}</span>
                 <select
                   value={selectedUser.customerGroup}
                   onChange={async (e) => {
@@ -135,15 +185,15 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
                     await updateUserAdmin(selectedUser.uid, { customerGroup: g });
                     setSelectedUser({ ...selectedUser, customerGroup: g });
                   }}
-                  className="w-full px-3 py-2 rounded-lg border border-line bg-paper dark:bg-slate-800 font-bold"
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
                 >
-                  <option value="retail">retail (عادی)</option>
-                  <option value="dentist">dentist (دندانپزشک)</option>
-                  <option value="clinic">clinic (کلینیک)</option>
-                  <option value="lab">lab (لابراتوار)</option>
-                  <option value="student">student (دانشجو)</option>
-                  <option value="agent">agent (نماینده)</option>
-                  <option value="wholesale">wholesale (عمده)</option>
+                  <option value="retail">{t('customerGroup.retail')}</option>
+                  <option value="dentist">{t('customerGroup.dentist')}</option>
+                  <option value="clinic">{t('customerGroup.clinic')}</option>
+                  <option value="lab">{t('customerGroup.lab')}</option>
+                  <option value="student">{t('customerGroup.student')}</option>
+                  <option value="agent">{t('customerGroup.agent')}</option>
+                  <option value="wholesale">{t('customerGroup.wholesale')}</option>
                 </select>
               </label>
               <div className="flex flex-wrap gap-2">
@@ -154,59 +204,64 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
                     await updateUserAdmin(selectedUser.uid, { isBlocked: nextBlocked });
                     setSelectedUser({ ...selectedUser, isBlocked: nextBlocked });
                   }}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 font-bold"
+                  className="min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 font-bold"
                 >
                   <Ban className="w-3.5 h-3.5" />
-                  <span>{selectedUser.isBlocked ? 'رفع مسدودیت' : 'مسدود کردن کاربر'}</span>
+                  <span>{selectedUser.isBlocked ? t('adminCustomers.unblockUser') : t('adminCustomers.blockUser')}</span>
                 </button>
                 <button
                   type="button"
                   onClick={async () => {
                     await updateUserAdmin(selectedUser.uid, {
-                      displayName: 'کاربر ناشناس (GDPR)',
+                      displayName: t('adminCustomers.gdprAnonymizedName'),
                       mobile: '00000000000',
                       email: `anonymized-${selectedUser.uid.slice(0, 6)}@deleted.local`,
                       isBlocked: true,
                     });
                     setSelectedUser(null);
                   }}
-                  className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 font-bold"
+                  className="min-h-[40px] px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 font-bold"
                 >
-                  ناشناس‌سازی GDPR
+                  {t('adminCustomers.gdprAnonymizeBtn')}
                 </button>
               </div>
-            </div>
-          </div>
-        )}
+            </>
+          )}
+        </AccessibleModal>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-extrabold">پشتیبانی، مشاوره تجهیزات، نظرات و پرسش‌ها</h1>
+      <h1 className="text-lg sm:text-xl font-extrabold">{t('adminSupport.title')}</h1>
 
       {/* Tickets */}
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-4">
-        <h2 className="text-base font-extrabold">تیکت‌های مشتریان</h2>
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+        <h2 className="text-base font-extrabold">{t('adminSupport.ticketsTitle')}</h2>
         <div className="space-y-3">
           {tickets.map((tk) => (
             <div key={tk.id} className="p-4 rounded-xl border border-line dark:border-slate-800 space-y-2 text-xs">
-              <div className="flex justify-between font-bold">
-                <span>{tk.subject} ({tk.department})</span>
-                <span className="tabular-nums text-brand">{tk.ticketNo} · {tk.status}</span>
+              <div className="flex flex-wrap justify-between gap-2 font-bold">
+                <span>
+                  {tk.subject} ({tk.department})
+                </span>
+                <span className="tabular-nums text-brand">
+                  {tk.ticketNo} · {tk.status}
+                </span>
               </div>
               {tk.messages.map((m, idx) => (
                 <p key={idx} className="p-2 rounded bg-surface/60 dark:bg-slate-800">
-                  <strong>{m.authorName}:</strong> {m.body} <span className="text-[10px] text-ink/45">({formatJalaliDateTime(m.createdAt)})</span>
+                  <strong>{m.authorName}:</strong> {m.body}{' '}
+                  <span className="text-[10px] text-ink/45">({formatDateTime(m.createdAt)})</span>
                 </p>
               ))}
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   value={replyTexts[tk.id] ?? ''}
                   onChange={(e) => setReplyTexts({ ...replyTexts, [tk.id]: e.target.value })}
-                  placeholder="پاسخ کارشناس پشتیبانی..."
-                  className="flex-1 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                  placeholder={t('adminSupport.ticketReplyPlaceholder')}
+                  className="flex-1 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                 />
                 <button
                   type="button"
@@ -216,9 +271,9 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
                     await replyTicket(tk.id, txt, true);
                     setReplyTexts({ ...replyTexts, [tk.id]: '' });
                   }}
-                  className="px-4 py-1.5 rounded-lg bg-brand text-white font-bold"
+                  className="min-h-[40px] px-4 py-1.5 rounded-lg bg-brand text-white font-bold shrink-0"
                 >
-                  ارسال پاسخ
+                  {t('adminSupport.sendReply')}
                 </button>
               </div>
             </div>
@@ -227,25 +282,32 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
       </div>
 
       {/* Consultations */}
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-        <h2 className="text-base font-extrabold">درخواست‌های مشاوره تجهیزات کلینیک</h2>
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+        <h2 className="text-base font-extrabold">{t('adminSupport.consultationsTitle')}</h2>
         <div className="space-y-2 text-xs">
           {consultationRequests.map((c) => (
-            <div key={c.id} className="p-3 rounded-xl border border-line dark:border-slate-800 flex flex-wrap justify-between items-center gap-3">
-              <div>
-                <p className="font-bold">{c.name} ({c.clinicName ?? 'کلینیک'}) · {c.mobile}</p>
-                <p className="text-ink/60">{c.productName ?? 'تجهیزات مطب'} — {c.message}</p>
+            <div
+              key={c.id}
+              className="p-3 rounded-xl border border-line dark:border-slate-800 flex flex-wrap justify-between items-center gap-3"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="font-bold">
+                  {c.name} ({c.clinicName ?? t('adminSupport.defaultClinic')}) · {c.mobile}
+                </p>
+                <p className="text-ink/60">
+                  {c.productName ?? t('adminSupport.defaultEquipment')} — {c.message}
+                </p>
               </div>
               <select
                 value={c.status}
                 onChange={(e) => updateConsultationStatus(c.id, e.target.value as typeof c.status)}
-                className="px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold"
+                className="min-h-[38px] px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 font-bold w-full sm:w-auto"
               >
-                <option value="new">جدید</option>
-                <option value="contacted">تماس گرفته شد</option>
-                <option value="quoted">پیش‌فاکتور ارسال شد</option>
-                <option value="won">تبدیل به فروش</option>
-                <option value="lost">بایگانی</option>
+                <option value="new">{t('adminSupport.consultStatus.new')}</option>
+                <option value="contacted">{t('adminSupport.consultStatus.contacted')}</option>
+                <option value="quoted">{t('adminSupport.consultStatus.quoted')}</option>
+                <option value="won">{t('adminSupport.consultStatus.won')}</option>
+                <option value="lost">{t('adminSupport.consultStatus.lost')}</option>
               </select>
             </div>
           ))}
@@ -254,22 +316,32 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
 
       {/* Reviews & Q&A */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3 text-xs">
-          <h2 className="text-base font-extrabold">مدیریت دیدگاه‌های محصولات</h2>
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 text-xs">
+          <h2 className="text-base font-extrabold">{t('adminSupport.reviewsTitle')}</h2>
           {reviews.map((r) => (
             <div key={r.id} className="p-3 rounded-xl border border-line dark:border-slate-800 space-y-2">
-              <div className="flex justify-between font-bold">
-                <span>{r.authorName} · امتیاز {toPersianDigits(r.rating)}</span>
+              <div className="flex flex-wrap justify-between gap-2 font-bold">
+                <span>
+                  {r.authorName} · {t('adminSupport.ratingValue', { rating: formatDigits(r.rating) })}
+                </span>
                 <span className="text-brand">{r.status}</span>
               </div>
               <p className="text-ink/75 dark:text-slate-300">{r.body}</p>
               {r.status !== 'approved' && (
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => moderateReview(r.id, 'approved')} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600 text-white font-bold">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> تایید انتشار
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => moderateReview(r.id, 'approved')}
+                    className="min-h-[36px] inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" /> {t('adminSupport.approvePublish')}
                   </button>
-                  <button type="button" onClick={() => moderateReview(r.id, 'rejected')} className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-rose-300 text-rose-700 font-bold">
-                    <XCircle className="w-3.5 h-3.5" /> رد
+                  <button
+                    type="button"
+                    onClick={() => moderateReview(r.id, 'rejected')}
+                    className="min-h-[36px] inline-flex items-center gap-1 px-3 py-1 rounded-lg border border-rose-300 text-rose-700 font-bold"
+                  >
+                    <XCircle className="w-3.5 h-3.5" /> {t('adminCustomers.reject')}
                   </button>
                 </div>
               )}
@@ -277,23 +349,27 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
           ))}
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3 text-xs">
-          <h2 className="text-base font-extrabold">پرسش و پاسخ تخصصی محصولات</h2>
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 text-xs">
+          <h2 className="text-base font-extrabold">{t('adminSupport.qaTitle')}</h2>
           {questions.map((q) => {
             const p = products.find((x) => x.id === q.productId);
             return (
               <div key={q.id} className="p-3 rounded-xl border border-line dark:border-slate-800 space-y-2">
                 <p className="font-bold text-brand">{p?.titleFa}</p>
-                <p>{q.authorName}: {q.body}</p>
+                <p>
+                  {q.authorName}: {q.body}
+                </p>
                 {q.answerBody ? (
-                  <p className="p-2 rounded bg-surface/60 dark:bg-slate-800">پاسخ: {q.answerBody}</p>
+                  <p className="p-2 rounded bg-surface/60 dark:bg-slate-800">
+                    {t('adminSupport.answerPrefix', { body: q.answerBody })}
+                  </p>
                 ) : (
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <input
                       value={answerTexts[q.id] ?? ''}
                       onChange={(e) => setAnswerTexts({ ...answerTexts, [q.id]: e.target.value })}
-                      placeholder="پاسخ کارشناس..."
-                      className="flex-1 px-3 py-1.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                      placeholder={t('adminSupport.qaPlaceholder')}
+                      className="flex-1 px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
                     />
                     <button
                       type="button"
@@ -303,9 +379,9 @@ export function AdminCustomersSupportPage({ mode }: { mode: 'customers' | 'suppo
                         await answerQuestion(q.id, ans);
                         setAnswerTexts({ ...answerTexts, [q.id]: '' });
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-brand text-white font-bold"
+                      className="min-h-[40px] px-3.5 py-1.5 rounded-lg bg-brand text-white font-bold shrink-0"
                     >
-                      ثبت و انتشار
+                      {t('adminSupport.submitAndPublish')}
                     </button>
                   </div>
                 )}

@@ -55,6 +55,13 @@ export const serverEnvSchema = z.object({
   COUNTER_FLUSH_INTERVAL_MS: optionalBoundedInt(100, 300_000, 2_000),
   CATALOG_CACHE_MAX_ENTRIES: optionalBoundedInt(10, 5_000, 250),
   CATALOG_CACHE_TTL_MS: optionalBoundedInt(0, 3_600_000, 60_000),
+  MARKETING_QUIET_HOURS_START: optionalBoundedInt(0, 23, 22),
+  MARKETING_QUIET_HOURS_END: optionalBoundedInt(0, 23, 8),
+  MARKETING_TIMEZONE_OFFSET_MINUTES: optionalBoundedInt(-720, 840, 210),
+  ABANDONED_CART_MINUTES: optionalBoundedInt(1, 10_080, 30),
+  MARKETING_REMINDER_THROTTLE_HOURS: optionalBoundedInt(1, 720, 24),
+  MARKETING_PER_RECIPIENT_DAILY_MAX: optionalBoundedInt(1, 100, 3),
+  SMS_WEBHOOK_SECRET: optionalNonEmptyString,
 });
 
 export type ValidatedServerEnv = z.infer<typeof serverEnvSchema>;

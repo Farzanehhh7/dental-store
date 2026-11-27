@@ -837,3 +837,128 @@ export interface MobileSessionUser {
   token: string;
   expiresAt: string;
 }
+
+export type MarketingChannel = 'sms' | 'email';
+
+export type OutboxStatus =
+  | 'queued'
+  | 'scheduled_quiet_hours'
+  | 'sent'
+  | 'delivered'
+  | 'failed'
+  | 'suppressed'
+  | 'rate_limited';
+
+export interface OutboxStatusHistoryEntry {
+  status: OutboxStatus;
+  at: string;
+  note?: string;
+}
+
+export interface OutboxMessage {
+  id: string;
+  campaignRunId?: string;
+  abandonedCartId?: string;
+  channel: MarketingChannel;
+  provider: 'sandbox' | 'kavenegar' | 'email_sandbox';
+  recipient: string;
+  recipientName?: string;
+  userId?: string;
+  subject?: string;
+  body: string;
+  unsubscribeUrl?: string;
+  status: OutboxStatus;
+  providerMessageId?: string;
+  errorMessage?: string;
+  scheduledFor?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  statusHistory: OutboxStatusHistoryEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CampaignSegment =
+  | 'newsletter_subscribers'
+  | 'approved_b2b'
+  | 'all_customers'
+  | 'abandoned_cart_users'
+  | 'custom_contacts';
+
+export interface CampaignRun {
+  id: string;
+  title: string;
+  channel: MarketingChannel;
+  segment: CampaignSegment;
+  providerMode: 'sandbox' | 'live';
+  messageTemplate: string;
+  respectQuietHours: boolean;
+  totalMatched: number;
+  sentCount: number;
+  deliveredCount: number;
+  scheduledQuietHoursCount: number;
+  skippedOptOutCount: number;
+  skippedSuppressedCount: number;
+  skippedRateLimitCount: number;
+  failedCount: number;
+  actorUid?: string;
+  actorEmail?: string;
+  createdAt: string;
+}
+
+export interface MarketingConsentRecord {
+  id: string;
+  ownerKey: string;
+  userId?: string;
+  mobile?: string;
+  email?: string;
+  displayName?: string;
+  marketingOptIn: boolean;
+  smsOptIn: boolean;
+  emailOptIn: boolean;
+  abandonedCartConsent: boolean;
+  source: 'account' | 'newsletter' | 'checkout' | 'unsubscribe_link' | 'inbound_sms' | 'admin';
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface SuppressionEntry {
+  id: string;
+  contact: string;
+  type: 'mobile' | 'email';
+  reason: 'unsubscribe_link' | 'sms_keyword' | 'admin_manual' | 'bounce';
+  note?: string;
+  createdAt: string;
+}
+
+export interface AbandonedCartItem {
+  productId: string;
+  variantId: string;
+  sku: string;
+  titleFa: string;
+  variantLabelFa: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface AbandonedCartRecord {
+  id: string;
+  ownerKey: string;
+  userId?: string;
+  mobile?: string;
+  email?: string;
+  customerName?: string;
+  items: AbandonedCartItem[];
+  subtotal: number;
+  status: 'active' | 'abandoned' | 'reminded' | 'recovered' | 'opted_out';
+  consentGranted: boolean;
+  recoveredOrderId?: string;
+  reminderCount: number;
+  lastReminderAt?: string;
+  lastActivityAt: string;
+  abandonedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+

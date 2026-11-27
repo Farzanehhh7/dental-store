@@ -1,9 +1,12 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import StoreLayout from './components/store/StoreLayout';
-import AdminLayout from './components/admin/AdminLayout';
+import { PageSkeleton } from './components/ui/States';
+import { useI18n } from './context/i18n';
 import { useStore } from './context/StoreContext';
-import Home from './pages/Home';
+
+const Home = lazy(() => import('./pages/Home'));
+const AdminLayout = lazy(() => import('./components/admin/AdminLayout'));
 
 const CategoryPage = lazy(() => import('./pages/CategoryPage'));
 const ProductPage = lazy(() => import('./pages/ProductPage'));
@@ -25,6 +28,7 @@ const BlogListPage = lazy(() => import('./pages/ContentPages').then((m) => ({ de
 const BlogPostPage = lazy(() => import('./pages/ContentPages').then((m) => ({ default: m.BlogPostPage })));
 const StaticInfoPage = lazy(() => import('./pages/ContentPages').then((m) => ({ default: m.StaticInfoPage })));
 const NotFoundPage = lazy(() => import('./pages/ContentPages').then((m) => ({ default: m.NotFoundPage })));
+const UnsubscribePage = lazy(() => import('./pages/UnsubscribePage'));
 
 const AdminDashboardHome = lazy(() => import('./pages/admin/AdminDashboardHome'));
 const AdminReportsPage = lazy(() => import('./pages/admin/AdminReportsPage'));
@@ -40,14 +44,6 @@ const AdminSeoPage = lazy(() => import('./pages/admin/AdminSeoPage'));
 const AdminImportExportPage = lazy(() => import('./pages/admin/AdminImportExportPage'));
 const AdminSystemPage = lazy(() => import('./pages/admin/AdminSystemPage'));
 
-function PageFallback() {
-  return (
-    <div className="max-w-7xl mx-auto px-4 py-16 text-center text-sm text-ink/60 dark:text-slate-400">
-      در حال بارگذاری صفحه...
-    </div>
-  );
-}
-
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -60,6 +56,7 @@ function RedirectInterceptor({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { redirects, incrementRedirectHit } = useStore();
+  const { t, formatDigits } = useI18n();
   const [gonePath, setGonePath] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,10 +78,12 @@ function RedirectInterceptor({ children }: { children: React.ReactNode }) {
     return (
       <StoreLayout>
         <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
-          <p className="text-4xl font-extrabold text-amber-600 tabular-nums">۴۱۰</p>
-          <h1 className="text-2xl font-extrabold">این صفحه به‌صورت دائم حذف شده است (410 Gone)</h1>
+          <p className="text-4xl font-extrabold text-amber-700 dark:text-amber-400 tabular-nums">
+            {formatDigits('410')}
+          </p>
+          <h1 className="text-2xl font-extrabold">{t('seo.goneTitle')}</h1>
           <Link to="/" className="inline-block px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
-            بازگشت به صفحه اصلی
+            {t('actions.backHome')}
           </Link>
         </div>
       </StoreLayout>
@@ -96,21 +95,28 @@ function RedirectInterceptor({ children }: { children: React.ReactNode }) {
 
 function ToastContainer() {
   const { toasts } = useStore();
-  if (toasts.length === 0) return null;
+  const { t } = useI18n();
   return (
-    <div className="fixed bottom-16 md:bottom-5 left-5 z-50 flex flex-col gap-2 max-w-sm">
-      {toasts.map((t) => (
+    <div
+      role="region"
+      aria-live="polite"
+      aria-atomic="false"
+      aria-label={t('common.notificationsRegion')}
+      className="fixed bottom-16 md:bottom-5 inset-x-4 sm:inset-x-auto sm:left-5 z-50 flex flex-col gap-2 sm:max-w-sm pointer-events-none"
+    >
+      {toasts.map((item) => (
         <div
-          key={t.id}
-          className={`px-4 py-3 rounded-xl shadow-lg text-xs font-bold border ${
-            t.tone === 'success'
-              ? 'bg-emerald-600 text-white border-emerald-500'
-              : t.tone === 'error'
-              ? 'bg-rose-600 text-white border-rose-500'
+          key={item.id}
+          role={item.tone === 'error' ? 'alert' : 'status'}
+          className={`pointer-events-auto px-4 py-3 rounded-xl shadow-lg text-xs font-bold border ${
+            item.tone === 'success'
+              ? 'bg-emerald-700 text-white border-emerald-600'
+              : item.tone === 'error'
+              ? 'bg-rose-700 text-white border-rose-600'
               : 'bg-ink text-white border-slate-700'
           }`}
         >
-          {t.text}
+          {item.text}
         </div>
       ))}
     </div>
@@ -122,9 +128,9 @@ export default function App() {
     <>
       <ScrollToTop />
       <RedirectInterceptor>
-        <Suspense fallback={<PageFallback />}>
+        <Suspense fallback={<PageSkeleton />}>
           <Routes>
-            {/* Admin Routes (lazy loaded) */}
+            {/* Admin Routes (lazy loaded shell + pages) */}
             <Route path="/admin" element={<AdminLayout><AdminDashboardHome /></AdminLayout>} />
             <Route path="/admin/reports" element={<AdminLayout><AdminReportsPage /></AdminLayout>} />
             <Route path="/admin/products" element={<AdminLayout><AdminProductsPage /></AdminLayout>} />
@@ -162,6 +168,7 @@ export default function App() {
             <Route path="/blog/category/:slug" element={<StoreLayout><BlogListPage /></StoreLayout>} />
             <Route path="/blog/:slug" element={<StoreLayout><BlogPostPage /></StoreLayout>} />
             <Route path="/page/:slug" element={<StoreLayout><StaticInfoPage /></StoreLayout>} />
+            <Route path="/unsubscribe" element={<StoreLayout><UnsubscribePage /></StoreLayout>} />
             <Route path="*" element={<StoreLayout><NotFoundPage /></StoreLayout>} />
           </Routes>
         </Suspense>

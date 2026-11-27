@@ -5,11 +5,15 @@ import { FieldValue, Firestore, Transaction, getFirestore } from 'firebase-admin
 import firebaseConfig from '../../firebase-applet-config.json';
 import { SEED_WAREHOUSES } from '../../src/data/expandedCatalog';
 import {
+  AbandonedCartRecord,
+  CampaignRun,
   CustomerGroupCode,
+  MarketingConsentRecord,
   NewsletterSubscriber,
   NotFoundLog,
   Order,
   OrderBatchAllocation,
+  OutboxMessage,
   PaymentLedgerEntry,
   Product,
   ProductVariant,
@@ -21,6 +25,7 @@ import {
   StockLevel,
   StockMovement,
   StockNotification,
+  SuppressionEntry,
   Warehouse,
 } from '../../src/types/domain';
 import type { ImportJobRecord } from '../../src/pages/admin/importExport/types';
@@ -46,6 +51,7 @@ import {
   CatalogRepository,
   CatalogSnapshotPatch,
   EngagementRepository,
+  MarketingRepository,
   OrderRepository,
   PaymentRepository,
   ProformaRepository,
@@ -1867,6 +1873,115 @@ export function createFirestoreRepositories(fallbackStore: ServerStore, customDb
     },
   };
 
+  const marketing: MarketingRepository = {
+    async saveOutboxMessage(msg) {
+      await setDoc(db.collection('outboxMessages').doc(msg.id), msg as unknown as Record<string, unknown>, true);
+    },
+    async getOutboxMessage(id) {
+      const snap = await db.collection('outboxMessages').doc(id).get();
+      return snap.exists ? (snap.data() as OutboxMessage) : null;
+    },
+    async listOutboxMessages(filter) {
+      const snap = await db.collection('outboxMessages').get();
+      let list = snap.docs
+        .map((d) => d.data() as OutboxMessage)
+        .filter((m) => (!filter?.status || m.status === filter.status) && (!filter?.channel || m.channel === filter.channel))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (filter?.limit && filter.limit > 0) {
+        list = list.slice(0, filter.limit);
+      }
+      return list;
+    },
+    async saveCampaignRun(run) {
+      await setDoc(db.collection('campaignRuns').doc(run.id), run as unknown as Record<string, unknown>, true);
+    },
+    async listCampaignRuns(limit = 50) {
+      const snap = await db.collection('campaignRuns').orderBy('createdAt', 'desc').limit(limit).get();
+      return snap.docs.map((d) => d.data() as CampaignRun);
+    },
+    async getConsentByKey(ownerKey) {
+      const snap = await db.collection('marketingConsents').doc(ownerKey).get();
+      return snap.exists ? (snap.data() as MarketingConsentRecord) : null;
+    },
+    async findConsentByContact(contact) {
+      const clean = contact.trim().toLowerCase();
+      const normMob = clean.includes('@') ? '' : normalizeMobile(clean);
+      const snap = await db.collection('marketingConsents').get();
+      return (
+        snap.docs
+          .map((d) => d.data() as MarketingConsentRecord)
+          .find((c) => {
+            if (c.email && c.email.trim().toLowerCase() === clean) return true;
+            if (c.mobile && normMob && normalizeMobile(c.mobile) === normMob) return true;
+            return false;
+          }) ?? null
+      );
+    },
+    async saveConsent(consent) {
+      await setDoc(
+        db.collection('marketingConsents').doc(consent.ownerKey),
+        consent as unknown as Record<string, unknown>,
+        true
+      );
+    },
+    async listConsents() {
+      const snap = await db.collection('marketingConsents').get();
+      return snap.docs
+        .map((d) => d.data() as MarketingConsentRecord)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    },
+    async getSuppressionByContact(contact) {
+      const clean = contact.trim().toLowerCase();
+      const normMob = clean.includes('@') ? '' : normalizeMobile(clean);
+      const snap = await db.collection('suppressionList').get();
+      return (
+        snap.docs
+          .map((d) => d.data() as SuppressionEntry)
+          .find((s) => {
+            const sc = s.contact.trim().toLowerCase();
+            if (sc === clean) return true;
+            if (normMob && !sc.includes('@') && normalizeMobile(sc) === normMob) return true;
+            return false;
+          }) ?? null
+      );
+    },
+    async saveSuppression(entry) {
+      await setDoc(db.collection('suppressionList').doc(entry.id), entry as unknown as Record<string, unknown>, true);
+    },
+    async deleteSuppression(id) {
+      const ref = db.collection('suppressionList').doc(id);
+      const snap = await ref.get();
+      if (!snap.exists) return false;
+      await ref.delete();
+      return true;
+    },
+    async listSuppressions() {
+      const snap = await db.collection('suppressionList').get();
+      return snap.docs
+        .map((d) => d.data() as SuppressionEntry)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    },
+    async getAbandonedCart(id) {
+      const snap = await db.collection('abandonedCarts').doc(id).get();
+      return snap.exists ? (snap.data() as AbandonedCartRecord) : null;
+    },
+    async findAbandonedCartByOwner(ownerKey) {
+      const snap = await db.collection('abandonedCarts').where('ownerKey', '==', ownerKey).get();
+      const items = snap.docs.map((d) => d.data() as AbandonedCartRecord);
+      return items.find((c) => c.status !== 'recovered') ?? items[0] ?? null;
+    },
+    async listAbandonedCarts(status) {
+      const snap = await db.collection('abandonedCarts').get();
+      return snap.docs
+        .map((d) => d.data() as AbandonedCartRecord)
+        .filter((c) => !status || c.status === status)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    },
+    async saveAbandonedCart(cart) {
+      await setDoc(db.collection('abandonedCarts').doc(cart.id), cart as unknown as Record<string, unknown>, true);
+    },
+  };
+
   async function runTransaction<T>(fn: () => Promise<T>): Promise<T> {
     if (txStorage.getStore()) {
       return fn();
@@ -1886,6 +2001,7 @@ export function createFirestoreRepositories(fallbackStore: ServerStore, customDb
     authSessions,
     rfqs,
     engagement,
+    marketing,
     getCatalogVersion: () => catalogVersion,
     onCatalogChange: (listener) => {
       catalogListeners.add(listener);

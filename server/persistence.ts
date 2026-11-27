@@ -21,18 +21,22 @@ import {
   SEED_SETTINGS,
 } from '../src/data/seed';
 import {
+  AbandonedCartRecord,
   AgentBranch,
   BlogPost,
   Brand,
   Bundle,
   Campaign,
+  CampaignRun,
   Category,
   ContractPrice,
   Coupon,
   CustomerGroupCode,
+  MarketingConsentRecord,
   NewsletterSubscriber,
   NotFoundLog,
   Order,
+  OutboxMessage,
   PaymentLedgerEntry,
   PaymentSessionStatus,
   Product,
@@ -46,6 +50,7 @@ import {
   StockLevel,
   StockMovement,
   StockNotification,
+  SuppressionEntry,
   Warehouse,
 } from '../src/types/domain';
 import type { ImportJobRecord } from '../src/pages/admin/importExport/types';
@@ -199,6 +204,11 @@ export interface PersistedServerData {
   guestOrders?: Record<string, Order>;
   rfqs: Record<string, RfqRequest>;
   importJobs: ImportJobRecord[];
+  outboxMessages: Record<string, OutboxMessage>;
+  campaignRuns: Record<string, CampaignRun>;
+  marketingConsents: Record<string, MarketingConsentRecord>;
+  suppressionList: Record<string, SuppressionEntry>;
+  abandonedCarts: Record<string, AbandonedCartRecord>;
 }
 
 function cloneCatalogProducts(products: Product[]): Product[] {
@@ -261,6 +271,11 @@ function createInitialData(): PersistedServerData {
     uploadedFiles: {},
     rfqs: {},
     importJobs: [],
+    outboxMessages: {},
+    campaignRuns: {},
+    marketingConsents: {},
+    suppressionList: {},
+    abandonedCarts: {},
   };
 
   migrateStockToWarehousesData(data, { dryRun: false });
@@ -381,6 +396,11 @@ export function createServerStore(dataDir?: string, options?: CreateServerStoreO
             ...(parsed.guestOrders ? { guestOrders: parsed.guestOrders } : {}),
             rfqs: parsed.rfqs ?? {},
             importJobs: Array.isArray(parsed.importJobs) ? parsed.importJobs : [],
+            outboxMessages: parsed.outboxMessages ?? {},
+            campaignRuns: parsed.campaignRuns ?? {},
+            marketingConsents: parsed.marketingConsents ?? {},
+            suppressionList: parsed.suppressionList ?? {},
+            abandonedCarts: parsed.abandonedCarts ?? {},
           };
 
           migrateStockToWarehousesData(data, { dryRun: false });

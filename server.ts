@@ -23,11 +23,13 @@ import { createCheckoutRouter } from './server/routes/checkout.routes';
 import { createFilesRouter } from './server/routes/files.routes';
 import { createImportExportRouter } from './server/routes/importExport.routes';
 import { createInventoryRouter } from './server/routes/inventory.routes';
+import { createMarketingRouter } from './server/routes/marketing.routes';
 import { createPaymentsRouter } from './server/routes/payments.routes';
 import { createReportsRouter } from './server/routes/reports.routes';
 import { createRfqRouter } from './server/routes/rfq.routes';
 import { createRedirectsMiddleware, createSeoRouter } from './server/routes/seo.routes';
 import { createInventoryService } from './server/services/inventoryService';
+import { createMarketingService } from './server/services/marketingService';
 import { createOrderService } from './server/services/orderService';
 import { createPaymentService } from './server/services/paymentService';
 
@@ -63,7 +65,15 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
   await flushPendingStoresForDir(targetDataDir);
   const store = createServerStore(targetDataDir);
   const repos = createRepositories(store);
-  const orderService = createOrderService(repos);
+  const marketingService = createMarketingService(repos);
+  const orderService = createOrderService(repos, {
+    onOrderCreated: (order) =>
+      marketingService.markRecoveredByOrder({
+        userId: order.userId,
+        mobile: order.customerMobile,
+        orderId: order.id,
+      }),
+  });
   const paymentService = createPaymentService(repos);
   const inventoryService = createInventoryService(repos);
   const app = express();
@@ -253,6 +263,7 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
   app.use(createAuthRouter(store, repos));
   app.use(createCheckoutRouter(store, orderService, repos));
   app.use(createInventoryRouter(store, inventoryService, repos));
+  app.use(createMarketingRouter(store, marketingService, repos));
   app.use(createPaymentsRouter(store, paymentService, repos));
   app.use(createRfqRouter(store, repos));
 
@@ -363,6 +374,7 @@ export async function createServerApp(options: CreateServerAppOptions = {}) {
     orderService,
     paymentService,
     inventoryService,
+    marketingService,
     stopExpiryJob,
   };
 }

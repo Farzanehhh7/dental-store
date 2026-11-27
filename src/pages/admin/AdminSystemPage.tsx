@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Activity, Gauge, ShieldCheck, Trash2 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { formatJalaliDateTime, toPersianDigits } from '../../lib/jalali';
+import { useI18n } from '../../context/i18n';
 import { scoreSearchMatch } from '../../lib/persian-search';
 import { resolveVariantPrice } from '../../lib/pricing';
 import { AdminRoleCode, Product } from '../../types/domain';
-import { ADMIN_ROLE_LABELS } from '../../components/admin/rbac';
+import { ADMIN_ROLE_LABELS, getAdminRoleLabel } from '../../components/admin/rbac';
 
 export function AdminSystemPage() {
   const {
@@ -18,6 +18,7 @@ export function AdminSystemPage() {
     assignAdminRole,
     removeAdminRole,
   } = useStore();
+  const { t, formatDateTime, formatDigits } = useI18n();
 
   const [form, setForm] = useState(settings);
   const [adminDraft, setAdminDraft] = useState({ uid: '', email: '', role: 'sales_mgr' as AdminRoleCode, displayName: '' });
@@ -39,7 +40,7 @@ export function AdminSystemPage() {
       const p = products[i % products.length] ?? baseProd;
       synthetic.push({
         sku: `BM-${100000 + i}`,
-        titleFa: `${p.titleFa} سری ${i}`,
+        titleFa: `${p.titleFa} #${i}`,
         base: p,
       });
     }
@@ -66,54 +67,102 @@ export function AdminSystemPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-extrabold">تنظیمات کلان، مدیریت مدیران RBAC، بنچمارک ۵۰,۰۰۰ کالا و Audit (§14-19)</h1>
+      <h1 className="text-lg sm:text-xl font-extrabold">{t('adminSystem.title')}</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <form onSubmit={handleSave} className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3 text-xs">
-          <h2 className="text-base font-extrabold">تنظیمات عملیاتی، سئو و مالیاتی</h2>
+        <form
+          onSubmit={handleSave}
+          className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-3 text-xs"
+        >
+          <h2 className="text-base font-extrabold">{t('adminSystem.settingsTitle')}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="space-y-1">
-              <span className="font-bold">نام فروشگاه</span>
-              <input value={form.storeNameFa} onChange={(e) => setForm({ ...form, storeNameFa: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800" />
+              <span className="font-bold">{t('adminSystem.storeNameLabel')}</span>
+              <input
+                value={form.storeNameFa}
+                onChange={(e) => setForm({ ...form, storeNameFa: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
             </label>
             <label className="space-y-1">
-              <span className="font-bold">نرخ مالیات (٪)</span>
-              <input type="number" value={form.taxRatePercent} onChange={(e) => setForm({ ...form, taxRatePercent: Number(e.target.value) })} className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800" />
+              <span className="font-bold">{t('adminSystem.taxRateLabel')}</span>
+              <input
+                type="number"
+                value={form.taxRatePercent}
+                onChange={(e) => setForm({ ...form, taxRatePercent: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
             </label>
             <label className="space-y-1">
-              <span className="font-bold">آستانه ارسال رایگان (تومان)</span>
-              <input type="number" value={form.freeShippingThreshold} onChange={(e) => setForm({ ...form, freeShippingThreshold: Number(e.target.value) })} className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800" />
+              <span className="font-bold">{t('adminSystem.freeShippingLabel')}</span>
+              <input
+                type="number"
+                value={form.freeShippingThreshold}
+                onChange={(e) => setForm({ ...form, freeShippingThreshold: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
             </label>
             <label className="space-y-1">
-              <span className="font-bold">آستانه انقضای نزدیک (روز)</span>
-              <input type="number" value={form.nearExpiryThresholdDays} onChange={(e) => setForm({ ...form, nearExpiryThresholdDays: Number(e.target.value) })} className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800" />
+              <span className="font-bold">{t('adminSystem.nearExpiryDaysLabel')}</span>
+              <input
+                type="number"
+                value={form.nearExpiryThresholdDays}
+                onChange={(e) => setForm({ ...form, nearExpiryThresholdDays: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
             </label>
             <label className="space-y-1">
-              <span className="font-bold">حداقل کالا برای ایندکس Facet</span>
-              <input type="number" value={form.indexableFacetThreshold} onChange={(e) => setForm({ ...form, indexableFacetThreshold: Number(e.target.value) })} className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800" />
+              <span className="font-bold">{t('adminSystem.facetThresholdLabel')}</span>
+              <input
+                type="number"
+                value={form.indexableFacetThreshold}
+                onChange={(e) => setForm({ ...form, indexableFacetThreshold: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
             </label>
             <label className="space-y-1">
-              <span className="font-bold">دوره نگهداری کالای متوقف (روز)</span>
-              <input type="number" value={form.discontinuedGraceDays} onChange={(e) => setForm({ ...form, discontinuedGraceDays: Number(e.target.value) })} className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800" />
+              <span className="font-bold">{t('adminSystem.discontinuedGraceDaysLabel')}</span>
+              <input
+                type="number"
+                value={form.discontinuedGraceDays}
+                onChange={(e) => setForm({ ...form, discontinuedGraceDays: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
             </label>
           </div>
-          <button type="submit" className="px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
-            ذخیره تنظیمات
+          <button type="submit" className="min-h-[40px] px-5 py-2.5 rounded-xl bg-brand text-white font-bold">
+            {t('adminSystem.saveSettings')}
           </button>
         </form>
 
         {/* Real RBAC Staff Assignment */}
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3 text-xs">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-3 text-xs">
           <h2 className="text-base font-extrabold flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-brand" />
-            <span>مدیریت پرسنل و نقش‌های واقعی (Firestore admins)</span>
+            <ShieldCheck className="w-4 h-4 text-brand shrink-0" />
+            <span>{t('adminSystem.rbacTitle')}</span>
           </h2>
-          <div className="grid grid-cols-2 gap-2">
-            <input value={adminDraft.uid} onChange={(e) => setAdminDraft({ ...adminDraft, uid: e.target.value })} placeholder="UID کاربر Firebase" className="px-3 py-2 rounded-lg border border-line bg-paper dark:bg-slate-800" />
-            <input value={adminDraft.email} onChange={(e) => setAdminDraft({ ...adminDraft, email: e.target.value })} placeholder="ایمیل همکار" className="px-3 py-2 rounded-lg border border-line bg-paper dark:bg-slate-800" />
-            <select value={adminDraft.role} onChange={(e) => setAdminDraft({ ...adminDraft, role: e.target.value as AdminRoleCode })} className="px-3 py-2 rounded-lg border border-line bg-paper dark:bg-slate-800">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              value={adminDraft.uid}
+              onChange={(e) => setAdminDraft({ ...adminDraft, uid: e.target.value })}
+              placeholder={t('adminSystem.uidPlaceholder')}
+              className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            />
+            <input
+              value={adminDraft.email}
+              onChange={(e) => setAdminDraft({ ...adminDraft, email: e.target.value })}
+              placeholder={t('adminSystem.emailPlaceholder')}
+              className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            />
+            <select
+              value={adminDraft.role}
+              onChange={(e) => setAdminDraft({ ...adminDraft, role: e.target.value as AdminRoleCode })}
+              className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            >
               {(Object.keys(ADMIN_ROLE_LABELS) as AdminRoleCode[]).map((r) => (
-                <option key={r} value={r}>{ADMIN_ROLE_LABELS[r]}</option>
+                <option key={r} value={r}>
+                  {getAdminRoleLabel(r, t)}
+                </option>
               ))}
             </select>
             <button
@@ -123,19 +172,30 @@ export function AdminSystemPage() {
                 await assignAdminRole(adminDraft.uid, adminDraft.email, adminDraft.role, adminDraft.displayName);
                 setAdminDraft({ uid: '', email: '', role: 'sales_mgr', displayName: '' });
               }}
-              className="px-4 py-2 rounded-xl bg-brand text-white font-bold"
+              className="min-h-[40px] px-4 py-2 rounded-xl bg-brand text-white font-bold"
             >
-              تخصیص نقش مدیریتی
+              {t('adminSystem.assignRole')}
             </button>
           </div>
           <div className="space-y-1.5 max-h-48 overflow-y-auto pt-2">
             {adminsList.map((a) => (
-              <div key={a.uid} className="p-2.5 rounded-lg bg-surface/60 dark:bg-slate-800 flex justify-between items-center">
-                <div>
-                  <p className="font-bold">{a.email}</p>
-                  <p className="text-ink/55">{ADMIN_ROLE_LABELS[a.role]} · UID: {a.uid}</p>
+              <div
+                key={a.uid}
+                className="p-2.5 rounded-lg bg-surface/60 dark:bg-slate-800 flex flex-wrap justify-between items-center gap-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold break-all">{a.email}</p>
+                  <p className="text-ink/55 break-all">
+                    {getAdminRoleLabel(a.role, t)} · UID: {a.uid}
+                  </p>
                 </div>
-                <button type="button" onClick={() => removeAdminRole(a.uid)} className="text-rose-600 font-bold" title="حذف دسترسی">
+                <button
+                  type="button"
+                  onClick={() => removeAdminRole(a.uid)}
+                  className="min-w-[36px] min-h-[36px] inline-flex items-center justify-center text-rose-600 font-bold shrink-0"
+                  title={t('adminSystem.revokeAccess')}
+                  aria-label={t('adminSystem.revokeAccess')}
+                >
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -146,38 +206,54 @@ export function AdminSystemPage() {
 
       {/* 50,000-Product Benchmark & Web Vitals RUM */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-xs">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
-          <div className="flex justify-between items-center">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+          <div className="flex flex-wrap justify-between items-center gap-2">
             <h2 className="text-base font-extrabold flex items-center gap-2">
-              <Gauge className="w-4 h-4 text-brand" />
-              <span>تست پایداری و سرعت کاتالوگ ۵۰,۰۰۰ کالا (§19)</span>
+              <Gauge className="w-4 h-4 text-brand shrink-0" />
+              <span>{t('adminSystem.benchmarkTitle')}</span>
             </h2>
-            <button type="button" onClick={runScaleBenchmark} className="px-3.5 py-1.5 rounded-xl bg-brand text-white font-bold">
-              اجرای بنچمارک ۵۰,۰۰۰ کالا
+            <button
+              type="button"
+              onClick={runScaleBenchmark}
+              className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-brand text-white font-bold shrink-0"
+            >
+              {t('adminSystem.runBenchmark')}
             </button>
           </div>
           {benchResult && (
-            <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 space-y-1 tabular-nums">
-              <p className="font-bold">تعداد رکورد تست‌شده: {toPersianDigits(benchResult.count)} محصول</p>
-              <p>زمان ساخت آرایه کاتالوگ: {toPersianDigits(benchResult.indexMs)} میلی‌ثانیه</p>
-              <p>زمان جستجوی فارسی فازی در کل ۵۰,۰۰۰ کالا: {toPersianDigits(benchResult.queryMs)} میلی‌ثانیه ({toPersianDigits(benchResult.matchedCount)} نتیجه)</p>
+            <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 space-y-1 tabular-nums">
+              <p className="font-bold">{t('adminSystem.benchRecords', { count: formatDigits(benchResult.count) })}</p>
+              <p>{t('adminSystem.benchIndexMs', { ms: formatDigits(benchResult.indexMs) })}</p>
+              <p>
+                {t('adminSystem.benchQueryMs', {
+                  ms: formatDigits(benchResult.queryMs),
+                  hits: formatDigits(benchResult.matchedCount),
+                })}
+              </p>
             </div>
           )}
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
           <h2 className="text-base font-extrabold flex items-center gap-2">
-            <Activity className="w-4 h-4 text-brand" />
-            <span>پایش زنده کارایی مرورگر (Web Vitals RUM)</span>
+            <Activity className="w-4 h-4 text-brand shrink-0" />
+            <span>{t('adminSystem.rumTitle')}</span>
           </h2>
           {rumVitals.length === 0 ? (
-            <p className="text-ink/60">متریک‌های LCP / CLS پس از تعامل با صفحات ویترین به‌صورت زنده در این جدول ثبت می‌شوند.</p>
+            <p className="text-ink/60">{t('adminSystem.rumEmpty')}</p>
           ) : (
             <div className="space-y-1.5 max-h-40 overflow-y-auto">
               {rumVitals.map((v, idx) => (
-                <div key={idx} className="p-2 rounded-lg bg-surface/60 dark:bg-slate-800 flex justify-between tabular-nums">
-                  <span className="font-bold">{v.name} ({v.path})</span>
-                  <span>{toPersianDigits(v.value)} · {v.rating}</span>
+                <div
+                  key={idx}
+                  className="p-2 rounded-lg bg-surface/60 dark:bg-slate-800 flex flex-wrap justify-between gap-2 tabular-nums"
+                >
+                  <span className="font-bold break-all">
+                    {v.name} ({v.path})
+                  </span>
+                  <span className="shrink-0">
+                    {formatDigits(v.value)} · {v.rating}
+                  </span>
                 </div>
               ))}
             </div>
@@ -186,16 +262,18 @@ export function AdminSystemPage() {
       </div>
 
       {/* Immutable Audit Log */}
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 space-y-3 text-xs">
-        <h2 className="text-base font-extrabold">لاگ تغییرناپذیر فعالیت‌ها (Audit Log)</h2>
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 text-xs">
+        <h2 className="text-base font-extrabold">{t('adminSystem.auditTitle')}</h2>
         <div className="divide-y divide-line dark:divide-slate-800 max-h-80 overflow-y-auto">
           {auditLogs.map((log) => (
             <div key={log.id} className="py-2.5 flex flex-wrap justify-between gap-2">
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="font-bold">{log.summaryFa}</p>
-                <p className="text-ink/55">{log.actorEmail} · {log.action}</p>
+                <p className="text-ink/55 break-all">
+                  {log.actorEmail} · {log.action}
+                </p>
               </div>
-              <span className="tabular-nums text-ink/55">{formatJalaliDateTime(log.createdAt)}</span>
+              <span className="tabular-nums text-ink/55 shrink-0">{formatDateTime(log.createdAt)}</span>
             </div>
           ))}
         </div>

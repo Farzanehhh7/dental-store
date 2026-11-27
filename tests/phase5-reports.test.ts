@@ -736,6 +736,65 @@ function createGoldenFixtureDataset(): ReportDataset {
         createdAt: '2026-03-25T10:00:00.000Z',
       },
     ],
+    abandonedCarts: [
+      {
+        id: 'cart_ab_1',
+        ownerKey: 'usr_clinic_1',
+        userId: 'usr_clinic_1',
+        mobile: '09121112233',
+        customerName: 'کلینیک دندانپزشکی مهر',
+        items: [
+          {
+            productId: 'prod_1',
+            variantId: 'var_1',
+            sku: 'SKU-COMP-A2',
+            titleFa: 'کامپوزیت یونیورسال A2',
+            variantLabelFa: 'سرنگ ۴ گرمی',
+            quantity: 2,
+            unitPrice: 1_000_000,
+            lineTotal: 2_000_000,
+          },
+        ],
+        subtotal: 2_000_000,
+        status: 'reminded',
+        consentGranted: true,
+        reminderCount: 1,
+        lastReminderAt: '2026-04-02T10:00:00.000Z',
+        lastActivityAt: '2026-04-01T10:00:00.000Z',
+        abandonedAt: '2026-04-01T11:00:00.000Z',
+        createdAt: '2026-04-01T10:00:00.000Z',
+        updatedAt: '2026-04-02T10:00:00.000Z',
+      },
+      {
+        id: 'cart_ab_2',
+        ownerKey: 'usr_dentist_1',
+        userId: 'usr_dentist_1',
+        mobile: '09123334455',
+        customerName: 'دکتر شریفی',
+        items: [
+          {
+            productId: 'prod_1',
+            variantId: 'var_1',
+            sku: 'SKU-COMP-A2',
+            titleFa: 'کامپوزیت یونیورسال A2',
+            variantLabelFa: 'سرنگ ۴ گرمی',
+            quantity: 3,
+            unitPrice: 1_000_000,
+            lineTotal: 3_000_000,
+          },
+        ],
+        subtotal: 3_000_000,
+        status: 'recovered',
+        consentGranted: true,
+        recoveredOrderId: 'ord_2',
+        reminderCount: 1,
+        lastReminderAt: '2026-03-31T10:00:00.000Z',
+        lastActivityAt: '2026-03-30T10:00:00.000Z',
+        abandonedAt: '2026-03-30T11:00:00.000Z',
+        createdAt: '2026-03-30T10:00:00.000Z',
+        updatedAt: '2026-04-01T09:00:00.000Z',
+      },
+    ],
   };
 }
 
@@ -840,13 +899,16 @@ describe('Phase 5 — Modular 29-Report Engine & Server Endpoint', () => {
     expect(campRow?.attributedRevenue).toBe(3_600_000);
   });
 
-  it('9. abandoned_recovery is honestly marked available=false with technical reason', () => {
+  it('9. abandoned_recovery computes real abandoned, reminded, and recovered cart metrics', () => {
     const res = runReportById('abandoned_recovery', fixture);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.report.available).toBe(false);
-    expect(res.report.unavailableReason).toBeTruthy();
-    expect(res.report.rows).toEqual([]);
+    expect(res.report.available).toBe(true);
+    expect(res.report.rows).toHaveLength(2);
+    expect(res.report.totalsRow?.subtotal).toBe(5_000_000);
+    expect(res.report.totalsRow?.reminderCount).toBe(2);
+    const rateSummary = res.report.summary.find((s) => s.label === 'نرخ بازیابی');
+    expect(rateSummary?.value).toBe(50);
   });
 
   it('10. payment_methods reconciles order totals against verified payment ledger', () => {

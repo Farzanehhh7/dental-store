@@ -1,11 +1,15 @@
 import {
+  AbandonedCartRecord,
+  CampaignRun,
   CustomerGroupCode,
+  MarketingConsentRecord,
   NewsletterSubscriber,
   NotFoundLog,
   Order,
   OrderBatchAllocation,
   OrderSource,
   OrderStatus,
+  OutboxMessage,
   PaymentLedgerEntry,
   ProformaInvoice,
   ReturnRequest,
@@ -14,6 +18,7 @@ import {
   StockLevel,
   StockMovement,
   StockNotification,
+  SuppressionEntry,
   Warehouse,
 } from '../../src/types/domain';
 import type { ImportJobRecord } from '../../src/pages/admin/importExport/types';
@@ -269,6 +274,30 @@ export interface EngagementRepository {
   saveImportJob(job: ImportJobRecord): Promise<void>;
 }
 
+export interface MarketingRepository {
+  saveOutboxMessage(msg: OutboxMessage): Promise<void>;
+  getOutboxMessage(id: string): Promise<OutboxMessage | null>;
+  listOutboxMessages(filter?: {
+    status?: OutboxMessage['status'];
+    channel?: OutboxMessage['channel'];
+    limit?: number;
+  }): Promise<OutboxMessage[]>;
+  saveCampaignRun(run: CampaignRun): Promise<void>;
+  listCampaignRuns(limit?: number): Promise<CampaignRun[]>;
+  getConsentByKey(ownerKey: string): Promise<MarketingConsentRecord | null>;
+  findConsentByContact(contact: string): Promise<MarketingConsentRecord | null>;
+  saveConsent(consent: MarketingConsentRecord): Promise<void>;
+  listConsents(): Promise<MarketingConsentRecord[]>;
+  getSuppressionByContact(contact: string): Promise<SuppressionEntry | null>;
+  saveSuppression(entry: SuppressionEntry): Promise<void>;
+  deleteSuppression(id: string): Promise<boolean>;
+  listSuppressions(): Promise<SuppressionEntry[]>;
+  getAbandonedCart(id: string): Promise<AbandonedCartRecord | null>;
+  findAbandonedCartByOwner(ownerKey: string): Promise<AbandonedCartRecord | null>;
+  listAbandonedCarts(status?: AbandonedCartRecord['status']): Promise<AbandonedCartRecord[]>;
+  saveAbandonedCart(cart: AbandonedCartRecord): Promise<void>;
+}
+
 export interface RepositoryBundle {
   driver: 'file' | 'firestore';
   orders: OrderRepository;
@@ -281,6 +310,7 @@ export interface RepositoryBundle {
   authSessions: AuthSessionRepository;
   rfqs: RfqRepository;
   engagement: EngagementRepository;
+  marketing: MarketingRepository;
   getCatalogVersion(): number;
   onCatalogChange(listener: () => void): () => void;
   notifyCatalogChanged(): void;

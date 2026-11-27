@@ -498,7 +498,19 @@ export function createSeoRouter(store: ServerStore, repos?: RepositoryBundle): S
 
     const existing = await activeRepos.engagement.findNewsletterByContact(clean);
     if (existing) {
+      if (existing.status === 'unsubscribed') {
+        const reactivated = { ...existing, status: 'active' as const };
+        await activeRepos.engagement.saveNewsletterSubscriber(reactivated);
+        const sup = await activeRepos.marketing.getSuppressionByContact(clean);
+        if (sup) await activeRepos.marketing.deleteSuppression(sup.id);
+        return res.json({ ok: true, subscriber: reactivated, reactivated: true });
+      }
       return res.json({ ok: true, subscriber: existing, existing: true });
+    }
+
+    const sup = await activeRepos.marketing.getSuppressionByContact(clean);
+    if (sup) {
+      await activeRepos.marketing.deleteSuppression(sup.id);
     }
 
     const id = `sub_${crypto.randomBytes(6).toString('hex')}`;

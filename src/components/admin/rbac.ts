@@ -45,6 +45,23 @@ export const ADMIN_ROLE_LABELS: Record<AdminRoleCode, string> = {
   accountant: 'حسابدار و مالی',
 };
 
+export const ADMIN_ROLE_LABEL_KEYS: Record<AdminRoleCode, string> = {
+  super_admin: 'adminRole.super_admin',
+  admin: 'adminRole.admin',
+  sales_mgr: 'adminRole.sales_mgr',
+  warehouse: 'adminRole.warehouse',
+  content: 'adminRole.content',
+  support: 'adminRole.support',
+  accountant: 'adminRole.accountant',
+};
+
+export function getAdminRoleLabel(
+  role: AdminRoleCode,
+  tFn: (key: string, fallback?: string) => string
+): string {
+  return tFn(ADMIN_ROLE_LABEL_KEYS[role], ADMIN_ROLE_LABELS[role]);
+}
+
 export function canAccessModule(role: AdminRoleCode, mod: AdminModuleKey): boolean {
   return ROLE_MODULES[role].includes(mod);
 }

@@ -99,7 +99,11 @@ export function assertValidRealMobile(raw: string): string | null {
   return clean;
 }
 
-export function createOrderService(repos: RepositoryBundle) {
+export interface CreateOrderServiceOptions {
+  onOrderCreated?: (order: Order) => Promise<void>;
+}
+
+export function createOrderService(repos: RepositoryBundle, options?: CreateOrderServiceOptions) {
   const expiryMinutes = envPositiveInt('ORDER_PAYMENT_EXPIRY_MINUTES', 30);
 
   async function createOrder(input: CreateOrderInput): Promise<
@@ -330,6 +334,12 @@ export function createOrderService(repos: RepositoryBundle) {
         },
       };
     });
+
+    if (txOutcome.ok && !txOutcome.data.reused && options?.onOrderCreated) {
+      await options.onOrderCreated(txOutcome.data.order).catch((err) => {
+        console.warn('[orderService] onOrderCreated hook failed:', err);
+      });
+    }
 
     return txOutcome;
   }

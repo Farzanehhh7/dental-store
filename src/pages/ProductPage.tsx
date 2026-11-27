@@ -19,9 +19,10 @@ import {
 } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
 import CountdownTimer from '../components/store/CountdownTimer';
+import { AccessibleModal } from '../components/ui/Modal';
+import { useI18n } from '../context/i18n';
 import { useStore } from '../context/StoreContext';
 import { trackEcommerceEvent } from '../lib/analytics';
-import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
 import { buildResponsiveImageProps } from '../lib/media';
 import { resolveVariantPrice } from '../lib/pricing';
 import { applySeoHead, buildBreadcrumbJsonLd, buildFaqJsonLd, buildProductJsonLd } from '../lib/seo';
@@ -58,6 +59,7 @@ export default function ProductPage() {
     userProfile,
     pushToast,
   } = useStore();
+  const { t, locale, formatDigits, formatMoney, formatDate } = useI18n();
 
   const product = products.find((p) => p.slug === slug);
   const brand = brands.find((b) => b.id === product?.brandId);
@@ -104,7 +106,7 @@ export default function ProductPage() {
   useEffect(() => {
     if (!product) return;
     const breadcrumbs = [
-      { name: 'خانه', path: '/' },
+      { name: t('nav.home', 'خانه'), path: '/' },
       ...(category ? [{ name: category.nameFa, path: `/category/${category.slug}` }] : []),
       { name: product.titleFa, path: `/product/${product.slug}` },
     ];
@@ -124,7 +126,7 @@ export default function ProductPage() {
       ogImage: product.imageUrl,
       jsonLd: jsonLdList,
     });
-  }, [product, brand, category, campaigns, settings, attributes]);
+  }, [product, brand, category, campaigns, settings, attributes, t]);
 
   const variant = useMemo(() => {
     if (!product) return undefined;
@@ -142,9 +144,9 @@ export default function ProductPage() {
   if (!product || !variant) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-16 text-center space-y-4">
-        <h1 className="text-2xl font-extrabold">محصول مورد نظر یافت نشد</h1>
+        <h1 className="text-2xl font-extrabold">{t('product.notFoundTitle', 'محصول مورد نظر یافت نشد')}</h1>
         <Link to="/" className="inline-block px-5 py-2.5 rounded-lg bg-brand text-white text-sm font-bold">
-          بازگشت به فروشگاه
+          {t('product.backToStore', 'بازگشت به فروشگاه')}
         </Link>
       </div>
     );
@@ -166,17 +168,23 @@ export default function ProductPage() {
 
   const handleRequestProforma = async () => {
     if (!authUser && !mobileSession) {
-      pushToast('برای صدور پیش‌فاکتور رسمی لطفاً ابتدا وارد حساب کاربری یا نشست موبایلی شوید.', 'error');
+      pushToast(
+        t('product.toasts.proformaAuthRequired', 'برای صدور پیش‌فاکتور رسمی لطفاً ابتدا وارد حساب کاربری یا نشست موبایلی شوید.'),
+        'error'
+      );
       return;
     }
     const contactMobile = (userProfile?.mobile || mobileSession?.mobile || '').trim();
     if (!/^09\d{9}$/.test(contactMobile)) {
-      pushToast('لطفاً ابتدا شماره موبایل معتبر خود را در حساب کاربری ثبت کنید.', 'error');
+      pushToast(
+        t('product.toasts.validMobileRequired', 'لطفاً ابتدا شماره موبایل معتبر خود را در حساب کاربری ثبت کنید.'),
+        'error'
+      );
       return;
     }
     const unitPrice = resolved.unitPrice ?? variant.basePrice ?? 0;
     await requestProforma({
-      contactName: userProfile?.displayName || authUser?.displayName || mobileSession?.displayName || 'مشتری کلینیک',
+      contactName: userProfile?.displayName || authUser?.displayName || mobileSession?.displayName || t('common.clinicCustomer', 'مشتری کلینیک'),
       contactMobile,
       clinicName: userProfile?.clinicName,
       items: [
@@ -250,24 +258,24 @@ export default function ProductPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-12">
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8 py-6 sm:py-8 space-y-10 sm:space-y-12">
       {/* Visible Breadcrumbs */}
-      <nav aria-label="مسیر راهنما" className="flex items-center gap-1.5 text-xs text-ink/60 dark:text-slate-400">
-        <Link to="/" className="hover:text-brand">خانه</Link>
-        <ChevronLeft className="w-3.5 h-3.5" />
+      <nav aria-label={t('common.breadcrumbAria', 'مسیر راهنما')} className="flex flex-wrap items-center gap-1.5 text-xs text-ink/60 dark:text-slate-400">
+        <Link to="/" className="hover:text-brand">{t('nav.home', 'خانه')}</Link>
+        <ChevronLeft className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         {category && (
           <>
             <Link to={`/category/${category.slug}`} className="hover:text-brand">{category.nameFa}</Link>
-            <ChevronLeft className="w-3.5 h-3.5" />
+            <ChevronLeft className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
           </>
         )}
-        <span className="text-ink dark:text-slate-200 font-bold truncate">{product.titleFa}</span>
+        <span className="text-ink dark:text-slate-200 font-bold truncate max-w-full">{product.titleFa}</span>
       </nav>
 
       {/* Main Contiguous Product Showcase + Purchase Module */}
-      <section className="grid lg:grid-cols-12 gap-8 items-start">
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
         {/* Left: Zoomable Gallery + Optional Video Slot */}
-        <div className="lg:col-span-5 space-y-3 lg:sticky lg:top-24">
+        <div className="lg:col-span-5 max-w-xl mx-auto lg:max-w-none w-full space-y-3 lg:sticky lg:top-24">
           <div className="relative aspect-[4/3] bg-white border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
             {showVideo && product.videoUrl ? (
               <video src={product.videoUrl} controls autoPlay className="w-full h-full object-cover" />
@@ -291,8 +299,8 @@ export default function ProductPage() {
                 <button
                   type="button"
                   onClick={() => setZoomOpen(true)}
-                  aria-label="بزرگنمایی تصویر"
-                  className="absolute bottom-3 left-3 p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-line dark:border-slate-700 text-ink dark:text-slate-100 hover:border-brand"
+                  aria-label={t('product.zoomAria', 'بزرگنمایی تصویر')}
+                  className="absolute bottom-3 left-3 min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg bg-white/90 dark:bg-slate-900/90 border border-line dark:border-slate-700 text-ink dark:text-slate-100 hover:border-brand"
                 >
                   <ZoomIn className="w-4 h-4" />
                 </button>
@@ -300,13 +308,13 @@ export default function ProductPage() {
             )}
           </div>
           {(product.galleryUrls.length > 1 || product.videoUrl) && (
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar sm:flex-wrap pb-1">
               {product.galleryUrls.map((url, idx) => (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => { setShowVideo(false); setActiveImage(url); }}
-                  className={`w-20 h-16 rounded-lg overflow-hidden border bg-white ${
+                  className={`w-20 h-16 shrink-0 rounded-lg overflow-hidden border bg-white ${
                     !showVideo && activeImage === url ? 'border-brand ring-2 ring-brand/30' : 'border-line dark:border-slate-800'
                   }`}
                 >
@@ -326,12 +334,12 @@ export default function ProductPage() {
                 <button
                   type="button"
                   onClick={() => setShowVideo(true)}
-                  className={`w-20 h-16 rounded-lg border flex flex-col items-center justify-center gap-1 text-[11px] font-bold ${
+                  className={`w-20 h-16 shrink-0 rounded-lg border flex flex-col items-center justify-center gap-1 text-[11px] font-bold ${
                     showVideo ? 'border-brand bg-brand/10 text-brand' : 'border-line dark:border-slate-800'
                   }`}
                 >
                   <PlayCircle className="w-5 h-5" />
-                  <span>ویدئو</span>
+                  <span>{t('product.videoTab', 'ویدئو')}</span>
                 </button>
               )}
             </div>
@@ -339,7 +347,7 @@ export default function ProductPage() {
         </div>
 
         {/* Right: Title, Variants, Pricing, Actions */}
-        <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6">
+        <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 lg:p-8 space-y-5 sm:space-y-6">
           <div className="space-y-2 border-b border-line dark:border-slate-800 pb-5">
             <div className="flex flex-wrap items-center gap-2 text-xs text-ink/65 dark:text-slate-400">
               {brand && (
@@ -348,27 +356,31 @@ export default function ProductPage() {
                 </Link>
               )}
               <span aria-hidden="true">·</span>
-              <span>ساخت {product.originCountryFa}</span>
+              <span>{t('product.originLabel', { country: product.originCountryFa })}</span>
               <span aria-hidden="true">·</span>
               <span className="tabular-nums">SKU: {variant.sku}</span>
               {product.imedCode && (
                 <>
                   <span aria-hidden="true">·</span>
-                  <span className="tabular-nums font-medium text-ink/80 dark:text-slate-200">کد IMED: {product.imedCode}</span>
+                  <span className="tabular-nums font-medium text-ink/80 dark:text-slate-200">
+                    {t('product.imedCodeLabel', { code: product.imedCode })}
+                  </span>
                 </>
               )}
             </div>
 
-            <h1 className="text-2xl lg:text-3xl font-extrabold text-ink dark:text-slate-100 leading-snug">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-ink dark:text-slate-100 leading-snug">
               {product.titleFa}
             </h1>
             <p className="text-xs text-ink/50 dark:text-slate-400" dir="ltr">{product.titleEn}</p>
 
             {product.ratingCount > 0 && (
               <div className="flex items-center gap-1.5 text-xs pt-1">
-                <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-                <span className="font-bold tabular-nums">{toPersianDigits(product.ratingAvg.toFixed(1))}</span>
-                <span className="text-ink/55">({toPersianDigits(product.ratingCount)} دیدگاه تاییدشده)</span>
+                <Star className="w-4 h-4 fill-amber-400 text-amber-400" aria-hidden="true" />
+                <span className="font-bold tabular-nums">{formatDigits(product.ratingAvg.toFixed(1))}</span>
+                <span className="text-ink/55">
+                  {t('product.reviewsVerifiedCount', { count: formatDigits(product.ratingCount) })}
+                </span>
               </div>
             )}
           </div>
@@ -377,7 +389,7 @@ export default function ProductPage() {
 
           {/* Variant Selector */}
           <div className="space-y-2.5">
-            <h2 className="text-sm font-bold">انتخاب نوع / بسته / شید:</h2>
+            <h2 className="text-sm font-bold">{t('product.selectVariantLabel', 'انتخاب نوع / بسته / شید:')}</h2>
             <div className="flex flex-wrap gap-2">
               {product.variants.filter((v) => v.isActive).map((v) => {
                 const isSelected = v.id === variant.id;
@@ -387,7 +399,7 @@ export default function ProductPage() {
                     key={v.id}
                     type="button"
                     onClick={() => setSelectedVariantId(v.id)}
-                    className={`px-3.5 py-2 rounded-lg border text-xs font-bold inline-flex items-center gap-2 transition-colors ${
+                    className={`min-h-[40px] px-3.5 py-2 rounded-lg border text-xs font-bold inline-flex items-center gap-2 transition-colors ${
                       isSelected
                         ? 'border-brand bg-brand text-white'
                         : 'border-line dark:border-slate-700 bg-paper dark:bg-slate-800 hover:border-brand'
@@ -395,7 +407,7 @@ export default function ProductPage() {
                   >
                     {v.colorHex && (
                       <span
-                        className="w-3.5 h-3.5 rounded-full border border-black/20"
+                        className="w-3.5 h-3.5 rounded-full border border-black/20 shrink-0"
                         style={{ backgroundColor: v.colorHex }}
                       />
                     )}
@@ -407,13 +419,15 @@ export default function ProductPage() {
           </div>
 
           {/* Batch / Expiry & Stock Status */}
-          <div className="bg-surface/70 dark:bg-slate-800/60 rounded-xl p-4 grid sm:grid-cols-2 gap-3 text-xs">
+          <div className="bg-surface/70 dark:bg-slate-800/60 rounded-xl p-3.5 sm:p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div className="flex items-center gap-2">
               <CheckCircle2 className={`w-4 h-4 shrink-0 ${resolved.availableStock > 0 ? 'text-emerald-600' : 'text-rose-600'}`} />
               <span>
-                وضعیت انبار:{' '}
+                {t('product.stockStatusPrefix', 'وضعیت انبار:')}{' '}
                 <strong className="tabular-nums">
-                  {resolved.availableStock > 0 ? `${toPersianDigits(resolved.availableStock)} عدد آماده ارسال` : 'ناموجود'}
+                  {resolved.availableStock > 0
+                    ? t('product.readyToShipCount', { count: formatDigits(resolved.availableStock) })
+                    : t('price.outOfStock', 'ناموجود')}
                 </strong>
               </span>
             </div>
@@ -421,9 +435,14 @@ export default function ProductPage() {
               <div className="flex items-center gap-2">
                 <Truck className="w-4 h-4 text-brand shrink-0" />
                 <span>
-                  بچ فعلی (FEFO): <strong className="tabular-nums">{resolved.nearestBatchNo}</strong> · انقضا{' '}
-                  <strong className="tabular-nums">{formatJalaliDate(resolved.nearestExpiryDate)}</strong>
-                  {resolved.nearExpiry && <span className="text-amber-700 dark:text-amber-400 font-bold"> (انقضا نزدیک)</span>}
+                  {t('product.fefoBatchPrefix', 'بچ فعلی (FEFO):')}{' '}
+                  <strong className="tabular-nums">{resolved.nearestBatchNo}</strong> · {t('product.expiryLabel', 'انقضا')}{' '}
+                  <strong className="tabular-nums">{formatDate(resolved.nearestExpiryDate)}</strong>
+                  {resolved.nearExpiry && (
+                    <span className="text-amber-700 dark:text-amber-400 font-bold">
+                      {' '}({t('price.nearExpiry', 'انقضا نزدیک')})
+                    </span>
+                  )}
                 </span>
               </div>
             )}
@@ -432,14 +451,22 @@ export default function ProductPage() {
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-brand shrink-0" />
                   <span>
-                    گارانتی: <strong>{toPersianDigits(product.warrantyMonths ?? 12)} ماه ({product.warrantyProvider})</strong>
+                    {t('product.warrantyPrefix', 'گارانتی:')}{' '}
+                    <strong>
+                      {t('product.warrantyValue', {
+                        months: formatDigits(product.warrantyMonths ?? 12),
+                        provider: product.warrantyProvider ?? '',
+                      })}
+                    </strong>
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Award className="w-4 h-4 text-brand shrink-0" />
                   <span>
-                    {product.installationAvailable ? 'نصب و راه‌اندازی رایگان در محل' : 'تحویل استاندارد'}
-                    {product.trainingAvailable ? ' + آموزش پرسنل' : ''}
+                    {product.installationAvailable
+                      ? t('product.freeInstallation', 'نصب و راه‌اندازی رایگان در محل')
+                      : t('product.standardDelivery', 'تحویل استاندارد')}
+                    {product.trainingAvailable ? ` + ${t('product.staffTraining', 'آموزش پرسنل')}` : ''}
                   </span>
                 </div>
               </>
@@ -448,13 +475,13 @@ export default function ProductPage() {
 
           {/* Tiered & Group Pricing Preview */}
           {(variant.tierPrices?.length || variant.groupPrices) && resolved.state === 'fixed' && (
-            <div className="grid sm:grid-cols-2 gap-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               {variant.tierPrices && variant.tierPrices.length > 0 && (
                 <div className="border border-line dark:border-slate-800 rounded-xl p-3 space-y-1.5">
-                  <p className="font-bold text-ink/80 dark:text-slate-200">تخفیف پلکانی خرید عمده</p>
+                  <p className="font-bold text-ink/80 dark:text-slate-200">{t('product.tierDiscountTitle', 'تخفیف پلکانی خرید عمده')}</p>
                   {variant.tierPrices.map((tier) => (
                     <div key={tier.minQty} className="flex justify-between tabular-nums">
-                      <span>از {toPersianDigits(tier.minQty)} عدد به بالا</span>
+                      <span>{t('product.tierMinQty', { qty: formatDigits(tier.minQty) })}</span>
                       <span className="font-bold text-brand dark:text-teal-300">{formatMoney(tier.unitPrice, currency)}</span>
                     </div>
                   ))}
@@ -462,16 +489,16 @@ export default function ProductPage() {
               )}
               {variant.groupPrices && (
                 <div className="border border-line dark:border-slate-800 rounded-xl p-3 space-y-1.5">
-                  <p className="font-bold text-ink/80 dark:text-slate-200">تعرفه گروه‌های حرفه‌ای B2B</p>
+                  <p className="font-bold text-ink/80 dark:text-slate-200">{t('product.b2bTariffTitle', 'تعرفه گروه‌های حرفه‌ای B2B')}</p>
                   {variant.groupPrices.dentist && (
                     <div className="flex justify-between tabular-nums">
-                      <span>پزشکان تاییدشده</span>
+                      <span>{t('product.approvedDentists', 'پزشکان تاییدشده')}</span>
                       <span className="font-bold">{formatMoney(variant.groupPrices.dentist, currency)}</span>
                     </div>
                   )}
                   {variant.groupPrices.clinic && (
                     <div className="flex justify-between tabular-nums">
-                      <span>کلینیک و درمانگاه</span>
+                      <span>{t('customerGroup.clinic', 'کلینیک و درمانگاه')}</span>
                       <span className="font-bold">{formatMoney(variant.groupPrices.clinic, currency)}</span>
                     </div>
                   )}
@@ -485,26 +512,26 @@ export default function ProductPage() {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 {resolved.discountVerified && resolved.originalPrice && resolved.discountPercent > 0 && (
-                  <div className="flex items-center gap-2 text-xs mb-1">
+                  <div className="flex flex-wrap items-center gap-2 text-xs mb-1">
                     <span className="line-through text-ink/45 tabular-nums">{formatMoney(resolved.originalPrice, currency)}</span>
                     <span className="font-bold text-rose-700 dark:text-rose-400 tabular-nums">
-                      {toPersianDigits(resolved.discountPercent)}٪ تخفیف تاییدشده
+                      {t('product.verifiedDiscountPercent', { percent: formatDigits(resolved.discountPercent) })}
                     </span>
                     {resolved.campaignEndsAt && <CountdownTimer endsAt={resolved.campaignEndsAt} />}
                   </div>
                 )}
                 {resolved.priceSource === 'contract' && (
                   <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-0.5">
-                    نرخ قرارداد اختصاصی حساب شما
+                    {t('product.contractRateBadge', 'نرخ قرارداد اختصاصی حساب شما')}
                   </p>
                 )}
                 <p className="text-2xl font-extrabold text-brand dark:text-teal-300 tabular-nums">
                   {resolved.state === 'out_of_stock'
-                    ? 'ناموجود'
+                    ? t('price.outOfStock', 'ناموجود')
                     : resolved.state === 'coming_soon'
-                    ? 'به‌زودی'
+                    ? t('price.comingSoon', 'به‌زودی')
                     : resolved.state === 'call_for_price'
-                    ? 'تماس برای قیمت روز'
+                    ? t('product.callForDailyPrice', 'تماس برای قیمت روز')
                     : formatMoney(resolved.unitPrice, currency)}
                 </p>
               </div>
@@ -513,16 +540,16 @@ export default function ProductPage() {
                 <button
                   type="button"
                   onClick={() => toggleWishlist(product.id)}
-                  className={`p-2.5 rounded-lg border ${wishlistIds.includes(product.id) ? 'border-rose-500 text-rose-600' : 'border-line dark:border-slate-700'}`}
-                  aria-label="علاقه‌مندی"
+                  className={`min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg border ${wishlistIds.includes(product.id) ? 'border-rose-500 text-rose-600' : 'border-line dark:border-slate-700'}`}
+                  aria-label={t('actions.wishlist', 'علاقه‌مندی')}
                 >
                   <Heart className={`w-4 h-4 ${wishlistIds.includes(product.id) ? 'fill-current' : ''}`} />
                 </button>
                 <button
                   type="button"
                   onClick={() => toggleCompare(product.id)}
-                  className={`p-2.5 rounded-lg border ${compareIds.includes(product.id) ? 'border-brand text-brand' : 'border-line dark:border-slate-700'}`}
-                  aria-label="مقایسه"
+                  className={`min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg border ${compareIds.includes(product.id) ? 'border-brand text-brand' : 'border-line dark:border-slate-700'}`}
+                  aria-label={t('actions.compare', 'مقایسه')}
                 >
                   <GitCompareArrows className="w-4 h-4" />
                 </button>
@@ -530,56 +557,70 @@ export default function ProductPage() {
             </div>
 
             {resolved.state === 'fixed' ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex items-center border border-line dark:border-slate-700 rounded-lg">
-                  <button type="button" onClick={() => setQty((q) => q + 1)} className="px-3 py-2.5 text-sm font-bold">+</button>
-                  <span className="px-4 text-sm font-bold tabular-nums">{toPersianDigits(qty)}</span>
-                  <button type="button" onClick={() => setQty((q) => Math.max(1, q - 1))} className="px-3 py-2.5 text-sm font-bold">-</button>
+              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
+                <div className="inline-flex items-center justify-between sm:justify-start border border-line dark:border-slate-700 rounded-lg">
+                  <button
+                    type="button"
+                    aria-label={t('cart.increaseQty', 'افزایش')}
+                    onClick={() => setQty((q) => q + 1)}
+                    className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-sm font-bold"
+                  >
+                    +
+                  </button>
+                  <span className="px-4 text-sm font-bold tabular-nums">{formatDigits(qty)}</span>
+                  <button
+                    type="button"
+                    aria-label={t('cart.decreaseQty', 'کاهش')}
+                    onClick={() => setQty((q) => Math.max(1, q - 1))}
+                    className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-sm font-bold"
+                  >
+                    -
+                  </button>
                 </div>
                 <button
                   type="button"
                   data-testid="add-to-cart-button"
                   onClick={() => addToCart(product.id, variant.id, qty)}
-                  className="flex-1 min-w-[200px] py-3 px-6 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors inline-flex items-center justify-center gap-2"
+                  className="w-full sm:w-auto sm:flex-1 min-h-[44px] py-3 px-6 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap"
                 >
-                  <ShoppingBag className="w-4 h-4" />
-                  <span>افزودن به سبد خرید</span>
+                  <ShoppingBag className="w-4 h-4 shrink-0" />
+                  <span>{t('actions.addToCart', 'افزودن به سبد خرید')}</span>
                 </button>
                 {(product.kind === 'capital_equipment' || qty >= 5) && (
                   <button
                     type="button"
                     onClick={handleRequestProforma}
-                    className="py-3 px-4 rounded-lg border border-brand text-brand dark:text-teal-300 text-sm font-bold hover:bg-brand hover:text-white transition-colors inline-flex items-center gap-1.5"
+                    className="w-full sm:w-auto min-h-[44px] py-3 px-4 rounded-lg border border-brand text-brand dark:text-teal-300 text-sm font-bold hover:bg-brand hover:text-white transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
                   >
-                    <FileText className="w-4 h-4" />
-                    <span>صدور پیش‌فاکتور</span>
+                    <FileText className="w-4 h-4 shrink-0" />
+                    <span>{t('product.issueProformaBtn', 'صدور پیش‌فاکتور')}</span>
                   </button>
                 )}
                 <button
                   type="button"
                   data-testid="open-rfq-modal-button"
                   onClick={openRfqModal}
-                  className="py-3 px-4 rounded-lg border border-line dark:border-slate-700 text-xs font-bold hover:border-brand transition-colors"
+                  className="w-full sm:w-auto min-h-[44px] py-3 px-4 rounded-lg border border-line dark:border-slate-700 text-xs font-bold hover:border-brand transition-colors inline-flex items-center justify-center whitespace-nowrap"
                 >
-                  استعلام قیمت همکاری / چانه‌زنی (RFQ)
+                  {t('product.rfqBtnShort', 'استعلام قیمت همکاری / چانه‌زنی (RFQ)')}
                 </button>
               </div>
             ) : resolved.state === 'call_for_price' ? (
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-col sm:flex-row flex-wrap gap-3">
                 <button
                   type="button"
                   onClick={() => setConsultOpen(true)}
-                  className="flex-1 py-3 px-6 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark"
+                  className="w-full sm:w-auto sm:flex-1 min-h-[44px] py-3 px-6 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark"
                 >
-                  درخواست مشاوره و استعلام قیمت
+                  {t('product.requestConsultBtn', 'درخواست مشاوره و استعلام قیمت')}
                 </button>
                 <button
                   type="button"
                   data-testid="open-rfq-modal-button"
                   onClick={openRfqModal}
-                  className="py-3 px-5 rounded-lg border border-brand text-brand dark:text-teal-300 text-sm font-bold"
+                  className="w-full sm:w-auto min-h-[44px] py-3 px-5 rounded-lg border border-brand text-brand dark:text-teal-300 text-sm font-bold"
                 >
-                  ثبت استعلام قیمت رسمی (RFQ)
+                  {t('product.submitOfficialRfqBtn', 'ثبت استعلام قیمت رسمی (RFQ)')}
                 </button>
               </div>
             ) : (
@@ -595,18 +636,18 @@ export default function ProductPage() {
                   });
                   setNotifyMobile('');
                 }}
-                className="flex flex-wrap gap-2"
+                className="flex flex-col sm:flex-row gap-2"
               >
                 <input
                   type="tel"
                   required
                   value={notifyMobile}
                   onChange={(e) => setNotifyMobile(e.target.value)}
-                  placeholder="شماره موبایل جهت اطلاع از موجودی..."
-                  className="flex-1 px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+                  placeholder={t('product.notifyMobilePlaceholder', 'شماره موبایل جهت اطلاع از موجودی...')}
+                  className="w-full sm:flex-1 min-h-[44px] px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
                 />
-                <button type="submit" className="px-5 py-2.5 rounded-lg bg-brand text-white text-xs font-bold">
-                  موجود شد خبرم کن
+                <button type="submit" className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-lg bg-brand text-white text-xs font-bold whitespace-nowrap">
+                  {t('product.notifySubmitBtn', 'موجود شد خبرم کن')}
                 </button>
               </form>
             )}
@@ -615,29 +656,29 @@ export default function ProductPage() {
       </section>
 
       {/* Spec Table + Description + Real Certificate Downloads */}
-      <section className="grid lg:grid-cols-12 gap-8">
-        <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-6">
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
+        <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-6">
           <div>
-            <h2 className="text-lg font-extrabold mb-3">توضیحات تخصصی محصول</h2>
+            <h2 className="text-lg font-extrabold mb-3">{t('product.descriptionHeading', 'توضیحات تخصصی محصول')}</h2>
             <p className="text-sm leading-relaxed text-ink/80 dark:text-slate-300 whitespace-pre-line">{product.descriptionFa}</p>
           </div>
 
           {specAttributes.length > 0 && (
             <div>
-              <h2 className="text-lg font-extrabold mb-3">جدول مشخصات فنی</h2>
+              <h2 className="text-lg font-extrabold mb-3">{t('product.specTableHeading', 'جدول مشخصات فنی')}</h2>
               <div className="border border-line dark:border-slate-800 rounded-xl overflow-hidden divide-y divide-line dark:divide-slate-800 text-sm">
                 {specAttributes.map((attr) => {
                   const raw = product.attributes[attr.code];
                   let displayVal = String(raw);
-                  if (typeof raw === 'boolean') displayVal = raw ? 'بله' : 'خیر';
-                  else if (Array.isArray(raw)) displayVal = raw.join('، ');
+                  if (typeof raw === 'boolean') displayVal = raw ? t('common.yes', 'بله') : t('common.no', 'خیر');
+                  else if (Array.isArray(raw)) displayVal = raw.join(t('common.listSeparator', '، '));
                   else if (attr.options) {
                     displayVal = attr.options.find((o) => o.key === String(raw))?.labelFa ?? String(raw);
                   }
                   return (
-                    <div key={attr.id} className="grid grid-cols-3 px-4 py-3 bg-white dark:bg-slate-900">
+                    <div key={attr.id} className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-3 px-4 py-3 bg-white dark:bg-slate-900">
                       <span className="text-ink/65 dark:text-slate-400 font-medium">{attr.labelFa}</span>
-                      <span className="col-span-2 font-bold tabular-nums">
+                      <span className="sm:col-span-2 font-bold tabular-nums">
                         {displayVal} {attr.unit ? attr.unit : ''}
                       </span>
                     </div>
@@ -650,17 +691,17 @@ export default function ProductPage() {
 
         <div className="lg:col-span-5 space-y-6">
           {product.files && product.files.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
-              <h2 className="text-lg font-extrabold">کاتالوگ و مستندات فنی (CE / ISO / IMED)</h2>
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-3">
+              <h2 className="text-lg font-extrabold">{t('product.docsHeading', 'کاتالوگ و مستندات فنی (CE / ISO / IMED)')}</h2>
               <div className="space-y-2">
                 {product.files.map((f) => (
                   <a
                     key={f.id}
                     href={`/api/files/certificate?productId=${encodeURIComponent(product.id)}&fileId=${encodeURIComponent(f.id)}&sku=${encodeURIComponent(product.sku)}`}
                     download
-                    className="w-full p-3 rounded-xl border border-line dark:border-slate-800 flex items-center justify-between text-right hover:border-brand transition-colors"
+                    className="w-full p-3 rounded-xl border border-line dark:border-slate-800 flex items-center justify-between gap-2 text-start hover:border-brand transition-colors"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-xs font-bold">{f.titleFa}</p>
                         <span
@@ -670,13 +711,13 @@ export default function ProductPage() {
                               : 'bg-surface dark:bg-slate-800 text-ink/60 dark:text-slate-400'
                           }`}
                         >
-                          {f.isVerified ? 'مدرک تاییدشده' : 'برگه مشخصات فنی'}
+                          {f.isVerified ? t('product.verifiedDocBadge', 'مدرک تاییدشده') : t('product.datasheetBadge', 'برگه مشخصات فنی')}
                         </span>
                       </div>
                       <p className="text-[11px] text-ink/55 tabular-nums mt-0.5">
                         {f.fileSizeLabel}
                         {f.code ? ` · ${f.code}` : ''}
-                        {f.issuer ? ` · مرجع: ${f.issuer}` : ''}
+                        {f.issuer ? ` · ${t('product.issuerLabel', { issuer: f.issuer })}` : ''}
                       </p>
                     </div>
                     <Download className="w-4 h-4 text-brand shrink-0" />
@@ -687,8 +728,8 @@ export default function ProductPage() {
           )}
 
           {product.faqs && product.faqs.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
-              <h2 className="text-lg font-extrabold">سوالات متداول محصول</h2>
+            <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-3">
+              <h2 className="text-lg font-extrabold">{t('product.faqHeading', 'سوالات متداول محصول')}</h2>
               <div className="space-y-3 text-sm">
                 {product.faqs.map((faq, idx) => (
                   <div key={idx} className="border-b last:border-b-0 border-line dark:border-slate-800 pb-3 last:pb-0">
@@ -703,18 +744,22 @@ export default function ProductPage() {
       </section>
 
       {/* Reviews & Q&A */}
-      <section className="grid lg:grid-cols-2 gap-8">
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-5">
-          <h2 className="text-lg font-extrabold">دیدگاه خریداران ({toPersianDigits(productReviews.length)})</h2>
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-5">
+          <h2 className="text-lg font-extrabold">
+            {t('product.reviewsHeading', { count: formatDigits(productReviews.length) })}
+          </h2>
           {productReviews.length === 0 ? (
-            <p className="text-xs text-ink/60">هنوز دیدگاهی ثبت نشده است.</p>
+            <p className="text-xs text-ink/60">{t('product.noReviews', 'هنوز دیدگاهی ثبت نشده است.')}</p>
           ) : (
             <div className="space-y-4">
               {productReviews.map((rev) => (
                 <div key={rev.id} className="border-b border-line dark:border-slate-800 pb-3 space-y-1">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-bold">{rev.authorName}</span>
-                    <span className="tabular-nums text-amber-600 font-bold">{toPersianDigits(rev.rating)} از ۵</span>
+                    <span className="tabular-nums text-amber-600 font-bold">
+                      {t('product.ratingOutOfFive', { score: formatDigits(rev.rating), max: formatDigits(5) })}
+                    </span>
                   </div>
                   {rev.title && <p className="text-sm font-bold">{rev.title}</p>}
                   <p className="text-xs text-ink/75 dark:text-slate-300 leading-relaxed">{rev.body}</p>
@@ -724,22 +769,22 @@ export default function ProductPage() {
           )}
 
           <form onSubmit={handleReviewSubmit} className="pt-3 border-t border-line dark:border-slate-800 space-y-3">
-            <h3 className="text-sm font-bold">ثبت دیدگاه تخصصی</h3>
+            <h3 className="text-sm font-bold">{t('product.submitReviewHeading', 'ثبت دیدگاه تخصصی')}</h3>
             <div className="flex items-center gap-3 text-xs">
-              <span>امتیاز:</span>
+              <span>{t('product.ratingLabel', 'امتیاز:')}</span>
               <select
                 value={reviewForm.rating}
                 onChange={(e) => setReviewForm((f) => ({ ...f, rating: Number(e.target.value) }))}
-                className="px-2 py-1 rounded border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                className="px-2 py-1.5 rounded border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
               >
                 {[5, 4, 3, 2, 1].map((n) => (
-                  <option key={n} value={n}>{toPersianDigits(n)} ستاره</option>
+                  <option key={n} value={n}>{t('product.starsOption', { count: formatDigits(n) })}</option>
                 ))}
               </select>
             </div>
             <input
               type="text"
-              placeholder="عنوان دیدگاه (اختیاری)"
+              placeholder={t('product.reviewTitlePlaceholder', 'عنوان دیدگاه (اختیاری)')}
               value={reviewForm.title}
               onChange={(e) => setReviewForm((f) => ({ ...f, title: e.target.value }))}
               className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
@@ -747,24 +792,24 @@ export default function ProductPage() {
             <textarea
               required
               rows={3}
-              placeholder="تجربه بالینی یا نظر خود درباره این کالا..."
+              placeholder={t('product.reviewBodyPlaceholder', 'تجربه بالینی یا نظر خود درباره این کالا...')}
               value={reviewForm.body}
               onChange={(e) => setReviewForm((f) => ({ ...f, body: e.target.value }))}
               className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
             />
-            <button type="submit" className="px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold">
-              ارسال دیدگاه
+            <button type="submit" className="min-h-[40px] px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold">
+              {t('product.reviewSubmitBtn', 'ارسال دیدگاه')}
             </button>
           </form>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-5">
+        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-5">
           <h2 className="text-lg font-extrabold inline-flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-brand" />
-            پرسش و پاسخ فنی ({toPersianDigits(productQuestions.length)})
+            <MessageSquare className="w-5 h-5 text-brand shrink-0" />
+            <span>{t('product.qaHeading', { count: formatDigits(productQuestions.length) })}</span>
           </h2>
           {productQuestions.length === 0 ? (
-            <p className="text-xs text-ink/60">هنوز پرسشی ثبت نشده است.</p>
+            <p className="text-xs text-ink/60">{t('product.noQuestions', 'هنوز پرسشی ثبت نشده است.')}</p>
           ) : (
             <div className="space-y-4">
               {productQuestions.map((q) => (
@@ -781,17 +826,17 @@ export default function ProductPage() {
           )}
 
           <form onSubmit={handleQuestionSubmit} className="pt-3 border-t border-line dark:border-slate-800 space-y-3">
-            <h3 className="text-sm font-bold">پرسش از کارشناس تجهیزات</h3>
+            <h3 className="text-sm font-bold">{t('product.askExpertHeading', 'پرسش از کارشناس تجهیزات')}</h3>
             <textarea
               required
               rows={3}
-              placeholder="سوال فنی درباره سازگاری، ولتاژ، شید یا گارانتی..."
+              placeholder={t('product.questionPlaceholder', 'سوال فنی درباره سازگاری، ولتاژ، شید یا گارانتی...')}
               value={questionText}
               onChange={(e) => setQuestionText(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs"
             />
-            <button type="submit" className="px-4 py-2 rounded-lg border border-brand text-brand dark:text-teal-300 text-xs font-bold">
-              ثبت پرسش
+            <button type="submit" className="min-h-[40px] px-4 py-2 rounded-lg border border-brand text-brand dark:text-teal-300 text-xs font-bold">
+              {t('product.questionSubmitBtn', 'ثبت پرسش')}
             </button>
           </form>
         </div>
@@ -799,8 +844,8 @@ export default function ProductPage() {
 
       {relatedProducts.length > 0 && (
         <section className="space-y-4">
-          <h2 className="text-xl font-extrabold">محصولات مکمل و مرتبط</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          <h2 className="text-xl font-extrabold">{t('product.relatedHeading', 'محصولات مکمل و مرتبط')}</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {relatedProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
@@ -810,8 +855,8 @@ export default function ProductPage() {
 
       {recentProducts.length > 0 && (
         <section className="space-y-4">
-          <h2 className="text-xl font-extrabold">بازدیدهای اخیر شما</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          <h2 className="text-xl font-extrabold">{t('home.recentlyViewed', 'بازدیدهای اخیر شما')}</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {recentProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
@@ -820,142 +865,160 @@ export default function ProductPage() {
       )}
 
       {/* Zoom Modal */}
-      {zoomOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setZoomOpen(false)}>
-          <div className="relative max-w-4xl w-full bg-white dark:bg-slate-900 rounded-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              onClick={() => setZoomOpen(false)}
-              className="absolute top-3 left-3 p-2 rounded-lg bg-white/90 dark:bg-slate-800 text-ink dark:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img src={activeImage || product.imageUrl} alt={product.titleFa} className="w-full max-h-[80vh] object-contain" />
-          </div>
-        </div>
-      )}
+      <AccessibleModal
+        open={zoomOpen}
+        onClose={() => setZoomOpen(false)}
+        ariaLabel={t('product.zoomAria', 'بزرگنمایی تصویر')}
+        panelClassName="relative max-w-4xl w-full bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl max-h-[90vh]"
+      >
+        <button
+          type="button"
+          onClick={() => setZoomOpen(false)}
+          aria-label={t('actions.close', 'بستن')}
+          className="absolute top-3 left-3 min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg bg-white/90 dark:bg-slate-800 text-ink dark:text-white border border-line dark:border-slate-700"
+        >
+          <X className="w-5 h-5" />
+        </button>
+        <img src={activeImage || product.imageUrl} alt={product.titleFa} className="w-full max-h-[82vh] object-contain" />
+      </AccessibleModal>
 
       {/* Capital Equipment Consultation Modal */}
-      {consultOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-extrabold text-base">درخواست مشاوره و استعلام قیمت</h2>
-              <button type="button" onClick={() => setConsultOpen(false)}><X className="w-5 h-5" /></button>
-            </div>
-            <form onSubmit={handleConsultSubmit} className="space-y-3 text-sm">
-              <input
-                required
-                placeholder="نام و نام خانوادگی"
-                value={consultForm.name}
-                onChange={(e) => setConsultForm((f) => ({ ...f, name: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
-              <input
-                required
-                placeholder="شماره تماس (۰۹۱۲...)"
-                value={consultForm.mobile}
-                onChange={(e) => setConsultForm((f) => ({ ...f, mobile: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
-              <input
-                placeholder="نام کلینیک / مطب"
-                value={consultForm.clinicName}
-                onChange={(e) => setConsultForm((f) => ({ ...f, clinicName: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
-              <textarea
-                rows={3}
-                placeholder="توضیحات، شرایط پرداخت مدنظر یا سوالات فنی..."
-                value={consultForm.message}
-                onChange={(e) => setConsultForm((f) => ({ ...f, message: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
-              <button type="submit" className="w-full py-2.5 rounded-lg bg-brand text-white font-bold">
-                ثبت درخواست مشاوره
-              </button>
-            </form>
-          </div>
+      <AccessibleModal
+        open={consultOpen}
+        onClose={() => setConsultOpen(false)}
+        ariaLabel={t('product.requestConsultBtn', 'درخواست مشاوره و استعلام قیمت')}
+        panelClassName="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="font-extrabold text-base">{t('product.requestConsultBtn', 'درخواست مشاوره و استعلام قیمت')}</h2>
+          <button
+            type="button"
+            onClick={() => setConsultOpen(false)}
+            aria-label={t('actions.close', 'بستن')}
+            className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-      )}
+        <form onSubmit={handleConsultSubmit} className="space-y-3 text-sm">
+          <input
+            required
+            placeholder={t('product.consultNamePh', 'نام و نام خانوادگی')}
+            value={consultForm.name}
+            onChange={(e) => setConsultForm((f) => ({ ...f, name: e.target.value }))}
+            className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+          />
+          <input
+            required
+            placeholder={t('product.consultMobilePh', 'شماره تماس (۰۹۱۲...)')}
+            value={consultForm.mobile}
+            onChange={(e) => setConsultForm((f) => ({ ...f, mobile: e.target.value }))}
+            className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+          />
+          <input
+            placeholder={t('product.consultClinicPh', 'نام کلینیک / مطب')}
+            value={consultForm.clinicName}
+            onChange={(e) => setConsultForm((f) => ({ ...f, clinicName: e.target.value }))}
+            className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+          />
+          <textarea
+            rows={3}
+            placeholder={t('product.consultMessagePh', 'توضیحات، شرایط پرداخت مدنظر یا سوالات فنی...')}
+            value={consultForm.message}
+            onChange={(e) => setConsultForm((f) => ({ ...f, message: e.target.value }))}
+            className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+          />
+          <button type="submit" className="w-full min-h-[44px] py-2.5 rounded-lg bg-brand text-white font-bold">
+            {t('product.consultSubmitBtn', 'ثبت درخواست مشاوره')}
+          </button>
+        </form>
+      </AccessibleModal>
 
       {/* Two-Way RFQ Modal */}
-      {rfqOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-extrabold text-base">استعلام قیمت و چانه‌زنی B2B (RFQ)</h2>
-              <button type="button" onClick={() => setRfqOpen(false)}><X className="w-5 h-5" /></button>
-            </div>
-            <p className="text-xs text-ink/65 dark:text-slate-400">
-              {product.titleFa} ({variant.labelFa}) — وضعیت درخواست و قیمت پیشنهادی کارشناس در پنل کاربری قابل پیگیری و مذاکره است.
-            </p>
-            <form onSubmit={handleRfqSubmit} className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  required
-                  data-testid="rfq-name-input"
-                  placeholder="نام و نام خانوادگی *"
-                  value={rfqForm.customerName}
-                  onChange={(e) => setRfqForm((f) => ({ ...f, customerName: e.target.value }))}
-                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                />
-                <input
-                  required
-                  type="tel"
-                  data-testid="rfq-mobile-input"
-                  placeholder="موبایل * (0912...)"
-                  value={rfqForm.customerMobile}
-                  onChange={(e) => setRfqForm((f) => ({ ...f, customerMobile: e.target.value }))}
-                  className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1">
-                  <span className="font-bold">تعداد درخواستی *</span>
-                  <input
-                    required
-                    type="number"
-                    min={1}
-                    data-testid="rfq-quantity-input"
-                    value={rfqForm.quantity}
-                    onChange={(e) => setRfqForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
-                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="font-bold">قیمت هدف واحد (تومان - اختیاری)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    data-testid="rfq-target-price-input"
-                    value={rfqForm.targetUnitPrice}
-                    onChange={(e) => setRfqForm((f) => ({ ...f, targetUnitPrice: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-                  />
-                </label>
-              </div>
-              <input
-                placeholder="نام کلینیک / شرکت (اختیاری)"
-                value={rfqForm.clinicName}
-                onChange={(e) => setRfqForm((f) => ({ ...f, clinicName: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
-              <textarea
-                rows={3}
-                data-testid="rfq-note-input"
-                placeholder="توضیحات تعداد بسته، شرایط تحویل یا درخواست تخفیف همکاری..."
-                value={rfqForm.note}
-                onChange={(e) => setRfqForm((f) => ({ ...f, note: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
-              <button type="submit" data-testid="rfq-submit-button" className="w-full py-2.5 rounded-lg bg-brand text-white font-bold">
-                ثبت و ارسال استعلام قیمت
-              </button>
-            </form>
-          </div>
+      <AccessibleModal
+        open={rfqOpen}
+        onClose={() => setRfqOpen(false)}
+        ariaLabel={t('product.rfqModalTitle', 'استعلام قیمت و چانه‌زنی B2B (RFQ)')}
+        panelClassName="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl max-w-md w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="font-extrabold text-base">{t('product.rfqModalTitle', 'استعلام قیمت و چانه‌زنی B2B (RFQ)')}</h2>
+          <button
+            type="button"
+            onClick={() => setRfqOpen(false)}
+            aria-label={t('actions.close', 'بستن')}
+            className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-      )}
+        <p className="text-xs text-ink/65 dark:text-slate-400">
+          {t('product.rfqModalDesc', { title: product.titleFa, variant: variant.labelFa })}
+        </p>
+        <form onSubmit={handleRfqSubmit} className="space-y-3 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              required
+              data-testid="rfq-name-input"
+              placeholder={t('product.rfqNamePh', 'نام و نام خانوادگی *')}
+              value={rfqForm.customerName}
+              onChange={(e) => setRfqForm((f) => ({ ...f, customerName: e.target.value }))}
+              className="px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            />
+            <input
+              required
+              type="tel"
+              data-testid="rfq-mobile-input"
+              placeholder={t('product.rfqMobilePh', 'موبایل * (0912...)')}
+              value={rfqForm.customerMobile}
+              onChange={(e) => setRfqForm((f) => ({ ...f, customerMobile: e.target.value }))}
+              className="px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="space-y-1">
+              <span className="font-bold">{t('product.rfqQtyLabel', 'تعداد درخواستی *')}</span>
+              <input
+                required
+                type="number"
+                min={1}
+                data-testid="rfq-quantity-input"
+                value={rfqForm.quantity}
+                onChange={(e) => setRfqForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
+                className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="font-bold">{t('product.rfqTargetPriceLabel', 'قیمت هدف واحد (تومان - اختیاری)')}</span>
+              <input
+                type="number"
+                min={0}
+                data-testid="rfq-target-price-input"
+                value={rfqForm.targetUnitPrice}
+                onChange={(e) => setRfqForm((f) => ({ ...f, targetUnitPrice: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
+            </label>
+          </div>
+          <input
+            placeholder={t('product.rfqClinicPh', 'نام کلینیک / شرکت (اختیاری)')}
+            value={rfqForm.clinicName}
+            onChange={(e) => setRfqForm((f) => ({ ...f, clinicName: e.target.value }))}
+            className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+          />
+          <textarea
+            rows={3}
+            data-testid="rfq-note-input"
+            placeholder={t('product.rfqNotePh', 'توضیحات تعداد بسته، شرایط تحویل یا درخواست تخفیف همکاری...')}
+            value={rfqForm.note}
+            onChange={(e) => setRfqForm((f) => ({ ...f, note: e.target.value }))}
+            className="w-full px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+          />
+          <button type="submit" data-testid="rfq-submit-button" className="w-full min-h-[44px] py-2.5 rounded-lg bg-brand text-white font-bold">
+            {t('product.rfqSubmitBtn', 'ثبت و ارسال استعلام قیمت')}
+          </button>
+        </form>
+      </AccessibleModal>
     </div>
   );
 }

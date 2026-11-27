@@ -336,6 +336,50 @@
         "sortOrder": { "type": "number" }
       },
       "required": ["id", "slot", "titleFa", "linkPath", "imageUrl", "isActive", "sortOrder"]
+    },
+    "OutboxMessage": {
+      "title": "OutboxMessage",
+      "description": "Server-persisted marketing and notification delivery outbox record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "channel": { "type": "string", "enum": ["sms", "email"] },
+        "provider": { "type": "string", "enum": ["sandbox", "kavenegar", "email_sandbox"] },
+        "recipient": { "type": "string", "maxLength": 160 },
+        "status": { "type": "string", "enum": ["queued", "scheduled_quiet_hours", "sent", "delivered", "failed", "suppressed", "rate_limited"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "channel", "provider", "recipient", "status", "createdAt"]
+    },
+    "CampaignRun": {
+      "title": "CampaignRun",
+      "description": "Server-recorded marketing campaign dispatch summary.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 160 },
+        "channel": { "type": "string", "enum": ["sms", "email"] },
+        "segment": { "type": "string" },
+        "totalMatched": { "type": "number" },
+        "sentCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "channel", "segment", "totalMatched", "sentCount", "createdAt"]
+    },
+    "AbandonedCartRecord": {
+      "title": "AbandonedCartRecord",
+      "description": "Server-persisted consented abandoned cart for recovery tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "ownerKey": { "type": "string", "maxLength": 128 },
+        "subtotal": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "abandoned", "reminded", "recovered", "opted_out"] },
+        "consentGranted": { "type": "boolean" },
+        "reminderCount": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerKey", "subtotal", "status", "consentGranted", "reminderCount", "updatedAt"]
     }
   },
   "firestore": {
@@ -379,6 +423,11 @@
     "/auditLogs/{logId}": { "schema": { "$ref": "#/entities/AuditLog" }, "description": "Append-only admin audit logs" },
     "/settings/{settingId}": { "schema": "Setting", "description": "Public and system store configuration" },
     "/admins/{uid}": { "schema": { "$ref": "#/entities/AdminUser" }, "description": "Admin RBAC registry" },
+    "/outboxMessages/{msgId}": { "schema": { "$ref": "#/entities/OutboxMessage" }, "description": "Marketing outbox delivery queue (server-written)" },
+    "/campaignRuns/{runId}": { "schema": { "$ref": "#/entities/CampaignRun" }, "description": "Campaign execution reports (server-written)" },
+    "/marketingConsents/{consentId}": { "schema": "MarketingConsentRecord", "description": "Customer marketing opt-in preferences (server-written)" },
+    "/suppressionList/{entryId}": { "schema": "SuppressionEntry", "description": "Marketing opt-out suppression list (server-written)" },
+    "/abandonedCarts/{cartId}": { "schema": { "$ref": "#/entities/AbandonedCartRecord" }, "description": "Server-tracked abandoned carts with consent (server-written)" },
     "/test/connection": { "schema": "HealthCheck", "description": "Firestore connectivity probe document" }
   }
 }

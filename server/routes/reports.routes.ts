@@ -46,6 +46,7 @@ async function buildServerReportDataset(store: ServerStore, repos: RepositoryBun
     stockLevels,
     stockBatches,
     stockMovements,
+    abandonedCarts,
   ] = await Promise.all([
     loadAllOrders(repos),
     repos.proformas.listAll(),
@@ -56,6 +57,7 @@ async function buildServerReportDataset(store: ServerStore, repos: RepositoryBun
     repos.stock.listStockLevels(),
     repos.stock.listBatches(),
     repos.stock.listMovements(5000),
+    repos.marketing.listAbandonedCarts(),
   ]);
 
   const usersList: UserProfile[] = Object.values(store.data.userGroups).map((ug) => ({
@@ -96,6 +98,7 @@ async function buildServerReportDataset(store: ServerStore, repos: RepositoryBun
     notFoundLogs: Object.values(store.data.notFoundLogs),
     reviews: SEED_REVIEWS,
     questions: SEED_QUESTIONS,
+    abandonedCarts,
     settings: catalog.settings,
   };
 }

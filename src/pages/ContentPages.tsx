@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { Award, Clock, MapPin, PackagePlus, Phone, Printer, ShieldCheck } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
+import { EmptyState } from '../components/ui/States';
 import { useStore } from '../context/StoreContext';
-import { formatJalaliDate, formatMoney, toPersianDigits } from '../lib/jalali';
+import { useI18n } from '../context/i18n';
 import { buildResponsiveImageProps } from '../lib/media';
 import { getProductPriceSummary } from '../lib/pricing';
 import {
@@ -20,15 +21,16 @@ import type { Product } from '../types/domain';
 
 export function BrandsListPage() {
   const { brands, products, settings } = useStore();
+  const { t, formatDigits } = useI18n();
 
   useEffect(() => {
     applySeoHead({
-      title: `برندهای تجهیزات و مواد دندانپزشکی | ${settings.storeNameFa}`,
-      description: 'فهرست کامل برندهای معتبر جهانی دندانپزشکی با تضمین اصالت و کد IMED',
+      title: `${t('contentPages.brands.seoTitle')} | ${settings.storeNameFa}`,
+      description: t('contentPages.brands.seoDesc'),
       canonicalPath: '/brands',
       robots: 'index, follow',
     });
-  }, [settings.storeNameFa]);
+  }, [settings.storeNameFa, t]);
 
   const sortedBrands = brands
     .filter((b) => b.isActive)
@@ -43,9 +45,9 @@ export function BrandsListPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-2">
-        <h1 className="text-2xl font-extrabold">برندهای تخصصی تجهیزات و مواد دندانپزشکی</h1>
+        <h1 className="text-2xl font-extrabold">{t('contentPages.brands.heading')}</h1>
         <p className="text-sm text-ink/70 dark:text-slate-400">
-          تمامی برندها دارای شناسه پیگیری اصالت، مجوز رسمی وزارت بهداشت و گارانتی شرکتی معتبر هستند.
+          {t('contentPages.brands.subtitle')}
         </p>
       </div>
 
@@ -68,12 +70,12 @@ export function BrandsListPage() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h2 className="text-lg font-extrabold">{brand.nameFa}</h2>
-                  <p className="text-xs text-ink/50 dark:text-slate-400">{brand.nameEn} · {brand.countryFa}</p>
+                  <p className="text-xs text-ink/65 dark:text-slate-400">{brand.nameEn} · {brand.countryFa}</p>
                 </div>
                 {brand.isAuthorizedDealer && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 shrink-0">
-                    <Award className="w-3.5 h-3.5" />
-                    نماینده رسمی
+                    <Award className="w-3.5 h-3.5" aria-hidden="true" />
+                    {t('home.authorizedDealer')}
                   </span>
                 )}
               </div>
@@ -95,10 +97,10 @@ export function BrandsListPage() {
               <p className="text-xs text-ink/70 dark:text-slate-400 leading-relaxed line-clamp-2">{brand.descriptionFa}</p>
               <div className="mt-auto pt-2 flex items-center justify-between gap-2 text-xs">
                 <span className="font-bold text-brand dark:text-teal-300 tabular-nums">
-                  {toPersianDigits(brandProds.length)} محصول فعال در کاتالوگ
+                  {t('contentPages.brands.activeProducts', { count: formatDigits(brandProds.length) })}
                 </span>
                 {brand.websiteUrl && (
-                  <span className="text-[11px] text-ink/50 dark:text-slate-400 truncate max-w-[140px]" dir="ltr">
+                  <span className="text-[11px] text-ink/60 dark:text-slate-400 truncate max-w-[140px]" dir="ltr">
                     {brand.websiteUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
                   </span>
                 )}
@@ -114,6 +116,7 @@ export function BrandsListPage() {
 export function BrandDetailPage() {
   const { slug } = useParams();
   const { brands, products, customerGroup, settings } = useStore();
+  const { t } = useI18n();
   const brand = brands.find((b) => b.slug === slug);
   const [serverBrandState, setServerBrandState] = useState<{
     items: Product[];
@@ -132,13 +135,13 @@ export function BrandDetailPage() {
       jsonLd: [
         buildBrandJsonLd(brand),
         buildBreadcrumbJsonLd([
-          { name: 'خانه', path: '/' },
-          { name: 'برندها', path: '/brands' },
+          { name: t('common.home'), path: '/' },
+          { name: t('nav.brands'), path: '/brands' },
           { name: brand.nameFa, path: `/brand/${brand.slug}` },
         ]),
       ],
     });
-  }, [brand, settings.storeNameFa]);
+  }, [brand, settings.storeNameFa, t]);
 
   useEffect(() => {
     if (!brand) {
@@ -195,9 +198,12 @@ export function BrandDetailPage() {
 
   if (!brand) {
     return (
-      <div className="max-w-4xl mx-auto p-12 text-center space-y-4">
-        <h1 className="text-xl font-bold">برند مورد نظر یافت نشد</h1>
-        <Link to="/brands" className="text-brand font-bold">بازگشت به لیست برندها</Link>
+      <div className="max-w-4xl mx-auto p-12">
+        <EmptyState
+          title={t('contentPages.brands.notFound')}
+          actionLabel={t('contentPages.brands.backToList')}
+          actionTo="/brands"
+        />
       </div>
     );
   }
@@ -217,8 +223,9 @@ export function BrandDetailPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-extrabold">{brand.nameFa} ({brand.nameEn})</h1>
-            <p className="text-xs text-ink/60 dark:text-slate-400 mt-1">
-              کشور سازنده: {brand.countryFa} {brand.warrantyProvider ? `· پشتیبانی گارانتی: ${brand.warrantyProvider}` : ''}
+            <p className="text-xs text-ink/70 dark:text-slate-400 mt-1">
+              {t('contentPages.brands.countryLabel', { country: brand.countryFa })}
+              {brand.warrantyProvider ? ` · ${t('contentPages.brands.warrantySupport', { provider: brand.warrantyProvider })}` : ''}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -235,8 +242,8 @@ export function BrandDetailPage() {
             )}
             {brand.isAuthorizedDealer && (
               <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                <ShieldCheck className="w-4 h-4" />
-                تامین مستقیم و گارانتی اصالت
+                <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                <span>{t('contentPages.brands.directGuarantee')}</span>
               </span>
             )}
           </div>
@@ -244,7 +251,7 @@ export function BrandDetailPage() {
         <p className="text-sm text-ink/75 dark:text-slate-300 leading-relaxed">{brand.descriptionFa}</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
         {brandProducts.map((p) => (
           <ProductCard key={p.id} product={p} />
         ))}
@@ -258,7 +265,7 @@ export function BrandDetailPage() {
             onClick={handleLoadMoreBrand}
             className="px-5 py-2.5 rounded-lg border border-line dark:border-slate-700 text-xs font-bold hover:border-brand disabled:opacity-50"
           >
-            {loadingMore ? 'در حال بارگذاری...' : 'مشاهده محصولات بیشتر'}
+            {loadingMore ? t('common.loading') : t('contentPages.brands.loadMore')}
           </button>
         </div>
       )}
@@ -269,6 +276,7 @@ export function BrandDetailPage() {
 export function PackDetailPage() {
   const { slug } = useParams();
   const { bundles, products, campaigns, currency, customerGroup, settings, contractPrices, authUser, addBundleToCart } = useStore();
+  const { t, formatDigits, formatMoney } = useI18n();
   const bundle = bundles.find((b) => b.slug === slug);
 
   const itemsResolved = (bundle?.items ?? [])
@@ -302,18 +310,21 @@ export function PackDetailPage() {
       jsonLd: [
         buildBundleJsonLd(bundle, discountedTotal),
         buildBreadcrumbJsonLd([
-          { name: 'خانه', path: '/' },
+          { name: t('common.home'), path: '/' },
           { name: bundle.nameFa, path: `/pack/${bundle.slug}` },
         ]),
       ],
     });
-  }, [bundle, discountedTotal, settings.storeNameFa]);
+  }, [bundle, discountedTotal, settings.storeNameFa, t]);
 
   if (!bundle) {
     return (
-      <div className="max-w-4xl mx-auto p-12 text-center space-y-4">
-        <h1 className="text-xl font-bold">پک تجهیزاتی مورد نظر یافت نشد</h1>
-        <Link to="/" className="text-brand font-bold">بازگشت به صفحه اصلی</Link>
+      <div className="max-w-4xl mx-auto p-12">
+        <EmptyState
+          title={t('contentPages.pack.notFound')}
+          actionLabel={t('actions.backHome')}
+          actionTo="/"
+        />
       </div>
     );
   }
@@ -333,8 +344,8 @@ export function PackDetailPage() {
           className="lg:col-span-5 w-full aspect-[4/3] object-cover rounded-xl bg-surface"
         />
         <div className="lg:col-span-7 space-y-4">
-          <span className="text-xs font-bold text-rose-600">
-            پک آماده کلینیکی با {toPersianDigits(bundle.discountPercent)}٪ صرفه‌جویی اقتصادی
+          <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
+            {t('contentPages.pack.savingLabel', { percent: formatDigits(bundle.discountPercent) })}
           </span>
           <h1 className="text-2xl lg:text-3xl font-extrabold">{bundle.nameFa}</h1>
           <p className="text-sm text-ink/75 dark:text-slate-300 leading-relaxed">{bundle.descriptionFa}</p>
@@ -342,10 +353,10 @@ export function PackDetailPage() {
           <div className="p-4 rounded-xl bg-surface/60 dark:bg-slate-800 flex flex-wrap items-center justify-between gap-4">
             <div>
               {originalTotal > 0 && (
-                <p className="text-xs text-ink/45 line-through tabular-nums">{formatMoney(originalTotal, currency)}</p>
+                <p className="text-xs text-ink/55 dark:text-slate-400 line-through tabular-nums">{formatMoney(originalTotal, currency)}</p>
               )}
               <p className="text-2xl font-extrabold text-brand dark:text-teal-300 tabular-nums">
-                {discountedTotal > 0 ? formatMoney(discountedTotal, currency) : 'استعلام قیمت'}
+                {discountedTotal > 0 ? formatMoney(discountedTotal, currency) : t('contentPages.pack.priceInquiry')}
               </p>
             </div>
             <button
@@ -353,15 +364,15 @@ export function PackDetailPage() {
               onClick={() => addBundleToCart(bundle.id)}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-brand text-white text-sm font-bold hover:bg-brandDark"
             >
-              <PackagePlus className="w-4 h-4" />
-              <span>افزودن کل پک به سبد خرید</span>
+              <PackagePlus className="w-4 h-4" aria-hidden="true" />
+              <span>{t('contentPages.pack.addPackBtn')}</span>
             </button>
           </div>
         </div>
       </div>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-extrabold">اقلام موجود در این پک</h2>
+        <h2 className="text-lg font-extrabold">{t('contentPages.pack.itemsTitle')}</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {itemsResolved.map(({ bi, product, variant, unitPrice }) => (
             <Link
@@ -378,12 +389,12 @@ export function PackDetailPage() {
               />
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-sm truncate">{product.titleFa}</p>
-                <p className="text-xs text-ink/60">
-                  {variant.labelFa} · تعداد در پک: <strong className="tabular-nums">{toPersianDigits(bi.quantity)}</strong>
+                <p className="text-xs text-ink/70 dark:text-slate-400">
+                  {variant.labelFa} · {t('contentPages.pack.qtyInPack')} <strong className="tabular-nums">{formatDigits(bi.quantity)}</strong>
                 </p>
               </div>
               <span className="text-xs font-extrabold text-brand tabular-nums">
-                {unitPrice > 0 ? formatMoney(unitPrice, currency) : 'تماس'}
+                {unitPrice > 0 ? formatMoney(unitPrice, currency) : t('cartDrawer.callForPriceShort')}
               </span>
             </Link>
           ))}
@@ -396,70 +407,90 @@ export function PackDetailPage() {
 export function PublicProformaPage() {
   const { token } = useParams();
   const { proformas, currency, settings, respondProforma } = useStore();
+  const { t, formatDate, formatDigits, formatMoney } = useI18n();
   const pf = proformas.find((p) => p.shareToken === token || p.id === token);
 
   useEffect(() => {
     if (!pf) return;
     applySeoHead({
-      title: `پیش‌فاکتور ${pf.proformaNo} | ${settings.storeNameFa}`,
-      description: `پیش‌فاکتور رسمی کلینیک برای ${pf.contactName}`,
+      title: `${t('contentPages.proforma.docPrefix')} ${pf.proformaNo} | ${settings.storeNameFa}`,
+      description: t('contentPages.proforma.seoDesc', { name: pf.contactName }),
       canonicalPath: `/proforma/${token ?? ''}`,
       robots: 'noindex, nofollow',
     });
-  }, [pf, token, settings.storeNameFa]);
+  }, [pf, token, settings.storeNameFa, t]);
 
   if (!pf) {
     return (
-      <div className="max-w-3xl mx-auto p-12 text-center space-y-4">
-        <h1 className="text-xl font-bold">پیش‌فاکتور یافت نشد یا منقضی شده است</h1>
-        <Link to="/" className="text-brand font-bold">بازگشت به فروشگاه</Link>
+      <div className="max-w-3xl mx-auto p-12">
+        <EmptyState
+          title={t('contentPages.proforma.notFound')}
+          actionLabel={t('comparePage.backToStore')}
+          actionTo="/"
+        />
       </div>
     );
   }
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-10 space-y-6">
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-5">
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-8 space-y-5">
         <div className="flex flex-wrap justify-between items-start gap-4 border-b border-line dark:border-slate-800 pb-4">
           <div>
-            <h1 className="text-xl font-extrabold text-brand">{settings.storeNameFa} — پیش‌فاکتور رسمی کلینیک</h1>
-            <p className="text-xs text-ink/60 mt-1">کد IMED: {settings.imedRegistryCode} · تلفن: {settings.phone}</p>
+            <h1 className="text-lg sm:text-xl font-extrabold text-brand">
+              {settings.storeNameFa} — {t('contentPages.proforma.title')}
+            </h1>
+            <p className="text-xs text-ink/70 dark:text-slate-400 mt-1">
+              {t('contentPages.proforma.imedPhoneMeta', { code: settings.imedRegistryCode, phone: settings.phone })}
+            </p>
           </div>
-          <div className="text-left text-xs space-y-1">
-            <p className="font-extrabold tabular-nums">شماره: {pf.proformaNo}</p>
-            <p>اعتبار تا: {formatJalaliDate(pf.validUntil)}</p>
-            <p className="font-bold text-brand">وضعیت: {pf.status}</p>
+          <div className="text-start sm:text-end text-xs space-y-1">
+            <p className="font-extrabold tabular-nums">
+              {t('contentPages.proforma.numberLabel', { no: pf.proformaNo })}
+            </p>
+            <p>{t('contentPages.proforma.validUntil', { date: formatDate(pf.validUntil) })}</p>
+            <p className="font-bold text-brand">
+              {t('contentPages.proforma.statusLabel', {
+                status: t(`proformaStatus.${pf.status}`, undefined, pf.status),
+              })}
+            </p>
           </div>
         </div>
 
         <div className="text-xs space-y-1">
-          <p>خریدار: <strong>{pf.contactName}</strong> {pf.clinicName ? `(${pf.clinicName})` : ''}</p>
-          <p>شماره تماس: <span className="tabular-nums">{pf.contactMobile}</span></p>
+          <p>
+            {t('contentPages.proforma.buyerLabel')} <strong>{pf.contactName}</strong> {pf.clinicName ? `(${pf.clinicName})` : ''}
+          </p>
+          <p>
+            {t('contentPages.proforma.phoneLabel')} <span className="tabular-nums">{pf.contactMobile}</span>
+          </p>
         </div>
 
-        <table className="w-full text-xs border-collapse border border-line dark:border-slate-700">
-          <thead>
-            <tr className="bg-surface dark:bg-slate-800">
-              <th className="border border-line dark:border-slate-700 p-2 text-right">شرح کالا</th>
-              <th className="border border-line dark:border-slate-700 p-2">تعداد</th>
-              <th className="border border-line dark:border-slate-700 p-2">فی</th>
-              <th className="border border-line dark:border-slate-700 p-2">جمع</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pf.items.map((it) => (
-              <tr key={it.variantId}>
-                <td className="border border-line dark:border-slate-700 p-2">{it.titleFa} ({it.variantLabelFa})</td>
-                <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{toPersianDigits(it.quantity)}</td>
-                <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{formatMoney(it.unitPrice, currency)}</td>
-                <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{formatMoney(it.lineTotal, currency)}</td>
+        <div className="overflow-x-auto -mx-2 px-2">
+          <table className="w-full min-w-[460px] text-xs border-collapse border border-line dark:border-slate-700">
+            <thead>
+              <tr className="bg-surface dark:bg-slate-800">
+                <th className="border border-line dark:border-slate-700 p-2 text-start">{t('contentPages.proforma.colItem')}</th>
+                <th className="border border-line dark:border-slate-700 p-2">{t('contentPages.proforma.colQty')}</th>
+                <th className="border border-line dark:border-slate-700 p-2">{t('contentPages.proforma.colUnitPrice')}</th>
+                <th className="border border-line dark:border-slate-700 p-2">{t('contentPages.proforma.colTotal')}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {pf.items.map((it) => (
+                <tr key={it.variantId}>
+                  <td className="border border-line dark:border-slate-700 p-2">{it.titleFa} ({it.variantLabelFa})</td>
+                  <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{formatDigits(it.quantity)}</td>
+                  <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{formatMoney(it.unitPrice, currency)}</td>
+                  <td className="border border-line dark:border-slate-700 p-2 text-center tabular-nums">{formatMoney(it.lineTotal, currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         <div className="flex justify-between items-center text-sm font-extrabold pt-2">
-          <span>مبلغ نهایی قابل پرداخت:</span>
+          <span>{t('contentPages.proforma.grandTotalLabel')}</span>
           <span className="tabular-nums text-brand">{formatMoney(pf.grandTotal, currency)}</span>
         </div>
 
@@ -469,26 +500,26 @@ export function PublicProformaPage() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold"
+            className="min-h-[44px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-line dark:border-slate-700 text-xs font-bold"
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span>چاپ پیش‌فاکتور</span>
+            <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{t('contentPages.proforma.printBtn')}</span>
           </button>
           {(pf.status === 'draft' || pf.status === 'sent' || pf.status === 'viewed') && (
             <>
               <button
                 type="button"
                 onClick={() => respondProforma(pf.id, 'accepted')}
-                className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
               >
-                تایید پیش‌فاکتور
+                {t('contentPages.proforma.acceptBtn')}
               </button>
               <button
                 type="button"
                 onClick={() => respondProforma(pf.id, 'rejected')}
-                className="px-4 py-2 rounded-xl border border-rose-300 text-rose-700 text-xs font-bold"
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-rose-300 text-rose-700 dark:text-rose-400 text-xs font-bold"
               >
-                رد پیش‌فاکتور
+                {t('contentPages.proforma.rejectBtn')}
               </button>
             </>
           )}
@@ -501,6 +532,7 @@ export function PublicProformaPage() {
 export function AgentsPage() {
   const { provinceSlug } = useParams();
   const { agents, brands, settings } = useStore();
+  const { t } = useI18n();
   const [selectedProvince, setSelectedProvince] = useState(provinceSlug ?? 'all');
 
   useEffect(() => {
@@ -518,58 +550,64 @@ export function AgentsPage() {
 
   useEffect(() => {
     applySeoHead({
-      title: `شبکه نمایندگی‌ها و شعب استانی | ${settings.storeNameFa}`,
-      description: 'نشانی و شماره تماس شعب و نمایندگی‌های مجاز خدمات پس از فروش دنتال‌مارکت',
+      title: `${t('contentPages.agents.seoTitle')} | ${settings.storeNameFa}`,
+      description: t('contentPages.agents.seoDesc'),
       canonicalPath: selectedProvince === 'all' ? '/agents' : `/agents/${selectedProvince}`,
       robots: 'index, follow',
       jsonLd: visibleAgents.map(buildAgentJsonLd),
     });
-  }, [selectedProvince, visibleAgents, settings.storeNameFa]);
+  }, [selectedProvince, visibleAgents, settings.storeNameFa, t]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
       <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold">شعب و نمایندگی‌های رسمی خدمات پس از فروش</h1>
+          <h1 className="text-2xl font-extrabold">{t('contentPages.agents.heading')}</h1>
           <p className="text-sm text-ink/70 dark:text-slate-400 mt-1">
-            نصب یونیت، کالیبراسیون و سرویس دوره‌ای در مراکز استان‌ها
+            {t('contentPages.agents.subtitle')}
           </p>
         </div>
         <select
           value={selectedProvince}
           onChange={(e) => setSelectedProvince(e.target.value)}
-          aria-label="فیلتر استان"
+          aria-label={t('contentPages.agents.provinceAria')}
           className="px-4 py-2 rounded-xl border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm font-bold"
         >
-          <option value="all">همه استان‌ها</option>
+          <option value="all">{t('contentPages.agents.allProvinces')}</option>
           {provinces.map((pr) => (
             <option key={pr.slug} value={pr.slug}>{pr.name}</option>
           ))}
         </select>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {visibleAgents.map((ag) => (
-          <article key={ag.id} className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
-            <h2 className="text-base font-extrabold">{ag.nameFa}</h2>
-            <p className="text-xs text-ink/70 dark:text-slate-400 flex items-start gap-2">
-              <MapPin className="w-4 h-4 text-brand shrink-0 mt-0.5" />
-              <span>{ag.province}، {ag.city} — {ag.address}</span>
-            </p>
-            <p className="text-xs tabular-nums flex items-center gap-2">
-              <Phone className="w-4 h-4 text-brand shrink-0" />
-              <span>{ag.phone} · {ag.mobile}</span>
-            </p>
-            <p className="text-xs text-ink/60 dark:text-slate-400 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-brand shrink-0" />
-              <span>{ag.workingHoursFa}</span>
-            </p>
-            <p className="text-[11px] text-brand dark:text-teal-300 pt-2 border-t border-line dark:border-slate-800">
-              برندهای تحت پوشش: {ag.brandIds.map((bid) => brands.find((b) => b.id === bid)?.nameFa).filter(Boolean).join(' · ')}
-            </p>
-          </article>
-        ))}
-      </div>
+      {visibleAgents.length === 0 ? (
+        <EmptyState title={t('contentPages.agents.empty')} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {visibleAgents.map((ag) => (
+            <article key={ag.id} className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 sm:p-6 space-y-3">
+              <h2 className="text-base font-extrabold">{ag.nameFa}</h2>
+              <p className="text-xs text-ink/70 dark:text-slate-400 flex items-start gap-2">
+                <MapPin className="w-4 h-4 text-brand shrink-0 mt-0.5" aria-hidden="true" />
+                <span>{ag.province}{t('common.commaSeparator')}{ag.city} — {ag.address}</span>
+              </p>
+              <p className="text-xs tabular-nums flex items-center gap-2">
+                <Phone className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
+                <span>{ag.phone} · {ag.mobile}</span>
+              </p>
+              <p className="text-xs text-ink/70 dark:text-slate-400 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
+                <span>{ag.workingHoursFa}</span>
+              </p>
+              <p className="text-[11px] text-brand dark:text-teal-300 pt-2 border-t border-line dark:border-slate-800">
+                {t('contentPages.agents.coveredBrands', {
+                  brands: ag.brandIds.map((bid) => brands.find((b) => b.id === bid)?.nameFa).filter(Boolean).join(' · '),
+                })}
+              </p>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -577,6 +615,7 @@ export function AgentsPage() {
 export function BlogListPage() {
   const { slug: categorySlug } = useParams();
   const { blogPosts, settings } = useStore();
+  const { t, formatDate, formatDigits } = useI18n();
   const published = blogPosts.filter((p) => p.status === 'published');
   const categories = Array.from(new Set(published.map((p) => p.categoryFa)));
   const filtered = categorySlug
@@ -585,34 +624,34 @@ export function BlogListPage() {
 
   useEffect(() => {
     applySeoHead({
-      title: `مجله تخصصی دندانپزشکی ${categorySlug ? `— ${decodeURIComponent(categorySlug)}` : ''} | ${settings.storeNameFa}`,
-      description: 'مقالات آموزشی، راهنمای خرید تجهیزات و پروتکل‌های کلینیکی دندانپزشکی',
+      title: `${t('contentPages.blog.seoTitle')} ${categorySlug ? `— ${decodeURIComponent(categorySlug)}` : ''} | ${settings.storeNameFa}`,
+      description: t('contentPages.blog.seoDesc'),
       canonicalPath: categorySlug ? `/blog/category/${categorySlug}` : '/blog',
       robots: 'index, follow',
     });
-  }, [settings.storeNameFa, categorySlug]);
+  }, [settings.storeNameFa, categorySlug, t]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
-        <h1 className="text-2xl font-extrabold">مجله تخصصی و راهنمای خرید تجهیزات دندانپزشکی</h1>
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-3">
+        <h1 className="text-xl sm:text-2xl font-extrabold">{t('contentPages.blog.heading')}</h1>
         <p className="text-sm text-ink/70 dark:text-slate-400">
-          نگارش و بازبینی علمی توسط متخصصان دندانپزشکی و مهندسی پزشکی
+          {t('contentPages.blog.subtitle')}
         </p>
-        <div className="flex flex-wrap gap-2 pt-2 text-xs">
+        <div className="flex flex-nowrap overflow-x-auto no-scrollbar sm:flex-wrap gap-2 pt-2 pb-1 text-xs">
           <Link
             to="/blog"
-            className={`px-3 py-1.5 rounded-lg border font-bold ${
+            className={`px-3 py-2 rounded-lg border font-bold whitespace-nowrap shrink-0 ${
               !categorySlug ? 'bg-brand text-white border-brand' : 'border-line dark:border-slate-700'
             }`}
           >
-            همه مقالات
+            {t('contentPages.blog.allPosts')}
           </Link>
           {categories.map((cat) => (
             <Link
               key={cat}
               to={`/blog/category/${encodeURIComponent(cat)}`}
-              className={`px-3 py-1.5 rounded-lg border font-bold ${
+              className={`px-3 py-2 rounded-lg border font-bold whitespace-nowrap shrink-0 ${
                 categorySlug && decodeURIComponent(categorySlug) === cat
                   ? 'bg-brand text-white border-brand'
                   : 'border-line dark:border-slate-700'
@@ -624,37 +663,41 @@ export function BlogListPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filtered.map((post) => (
-          <Link
-            key={post.id}
-            to={`/blog/${post.slug}`}
-            className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden hover:border-brand transition-colors flex flex-col"
-          >
-            <img
-              {...buildResponsiveImageProps(post.imageUrl, {
-                widths: [400, 640],
-                sizes: '(max-width: 768px) 100vw, 33vw',
-              })}
-              alt={post.titleFa}
-              width={640}
-              height={360}
-              className="aspect-[16/9] w-full object-cover bg-surface"
-            />
-            <div className="p-5 space-y-2.5 flex-1 flex flex-col">
-              <span className="text-[11px] font-bold text-brand dark:text-teal-300">
-                {post.categoryFa} · {formatJalaliDate(post.publishedAt)}
-              </span>
-              <h2 className="text-base font-extrabold leading-snug">{post.titleFa}</h2>
-              <p className="text-xs text-ink/70 dark:text-slate-400 line-clamp-3 flex-1">{post.excerptFa}</p>
-              <div className="pt-3 border-t border-line dark:border-slate-800 text-[11px] text-ink/60 dark:text-slate-400 flex justify-between">
-                <span>{post.authorName}</span>
-                <span>{toPersianDigits(post.readingMinutes)} دقیقه مطالعه</span>
+      {filtered.length === 0 ? (
+        <EmptyState title={t('contentPages.blog.empty')} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+          {filtered.map((post) => (
+            <Link
+              key={post.id}
+              to={`/blog/${post.slug}`}
+              className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden hover:border-brand transition-colors flex flex-col"
+            >
+              <img
+                {...buildResponsiveImageProps(post.imageUrl, {
+                  widths: [400, 640],
+                  sizes: '(max-width: 768px) 100vw, 33vw',
+                })}
+                alt={post.titleFa}
+                width={640}
+                height={360}
+                className="aspect-[16/9] w-full object-cover bg-surface"
+              />
+              <div className="p-5 space-y-2.5 flex-1 flex flex-col">
+                <span className="text-[11px] font-bold text-brand dark:text-teal-300">
+                  {post.categoryFa} · {formatDate(post.publishedAt)}
+                </span>
+                <h2 className="text-base font-extrabold leading-snug">{post.titleFa}</h2>
+                <p className="text-xs text-ink/70 dark:text-slate-400 line-clamp-3 flex-1">{post.excerptFa}</p>
+                <div className="pt-3 border-t border-line dark:border-slate-800 text-[11px] text-ink/70 dark:text-slate-400 flex justify-between">
+                  <span>{post.authorName}</span>
+                  <span>{t('contentPages.blog.readingMinutes', { minutes: formatDigits(post.readingMinutes) })}</span>
+                </div>
               </div>
-            </div>
-          </Link>
-        ))}
-      </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -662,6 +705,7 @@ export function BlogListPage() {
 export function BlogPostPage() {
   const { slug } = useParams();
   const { blogPosts, products, settings } = useStore();
+  const { t, formatDate } = useI18n();
   const post = blogPosts.find((p) => p.slug === slug);
 
   useEffect(() => {
@@ -677,20 +721,23 @@ export function BlogPostPage() {
       jsonLd: [
         buildBlogPostJsonLd(post, settings),
         buildBreadcrumbJsonLd([
-          { name: 'خانه', path: '/' },
-          { name: 'مجله تخصصی', path: '/blog' },
+          { name: t('common.home'), path: '/' },
+          { name: t('nav.blog'), path: '/blog' },
           { name: post.titleFa, path: `/blog/${post.slug}` },
         ]),
         ...(faqLd ? [faqLd] : []),
       ],
     });
-  }, [post, settings]);
+  }, [post, settings, t]);
 
   if (!post) {
     return (
-      <div className="max-w-4xl mx-auto p-12 text-center space-y-4">
-        <h1 className="text-xl font-bold">مقاله مورد نظر یافت نشد</h1>
-        <Link to="/blog" className="text-brand font-bold">بازگشت به مجله</Link>
+      <div className="max-w-4xl mx-auto p-12">
+        <EmptyState
+          title={t('contentPages.blog.postNotFound')}
+          actionLabel={t('contentPages.blog.backToBlog')}
+          actionTo="/blog"
+        />
       </div>
     );
   }
@@ -701,13 +748,19 @@ export function BlogPostPage() {
     <article className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       <div className="space-y-3">
         <span className="text-xs font-bold text-brand dark:text-teal-300">
-          {post.categoryFa} · منتشرشده در {formatJalaliDate(post.publishedAt, true)}
+          {post.categoryFa} · {t('contentPages.blog.publishedAt', { date: formatDate(post.publishedAt, true) })}
         </span>
         <h1 className="text-2xl lg:text-3xl font-extrabold leading-tight">{post.titleFa}</h1>
-        <div className="flex flex-wrap gap-4 text-xs text-ink/65 dark:text-slate-400">
-          <span>نویسنده: <strong>{post.authorName}</strong> ({post.authorRole})</span>
-          {post.reviewedBy && <span>بازبینی علمی: <strong>{post.reviewedBy}</strong></span>}
-          <span>بروزرسانی: {formatJalaliDate(post.updatedAt)}</span>
+        <div className="flex flex-wrap gap-4 text-xs text-ink/70 dark:text-slate-400">
+          <span>
+            {t('contentPages.blog.authorLabel')} <strong>{post.authorName}</strong> ({post.authorRole})
+          </span>
+          {post.reviewedBy && (
+            <span>
+              {t('contentPages.blog.reviewedByLabel')} <strong>{post.reviewedBy}</strong>
+            </span>
+          )}
+          <span>{t('contentPages.blog.updatedAt', { date: formatDate(post.updatedAt) })}</span>
         </div>
       </div>
 
@@ -729,7 +782,7 @@ export function BlogPostPage() {
 
       {post.faq && post.faq.length > 0 && (
         <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-extrabold">پرسش‌های پرتکرار مقاله</h2>
+          <h2 className="text-lg font-extrabold">{t('contentPages.blog.faqHeading')}</h2>
           {post.faq.map((f, idx) => (
             <div key={idx} className="p-4 rounded-xl bg-surface/60 dark:bg-slate-800/60 space-y-1">
               <p className="text-sm font-bold">{f.q}</p>
@@ -741,7 +794,7 @@ export function BlogPostPage() {
 
       {mentionedProducts.length > 0 && (
         <section className="space-y-4">
-          <h2 className="text-lg font-extrabold">محصولات معرفی‌شده در این راهنما</h2>
+          <h2 className="text-lg font-extrabold">{t('contentPages.blog.mentionedProducts')}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {mentionedProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
@@ -753,36 +806,16 @@ export function BlogPostPage() {
   );
 }
 
-const STATIC_CONTENT: Record<string, { title: string; body: string }> = {
-  about: {
-    title: 'درباره دنتال‌مارکت',
-    body: 'دنتال‌مارکت سامانه تخصصی تامین مواد مصرفی، ابزار دقیق و تجهیزات سرمایه‌ای دندانپزشکی در ایران است. تمامی محصولات دارای اصالت گارانتی، شناسه رهگیری IMED و تاریخ انقضای شفاف (FEFO) برای دندانپزشکان، کلینیک‌ها و لابراتوارها عرضه می‌شوند.',
-  },
-  contact: {
-    title: 'تماس با ما و پشتیبانی کلینیک‌ها',
-    body: 'کارشناسان فروش و مهندسان پزشکی دنتال‌مارکت همه‌روزه از ساعت ۹ تا ۱۸ آماده مشاوره تجهیز مطب، پیگیری پیش‌فاکتورها و هماهنگی نصب تجهیزات هستند.',
-  },
-  returns: {
-    title: 'شرایط مرجوعی و گارانتی تجهیزات',
-    body: 'مواد مصرفی دندانپزشکی با بسته‌بندی پلمپ و دست‌نخورده تا ۷ روز کاری پس از تحویل قابل بازگشت هستند. تجهیزات سرمایه‌ای شامل گارانتی رسمی شرکت واردکننده و خدمات نصب توسط تیم فنی استانی هستند.',
-  },
-  privacy: {
-    title: 'حریم خصوصی و امنیت داده‌ها',
-    body: 'اطلاعات هویتی، شماره نظام پزشکی و سوابق خرید کلینیک‌ها نزد دنتال‌مارکت محرمانه بوده و مطابق استانداردهای امنیتی و قوانین نظام سلامت نگهداری می‌شوند.',
-  },
-  warranty: {
-    title: 'استعلام اصالت و گارانتی تجهیزات',
-    body: 'کلیه تجهیزات دارای کد IMED و برچسب اصالت قابل استعلام هستند و پشتیبانی خدمات پس از فروش در شعب استانی فعال است.',
-  },
-};
+const STATIC_SLUG_KEYS = ['about', 'contact', 'returns', 'privacy', 'warranty'] as const;
 
 export function StaticInfoPage() {
   const { slug = 'about' } = useParams();
   const { pages, faqs, settings } = useStore();
+  const { t } = useI18n();
   const cmsPage = pages.find((p) => p.slug === slug && p.status === 'published');
-  const fallback = STATIC_CONTENT[slug] ?? STATIC_CONTENT.about;
-  const pageTitle = cmsPage?.titleFa || fallback.title;
-  const pageBody = cmsPage?.bodyFa || fallback.body;
+  const keySlug = (STATIC_SLUG_KEYS as readonly string[]).includes(slug) ? slug : 'about';
+  const pageTitle = cmsPage?.titleFa || t(`staticPages.${keySlug}.title`);
+  const pageBody = cmsPage?.bodyFa || t(`staticPages.${keySlug}.body`);
   const activeFaqs = faqs.filter((f) => f.isActive);
 
   useEffect(() => {
@@ -800,19 +833,21 @@ export function StaticInfoPage() {
   }, [cmsPage, pageTitle, pageBody, slug, settings, activeFaqs]);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 space-y-4">
+    <div className="max-w-4xl mx-auto px-4 py-8 sm:py-10 space-y-6">
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-5 sm:p-8 space-y-4">
         <h1 className="text-2xl font-extrabold">{pageTitle}</h1>
         <p className="text-sm leading-8 text-ink/80 dark:text-slate-300 whitespace-pre-line">{pageBody}</p>
-        <div className="pt-4 border-t border-line dark:border-slate-800 text-xs text-ink/60 dark:text-slate-400 space-y-1">
-          <p>نشانی: {settings.addressFa}</p>
-          <p className="tabular-nums">تلفن: {settings.phone} · کد IMED: {settings.imedRegistryCode}</p>
+        <div className="pt-4 border-t border-line dark:border-slate-800 text-xs text-ink/70 dark:text-slate-400 space-y-1">
+          <p>{t('staticPages.addressLabel', { address: settings.addressFa })}</p>
+          <p className="tabular-nums">
+            {t('staticPages.phoneImedLabel', { phone: settings.phone, code: settings.imedRegistryCode })}
+          </p>
         </div>
       </div>
 
       {activeFaqs.length > 0 && (
         <section className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-3">
-          <h2 className="text-lg font-extrabold">پرسش‌های متداول خرید و ضمانت</h2>
+          <h2 className="text-lg font-extrabold">{t('staticPages.faqTitle')}</h2>
           {activeFaqs.map((fq) => (
             <div key={fq.id} className="p-4 rounded-xl bg-surface/50 dark:bg-slate-800/50 space-y-1">
               <p className="text-sm font-bold">{fq.questionFa}</p>
@@ -827,31 +862,32 @@ export function StaticInfoPage() {
 
 export function NotFoundPage() {
   const { settings, recordNotFoundHit } = useStore();
+  const { t, formatDigits } = useI18n();
   const location = useLocation();
 
   useEffect(() => {
     applySeoHead({
-      title: `صفحه پیدا نشد | ${settings.storeNameFa}`,
-      description: 'صفحه درخواستی یافت نشد',
+      title: `${t('notFoundPage.heading')} | ${settings.storeNameFa}`,
+      description: t('notFoundPage.seoDesc'),
       canonicalPath: '/404',
       robots: 'noindex, nofollow',
     });
     void recordNotFoundHit(location.pathname);
-  }, [settings.storeNameFa, location.pathname]);
+  }, [settings.storeNameFa, location.pathname, t]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-5">
-      <p className="text-5xl font-extrabold text-brand tabular-nums">۴۰۴</p>
-      <h1 className="text-2xl font-extrabold">صفحه مورد نظر یافت نشد</h1>
+      <p className="text-5xl font-extrabold text-brand tabular-nums">{formatDigits(404)}</p>
+      <h1 className="text-2xl font-extrabold">{t('notFoundPage.heading')}</h1>
       <p className="text-sm text-ink/70 dark:text-slate-400">
-        ممکن است نشانی صفحه تغییر کرده یا محصول منتقل شده باشد. می‌توانید از دسته‌بندی‌های اصلی یا جستجو استفاده کنید.
+        {t('notFoundPage.description')}
       </p>
       <div className="flex flex-wrap justify-center gap-3">
         <Link to="/" className="px-5 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">
-          بازگشت به صفحه اصلی
+          {t('actions.backHome')}
         </Link>
         <Link to="/search" className="px-5 py-2.5 rounded-xl border border-line dark:border-slate-700 text-sm font-bold">
-          جستجو در کاتالوگ
+          {t('notFoundPage.searchCatalogBtn')}
         </Link>
       </div>
     </div>

@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight, Pause, Play, ShieldCheck } from 'lucide-react';
+import { useI18n } from '../../context/i18n';
 import { IMG_HERO_CLINIC } from '../../data/seed';
-import { toPersianDigits } from '../../lib/jalali';
-import { t } from '../../lib/i18n';
 import { buildResponsiveImageProps } from '../../lib/media';
 import { BannerItem } from '../../types/domain';
 
@@ -68,6 +67,7 @@ export function HeroSlideView({
   disableLinks?: boolean;
   compact?: boolean;
 }) {
+  const { t } = useI18n();
   const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
@@ -82,14 +82,14 @@ export function HeroSlideView({
   const kickerText =
     banner.badgeTextFa?.trim() ||
     (productCount
-      ? `تأمین تخصصی کلینیک‌ها، مطب‌ها و لابراتوارهای دندانپزشکی (${t('counts.products', { count: productCount })})`
-      : 'تأمین تخصصی کلینیک‌ها و مطب‌های دندانپزشکی');
+      ? t('hero.kickerWithCount', { productsCount: t('counts.products', { count: productCount }) })
+      : t('hero.kickerDefault'));
 
   const imageSrc = banner.imageUrl?.trim() || IMG_HERO_CLINIC;
 
   const renderFallbackImage = () => (
-    <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-teal-900 via-slate-800 to-slate-900 text-white/80 p-6 text-center">
-      <ShieldCheck className="w-10 h-10 text-teal-300" />
+    <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-teal-900 via-slate-800 to-slate-900 text-white/90 p-6 text-center">
+      <ShieldCheck className="w-10 h-10 text-teal-300" aria-hidden="true" />
       <p className="text-xs font-bold max-w-xs line-clamp-2">{banner.titleFa}</p>
     </div>
   );
@@ -127,8 +127,8 @@ export function HeroSlideView({
         </div>
 
         <div
-          className={`relative z-10 w-full max-w-2xl flex flex-col justify-center gap-4 text-white ${
-            compact ? 'p-6 sm:p-8' : 'p-7 sm:p-10 lg:p-14 pb-16 sm:pb-14'
+          className={`relative z-10 w-full max-w-2xl flex flex-col justify-center gap-3 sm:gap-4 text-white ${
+            compact ? 'p-5 sm:p-8' : 'p-5 sm:p-10 lg:p-14 pb-16 sm:pb-14'
           }`}
         >
           <p className={`text-xs font-bold ${badgeColor.overlay}`}>{kickerText}</p>
@@ -148,7 +148,7 @@ export function HeroSlideView({
                 to={banner.linkPath}
                 label={banner.ctaTextFa}
                 disableLinks={disableLinks}
-                icon={<ArrowLeft className="w-4 h-4 shrink-0" />}
+                icon={<ArrowLeft className="w-4 h-4 shrink-0" aria-hidden="true" />}
                 className="px-6 py-3 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0"
               />
             )}
@@ -169,8 +169,8 @@ export function HeroSlideView({
   return (
     <div className="grid lg:grid-cols-12 items-stretch bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl overflow-hidden">
       <div
-        className={`lg:col-span-6 flex flex-col justify-center gap-4 ${
-          compact ? 'p-6 sm:p-8' : 'p-7 sm:p-10 lg:p-12'
+        className={`lg:col-span-6 flex flex-col justify-center gap-3 sm:gap-4 ${
+          compact ? 'p-5 sm:p-8' : 'p-5 sm:p-10 lg:p-12'
         }`}
       >
         <p className={`text-xs font-bold ${badgeColor.split}`}>{kickerText}</p>
@@ -192,7 +192,7 @@ export function HeroSlideView({
               to={banner.linkPath}
               label={banner.ctaTextFa}
               disableLinks={disableLinks}
-              icon={<ArrowLeft className="w-4 h-4 shrink-0" />}
+              icon={<ArrowLeft className="w-4 h-4 shrink-0" aria-hidden="true" />}
               className="px-6 py-3 rounded-lg bg-brand text-white text-sm font-bold hover:bg-brandDark transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0"
             />
           )}
@@ -242,6 +242,8 @@ export default function HeroBannerSlider({
   banners: BannerItem[];
   productCount: number;
 }) {
+  const { t, formatDigits } = useI18n();
+
   const slides = useMemo(() => {
     const activeHero = banners
       .filter((b) => b.slot === 'hero' && b.isActive)
@@ -254,13 +256,12 @@ export default function HeroBannerSlider({
         id: 'fallback_hero',
         slot: 'hero' as const,
         layout: 'split' as const,
-        badgeTextFa: `تأمین تخصصی کلینیک‌ها، مطب‌ها و لابراتوارهای دندانپزشکی (${t('counts.products', { count: productCount })})`,
-        titleFa: 'تجهیزات و مواد دندانپزشکی با قیمت شفاف و اصالت IMED',
-        subtitleFa:
-          'از مواد مصرفی روزانه و کامپوزیت‌های ترمیمی با کنترل دقیق تاریخ انقضا تا تجهیزات سرمایه‌ای مطب همراه با پیش‌فاکتور رسمی، نصب در محل و گارانتی شرکتی.',
-        ctaTextFa: 'مشاهده کاتالوگ محصولات',
+        badgeTextFa: t('hero.kickerWithCount', { productsCount: t('counts.products', { count: productCount }) }),
+        titleFa: t('hero.fallbackTitle'),
+        subtitleFa: t('hero.fallbackSubtitle'),
+        ctaTextFa: t('hero.fallbackPrimaryCta'),
         linkPath: '/category/consumables',
-        secondaryCtaTextFa: 'حساب همکاری B2B کلینیک‌ها',
+        secondaryCtaTextFa: t('hero.fallbackSecondaryCta'),
         secondaryLinkPath: '/account',
         accentTone: 'brand' as const,
         imageUrl: IMG_HERO_CLINIC,
@@ -268,7 +269,7 @@ export default function HeroBannerSlider({
         sortOrder: 1,
       },
     ];
-  }, [banners, productCount]);
+  }, [banners, productCount, t]);
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -317,7 +318,7 @@ export default function HeroBannerSlider({
       className="space-y-3"
       role="region"
       aria-roledescription="carousel"
-      aria-label="بنرهای ویژه صفحه اصلی"
+      aria-label={t('hero.carouselAria')}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onMouseEnter={() => setIsPaused(true)}
@@ -329,31 +330,31 @@ export default function HeroBannerSlider({
         <HeroSlideView banner={currentSlide} productCount={productCount} headingTag="h1" />
 
         {slides.length > 1 && (
-          <div className="absolute bottom-4 left-4 z-20 flex items-center gap-1.5 bg-slate-950/75 backdrop-blur-sm border border-white/15 rounded-xl p-1 text-white shadow-lg">
+          <div className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 z-20 flex items-center gap-1 bg-slate-950/80 backdrop-blur-sm border border-white/15 rounded-xl p-1 text-white shadow-lg">
             <button
               type="button"
               onClick={goPrev}
-              aria-label="اسلاید قبلی"
-              className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-white/15 transition-colors"
+              aria-label={t('hero.prevSlide')}
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center hover:bg-white/15 transition-colors"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
             <span className="px-1.5 text-xs font-bold tabular-nums whitespace-nowrap">
-              {toPersianDigits(activeIndex + 1)} / {toPersianDigits(slides.length)}
+              {formatDigits(activeIndex + 1)} / {formatDigits(slides.length)}
             </span>
             <button
               type="button"
               onClick={goNext}
-              aria-label="اسلاید بعدی"
-              className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-white/15 transition-colors"
+              aria-label={t('hero.nextSlide')}
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center hover:bg-white/15 transition-colors"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               type="button"
               onClick={() => setAutoPlayEnabled((v) => !v)}
-              aria-label={autoPlayEnabled ? 'توقف حرکت خودکار اسلایدر' : 'شروع حرکت خودکار اسلایدر'}
-              className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-white/15 transition-colors border-r border-white/15"
+              aria-label={autoPlayEnabled ? t('hero.pauseAutoplay') : t('hero.playAutoplay')}
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center hover:bg-white/15 transition-colors border-s border-white/15"
             >
               {autoPlayEnabled ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             </button>
@@ -363,9 +364,9 @@ export default function HeroBannerSlider({
 
       {slides.length > 1 && (
         <div
-          className="flex flex-wrap items-center gap-2"
+          className="flex overflow-x-auto no-scrollbar snap-x items-stretch gap-2 pb-1 sm:grid sm:grid-cols-3 lg:flex lg:flex-wrap"
           role="tablist"
-          aria-label="انتخاب اسلاید بنر"
+          aria-label={t('hero.selectSlideAria')}
         >
           {slides.map((slide, idx) => {
             const isSelected = idx === activeIndex;
@@ -376,15 +377,15 @@ export default function HeroBannerSlider({
                 role="tab"
                 aria-selected={isSelected}
                 onClick={() => setActiveIndex(idx)}
-                className={`flex-1 min-w-[140px] max-w-xs text-right px-3.5 py-2.5 rounded-xl border transition-colors ${
+                className={`flex-1 min-w-[200px] sm:min-w-0 lg:max-w-xs snap-start text-start px-3.5 py-2.5 rounded-xl border transition-colors ${
                   isSelected
                     ? 'bg-white dark:bg-slate-900 border-brand text-brand dark:text-teal-300 shadow-sm'
-                    : 'bg-surface/70 dark:bg-slate-900/60 border-line dark:border-slate-800 text-ink/70 dark:text-slate-400 hover:border-brand/50'
+                    : 'bg-surface/70 dark:bg-slate-900/60 border-line dark:border-slate-800 text-ink/75 dark:text-slate-300 hover:border-brand/50'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2 text-[11px] font-bold">
                   <span className="truncate">{slide.badgeTextFa || slide.titleFa}</span>
-                  <span className="tabular-nums opacity-60 shrink-0">{toPersianDigits(idx + 1)}</span>
+                  <span className="tabular-nums opacity-85 shrink-0">{formatDigits(idx + 1)}</span>
                 </div>
                 <p className="text-xs font-extrabold truncate mt-0.5 text-ink dark:text-slate-100">
                   {slide.titleFa}

@@ -21,7 +21,9 @@ export type AdminPermission =
   | 'audit:read'
   | 'files:upload_catalog'
   | 'reports:read'
-  | 'reports:read_financial';
+  | 'reports:read_financial'
+  | 'marketing:read'
+  | 'marketing:write';
 
 const ALL_PERMISSIONS: AdminPermission[] = [
   'orders:read',
@@ -45,6 +47,8 @@ const ALL_PERMISSIONS: AdminPermission[] = [
   'files:upload_catalog',
   'reports:read',
   'reports:read_financial',
+  'marketing:read',
+  'marketing:write',
 ];
 
 export const ROLE_PERMISSIONS: Record<AdminRoleCode, ReadonlySet<AdminPermission>> = {
@@ -68,6 +72,8 @@ export const ROLE_PERMISSIONS: Record<AdminRoleCode, ReadonlySet<AdminPermission
     'catalog:import',
     'files:upload_catalog',
     'reports:read',
+    'marketing:read',
+    'marketing:write',
   ]),
   warehouse: new Set<AdminPermission>([
     'orders:read',
@@ -85,6 +91,8 @@ export const ROLE_PERMISSIONS: Record<AdminRoleCode, ReadonlySet<AdminPermission
     'telemetry:read',
     'files:upload_catalog',
     'reports:read',
+    'marketing:read',
+    'marketing:write',
   ]),
   support: new Set<AdminPermission>([
     'orders:read',

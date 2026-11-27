@@ -762,6 +762,103 @@ export const importCommitBodySchema = z.object({
     .max(5000, 'حداکثر ۵۰۰۰ ردیف در هر بار ورود داده مجاز است.'),
 });
 
+// --- Phase 9: Marketing Automation, Consent, Outbox & Abandoned Cart Schemas ---
+export const cartSyncBodySchema = z
+  .object({
+    items: z.array(checkoutItemSchema).max(100),
+    consentGranted: z.boolean().optional().default(false),
+    customerName: z.string().trim().max(120).optional(),
+    email: z.string().trim().max(160).optional(),
+    mobile: z.string().trim().max(30).optional(),
+  })
+  .strict();
+
+export const marketingConsentPutBodySchema = z
+  .object({
+    marketingOptIn: z.boolean().optional(),
+    smsOptIn: z.boolean().optional(),
+    emailOptIn: z.boolean().optional(),
+    abandonedCartConsent: z.boolean().optional(),
+    mobile: z.string().trim().max(30).optional(),
+    email: z.string().trim().max(160).optional(),
+    displayName: z.string().trim().max(120).optional(),
+  })
+  .strict();
+
+export const marketingUnsubscribeBodySchema = z
+  .object({
+    token: z.string().trim().min(8, 'توکن لغو اشتراک الزامی است.').max(600),
+  })
+  .strict();
+
+export const inboundSmsWebhookBodySchema = z.object({
+  from: z.string().trim().min(4, 'شماره فرستنده الزامی است.').max(30),
+  text: z.string().trim().min(1, 'متن پیام الزامی است.').max(500),
+  providerMessageId: z.string().trim().max(120).optional(),
+});
+
+export const adminCampaignSendBodySchema = z
+  .object({
+    title: z.string().trim().min(2, 'عنوان کمپین الزامی است.').max(160),
+    channel: z.enum(['sms', 'email']).optional().default('sms'),
+    segment: z.enum([
+      'newsletter_subscribers',
+      'approved_b2b',
+      'all_customers',
+      'abandoned_cart_users',
+      'custom_contacts',
+    ]),
+    message: z.string().trim().min(3, 'متن پیام کمپین نمی‌تواند خالی باشد.').max(1000),
+    subject: z.string().trim().max(200).optional(),
+    customContacts: z.array(z.string().trim().min(4).max(160)).max(1000).optional(),
+    respectQuietHours: z.boolean().optional().default(true),
+    nowIso: z.string().trim().max(40).optional(),
+  })
+  .strict();
+
+export const adminOutboxQuerySchema = z.object({
+  status: z
+    .enum(['queued', 'scheduled_quiet_hours', 'sent', 'delivered', 'failed', 'suppressed', 'rate_limited'])
+    .optional(),
+  channel: z.enum(['sms', 'email']).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional().default(100),
+});
+
+export const adminOutboxStatusBodySchema = z
+  .object({
+    status: z.enum(['sent', 'delivered', 'failed']),
+    note: z.string().trim().max(300).optional(),
+  })
+  .strict();
+
+export const adminOutboxFlushBodySchema = z
+  .object({
+    nowIso: z.string().trim().max(40).optional(),
+  })
+  .default({});
+
+export const adminSuppressionAddBodySchema = z
+  .object({
+    contact: z.string().trim().min(4, 'ایمیل یا شماره موبایل معتبر وارد کنید.').max(160),
+    note: z.string().trim().max(300).optional(),
+  })
+  .strict();
+
+export const adminAbandonedCartsQuerySchema = z.object({
+  status: z.enum(['active', 'abandoned', 'reminded', 'recovered', 'opted_out']).optional(),
+  thresholdMinutes: z.coerce.number().int().min(0).max(10080).optional(),
+  nowIso: z.string().trim().max(40).optional(),
+});
+
+export const adminAbandonedReminderBodySchema = z
+  .object({
+    channel: z.enum(['sms', 'email']).optional().default('sms'),
+    customMessage: z.string().trim().max(500).optional(),
+    respectQuietHours: z.boolean().optional().default(true),
+    nowIso: z.string().trim().max(40).optional(),
+  })
+  .default({ channel: 'sms', respectQuietHours: true });
+
 export function parseRequestBody<T extends z.ZodTypeAny>(
   schema: T,
   req: express.Request,

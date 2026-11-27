@@ -13,6 +13,15 @@ export function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
+export function escapeHtml(str: string): string {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function getOrigin(req: express.Request): string {
   if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';

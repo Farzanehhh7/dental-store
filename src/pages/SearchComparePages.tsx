@@ -2,22 +2,17 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search, Trash2 } from 'lucide-react';
 import ProductCard from '../components/store/ProductCard';
+import { EmptyState, FieldError, ProductGridSkeleton } from '../components/ui/States';
 import { useStore } from '../context/StoreContext';
+import { useI18n } from '../context/i18n';
 import { trackEcommerceEvent } from '../lib/analytics';
-import { toPersianDigits } from '../lib/jalali';
 import { buildResponsiveImageProps } from '../lib/media';
 import { scoreSearchMatch } from '../lib/persian-search';
 import { getProductPriceSummary } from '../lib/pricing';
 import { applySeoHead } from '../lib/seo';
+import { isValidIranMobile, normalizeAsciiDigits } from '../lib/validation';
 
 import { Product, VerticalType } from '../types/domain';
-
-const VERTICAL_OPTIONS: { id: '' | VerticalType; label: string }[] = [
-  { id: '', label: 'همه حوزه‌ها' },
-  { id: 'dental', label: 'دندانپزشکی' },
-  { id: 'medical', label: 'پزشکی عمومی' },
-  { id: 'lab', label: 'آزمایشگاهی' },
-];
 
 export function SearchPage() {
   const [params, setParams] = useSearchParams();
@@ -30,7 +25,10 @@ export function SearchPage() {
 
   const [input, setInput] = useState(q);
   const { products, brands, categories, campaigns, currency, contractPrices, authUser, customerGroup, settings, submitStockRequest } = useStore();
+  const { t, formatDigits } = useI18n();
+
   const [reqForm, setReqForm] = useState({ contactName: '', mobile: '', titleText: q, brandText: '', description: '' });
+  const [reqErrors, setReqErrors] = useState<{ titleText?: string; contactName?: string; mobile?: string }>({});
   const [serverData, setServerData] = useState<{
     items: Product[];
     total: number;
@@ -41,18 +39,25 @@ export function SearchPage() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const verticalOptions: { id: '' | VerticalType; label: string }[] = [
+    { id: '', label: t('searchPage.verticals.all') },
+    { id: 'dental', label: t('searchPage.verticals.dental') },
+    { id: 'medical', label: t('searchPage.verticals.medical') },
+    { id: 'lab', label: t('searchPage.verticals.lab') },
+  ];
+
   useEffect(() => {
     setInput(q);
     if (q.trim()) {
       trackEcommerceEvent('search', { search_term: q.trim() });
     }
     applySeoHead({
-      title: `جستجو: ${q || 'کاتالوگ'} | ${settings.storeNameFa}`,
-      description: 'جستجوی تخصصی در محصولات تجهیزات پزشکی و دندانپزشکی',
+      title: `${t('searchPage.seoTitlePrefix')}: ${q || t('searchPage.seoCatalogFallback')} | ${settings.storeNameFa}`,
+      description: t('searchPage.seoDescription'),
       canonicalPath: '/search',
       robots: 'noindex, follow',
     });
-  }, [q, settings.storeNameFa]);
+  }, [q, settings.storeNameFa, t]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -154,29 +159,46 @@ export function SearchPage() {
 
   const handleRequestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await submitStockRequest(reqForm);
+    const errs: typeof reqErrors = {};
+    if (!reqForm.titleText.trim() || reqForm.titleText.trim().length < 2) {
+      errs.titleText = t('searchPage.requestForm.titleError');
+    }
+    if (!reqForm.contactName.trim() || reqForm.contactName.trim().length < 2) {
+      errs.contactName = t('validation.nameRequired');
+    }
+    if (!isValidIranMobile(reqForm.mobile)) {
+      errs.mobile = t('validation.mobileInvalid');
+    }
+    setReqErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    await submitStockRequest({
+      ...reqForm,
+      mobile: normalizeAsciiDigits(reqForm.mobile),
+    });
     setReqForm({ contactName: '', mobile: '', titleText: '', brandText: '', description: '' });
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
-      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-6 space-y-4">
-        <h1 className="text-2xl font-extrabold">جستجو در کاتالوگ تجهیزات و مواد</h1>
-        <form onSubmit={handleSearch} className="flex flex-wrap gap-2 max-w-4xl">
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
+      <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+        <h1 className="text-xl sm:text-2xl font-extrabold">{t('searchPage.title')}</h1>
+        <form onSubmit={handleSearch} className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 max-w-4xl">
           <input
             type="search"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="نام محصول، کد SKU، کد IMED یا برند..."
-            className="flex-1 min-w-[220px] px-4 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
+            aria-label={t('searchPage.inputPh')}
+            placeholder={t('searchPage.inputPh')}
+            className="flex-1 min-w-0 sm:min-w-[220px] min-h-[44px] px-4 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-sm"
           />
           <select
             value={verticalParam}
             onChange={(e) => updateQuery(input, e.target.value as '' | VerticalType, 1)}
-            aria-label="فیلتر حوزه تخصصی"
-            className="px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
+            aria-label={t('searchPage.verticalAria')}
+            className="min-h-[44px] px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
           >
-            {VERTICAL_OPTIONS.map((v) => (
+            {verticalOptions.map((v) => (
               <option key={v.id || 'all'} value={v.id}>{v.label}</option>
             ))}
           </select>
@@ -184,49 +206,53 @@ export function SearchPage() {
             <select
               value={brandParam}
               onChange={(e) => updateQuery(input, verticalParam, 1, discountParam, e.target.value)}
-              aria-label="فیلتر برند"
-              className="px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
+              aria-label={t('searchPage.brandAria')}
+              className="min-h-[44px] px-3.5 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold"
             >
-              <option value="">همه برندها</option>
+              <option value="">{t('adminReports.filters.allBrands')}</option>
               {brandFacets.map((b) => (
                 <option key={b.id} value={b.slug}>
-                  {b.nameFa} ({toPersianDigits(b.count)})
+                  {b.nameFa} ({formatDigits(b.count)})
                 </option>
               ))}
             </select>
           )}
-          <label className="inline-flex items-center gap-2 px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold cursor-pointer">
+          <label className="inline-flex items-center gap-2 min-h-[44px] px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold cursor-pointer">
             <input
               type="checkbox"
               checked={inStockParam}
               onChange={(e) => updateQuery(input, verticalParam, 1, discountParam, brandParam, e.target.checked)}
               className="accent-brand"
             />
-            <span>فقط موجود</span>
+            <span>{t('searchPage.onlyInStockChip')}</span>
           </label>
-          <label className="inline-flex items-center gap-2 px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold cursor-pointer">
+          <label className="inline-flex items-center gap-2 min-h-[44px] px-3 py-2.5 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800 text-xs font-bold cursor-pointer">
             <input
               type="checkbox"
               checked={discountParam}
               onChange={(e) => updateQuery(input, verticalParam, 1, e.target.checked)}
               className="accent-brand"
             />
-            <span>فقط تخفیف‌دارها</span>
+            <span>{t('searchPage.onlyDiscountChip')}</span>
           </label>
-          <button type="submit" className="px-5 py-2.5 rounded-lg bg-brand text-white text-sm font-bold inline-flex items-center gap-2">
-            <Search className="w-4 h-4" />
-            <span>جستجو</span>
+          <button type="submit" className="min-h-[44px] px-5 py-2.5 rounded-lg bg-brand text-white text-sm font-bold inline-flex items-center justify-center gap-2">
+            <Search className="w-4 h-4" aria-hidden="true" />
+            <span>{t('nav.search')}</span>
           </button>
         </form>
-        <p className="text-xs text-ink/60 dark:text-slate-400 tabular-nums">
-          {loading ? 'در حال جستجو روی سرور...' : `${toPersianDigits(totalCount)} نتیجه یافت شد`}
-          {totalPages > 1 ? ` · صفحه ${toPersianDigits(pageParam)} از ${toPersianDigits(totalPages)}` : ''}
+        <p className="text-xs text-ink/70 dark:text-slate-400 tabular-nums">
+          {loading ? t('searchPage.searchingServer') : t('searchPage.resultsFound', { count: formatDigits(totalCount) })}
+          {totalPages > 1
+            ? ` · ${t('adminProducts.pagination', { page: formatDigits(pageParam), totalPages: formatDigits(totalPages) })}`
+            : ''}
         </p>
       </div>
 
-      {displayItems.length > 0 ? (
+      {loading && displayItems.length === 0 ? (
+        <ProductGridSkeleton count={8} />
+      ) : displayItems.length > 0 ? (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {displayItems.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
@@ -237,69 +263,99 @@ export function SearchPage() {
                 type="button"
                 disabled={pageParam <= 1}
                 onClick={() => updateQuery(q, verticalParam, pageParam - 1)}
-                className="px-4 py-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+                className="min-h-[44px] px-4 py-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
               >
-                صفحه قبل
+                {t('common.prevPage')}
               </button>
               <span className="tabular-nums">
-                {toPersianDigits(pageParam)} / {toPersianDigits(totalPages)}
+                {formatDigits(pageParam)} / {formatDigits(totalPages)}
               </span>
               <button
                 type="button"
                 disabled={pageParam >= totalPages}
                 onClick={() => updateQuery(q, verticalParam, pageParam + 1)}
-                className="px-4 py-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
+                className="min-h-[44px] px-4 py-2 rounded-lg border border-line dark:border-slate-700 disabled:opacity-40"
               >
-                صفحه بعد
+                {t('common.nextPage')}
               </button>
             </div>
           )}
         </div>
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-2xl p-8 max-w-2xl mx-auto space-y-4">
-          <h2 className="text-lg font-extrabold">کالای مورد نظر را پیدا نکردید؟ درخواست تأمین ثبت کنید</h2>
-          <p className="text-xs text-ink/65 dark:text-slate-400">
-            تیم تأمین دنتال‌مارکت کالای درخواستی شما را از تأمین‌کنندگان رسمی استعلام گرفته و اطلاع می‌دهد.
+          <h2 className="text-lg font-extrabold">{t('searchPage.requestForm.heading')}</h2>
+          <p className="text-xs text-ink/70 dark:text-slate-400">
+            {t('searchPage.requestForm.description')}
           </p>
-          <form onSubmit={handleRequestSubmit} className="space-y-3 text-sm">
-            <input
-              required
-              placeholder="نام کالا / مشخصات (مثلاً سمان RelyX)"
-              value={reqForm.titleText}
-              onChange={(e) => setReqForm((f) => ({ ...f, titleText: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-            />
+          <form onSubmit={handleRequestSubmit} noValidate className="space-y-3 text-sm">
+            <div>
+              <input
+                required
+                aria-invalid={Boolean(reqErrors.titleText)}
+                aria-describedby={reqErrors.titleText ? 'req-title-err' : undefined}
+                placeholder={t('searchPage.requestForm.titlePh')}
+                aria-label={t('searchPage.requestForm.titlePh')}
+                value={reqForm.titleText}
+                onChange={(e) => {
+                  setReqForm((f) => ({ ...f, titleText: e.target.value }));
+                  if (reqErrors.titleText) setReqErrors((er) => ({ ...er, titleText: undefined }));
+                }}
+                className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+              />
+              <FieldError id="req-title-err" message={reqErrors.titleText} />
+            </div>
             <div className="grid sm:grid-cols-2 gap-3">
-              <input
-                required
-                placeholder="نام و نام خانوادگی"
-                value={reqForm.contactName}
-                onChange={(e) => setReqForm((f) => ({ ...f, contactName: e.target.value }))}
-                className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
-              <input
-                required
-                placeholder="شماره موبایل"
-                value={reqForm.mobile}
-                onChange={(e) => setReqForm((f) => ({ ...f, mobile: e.target.value }))}
-                className="px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
-              />
+              <div>
+                <input
+                  required
+                  aria-invalid={Boolean(reqErrors.contactName)}
+                  aria-describedby={reqErrors.contactName ? 'req-name-err' : undefined}
+                  placeholder={t('searchPage.requestForm.namePh')}
+                  aria-label={t('searchPage.requestForm.namePh')}
+                  value={reqForm.contactName}
+                  onChange={(e) => {
+                    setReqForm((f) => ({ ...f, contactName: e.target.value }));
+                    if (reqErrors.contactName) setReqErrors((er) => ({ ...er, contactName: undefined }));
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+                <FieldError id="req-name-err" message={reqErrors.contactName} />
+              </div>
+              <div>
+                <input
+                  required
+                  dir="ltr"
+                  aria-invalid={Boolean(reqErrors.mobile)}
+                  aria-describedby={reqErrors.mobile ? 'req-mobile-err' : undefined}
+                  placeholder={t('searchPage.requestForm.mobilePh')}
+                  aria-label={t('searchPage.requestForm.mobilePh')}
+                  value={reqForm.mobile}
+                  onChange={(e) => {
+                    setReqForm((f) => ({ ...f, mobile: e.target.value }));
+                    if (reqErrors.mobile) setReqErrors((er) => ({ ...er, mobile: undefined }));
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
+                />
+                <FieldError id="req-mobile-err" message={reqErrors.mobile} />
+              </div>
             </div>
             <input
-              placeholder="برند مدنظر (اختیاری)"
+              placeholder={t('searchPage.requestForm.brandPh')}
+              aria-label={t('searchPage.requestForm.brandPh')}
               value={reqForm.brandText}
               onChange={(e) => setReqForm((f) => ({ ...f, brandText: e.target.value }))}
               className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
             />
             <textarea
               rows={2}
-              placeholder="توضیحات بیشتر یا تعداد مورد نیاز"
+              placeholder={t('searchPage.requestForm.notesPh')}
+              aria-label={t('searchPage.requestForm.notesPh')}
               value={reqForm.description}
               onChange={(e) => setReqForm((f) => ({ ...f, description: e.target.value }))}
               className="w-full px-3 py-2 rounded-lg border border-line dark:border-slate-700 bg-paper dark:bg-slate-800"
             />
             <button type="submit" className="px-5 py-2.5 rounded-lg bg-brand text-white text-xs font-bold">
-              ثبت درخواست تأمین کالا
+              {t('searchPage.requestForm.submitBtn')}
             </button>
           </form>
         </div>
@@ -310,15 +366,16 @@ export function SearchPage() {
 
 export function ComparePage() {
   const { compareIds, toggleCompare, products, brands, attributes, campaigns, contractPrices, authUser, currency, customerGroup, settings } = useStore();
+  const { t, formatDigits } = useI18n();
 
   useEffect(() => {
     applySeoHead({
-      title: `مقایسه محصولات | ${settings.storeNameFa}`,
-      description: 'مقایسه فنی مشخصات تجهیزات دندانپزشکی',
+      title: `${t('comparePage.titleSimple')} | ${settings.storeNameFa}`,
+      description: t('comparePage.seoDescription'),
       canonicalPath: '/compare',
       robots: 'noindex, follow',
     });
-  }, [settings.storeNameFa]);
+  }, [settings.storeNameFa, t]);
 
   const items = products.filter((p) => compareIds.includes(p.id));
   const comparableAttrs = attributes.filter(
@@ -327,20 +384,23 @@ export function ComparePage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
-      <h1 className="text-2xl font-extrabold">مقایسه فنی محصولات ({toPersianDigits(items.length)} از ۴)</h1>
+      <h1 className="text-2xl font-extrabold">
+        {t('comparePage.headingWithCount', { count: formatDigits(items.length) })}
+      </h1>
       {items.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl p-10 text-center space-y-3">
-          <p className="text-sm text-ink/60">هنوز محصولی برای مقایسه انتخاب نشده است.</p>
-          <Link to="/" className="inline-block px-4 py-2 rounded-lg bg-brand text-white text-xs font-bold">بازگشت به فروشگاه</Link>
-        </div>
+        <EmptyState
+          title={t('comparePage.empty')}
+          actionLabel={t('comparePage.backToStore')}
+          actionTo="/"
+        />
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-line dark:border-slate-800 rounded-xl overflow-x-auto">
-          <table className="w-full text-sm text-right">
+          <table className="w-full text-xs sm:text-sm text-start">
             <thead className="border-b border-line dark:border-slate-800">
               <tr>
-                <th className="p-4 w-44 text-ink/60">مشخصه</th>
+                <th className="sticky start-0 z-10 bg-white dark:bg-slate-900 border-e border-line dark:border-slate-800 p-3 sm:p-4 min-w-[120px] sm:w-44 text-ink/70 dark:text-slate-400 text-start">{t('comparePage.colFeature')}</th>
                 {items.map((p) => (
-                  <th key={p.id} className="p-4 min-w-[220px] align-top">
+                  <th key={p.id} className="p-3 sm:p-4 min-w-[175px] sm:min-w-[220px] align-top text-start">
                     <div className="space-y-2">
                       <img
                         {...buildResponsiveImageProps(p.imageUrl, {
@@ -350,15 +410,16 @@ export function ComparePage() {
                         alt={p.titleFa}
                         width={240}
                         height={160}
-                        className="w-full h-32 object-cover rounded-lg bg-surface"
+                        className="w-full h-28 sm:h-32 object-cover rounded-lg bg-surface"
                       />
                       <Link to={`/product/${p.slug}`} className="block font-bold hover:text-brand">{p.titleFa}</Link>
                       <button
                         type="button"
                         onClick={() => toggleCompare(p.id)}
-                        className="text-xs text-rose-600 inline-flex items-center gap-1"
+                        className="min-h-[36px] text-xs text-rose-600 dark:text-rose-400 inline-flex items-center gap-1"
                       >
-                        <Trash2 className="w-3.5 h-3.5" /> حذف
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>{t('actions.delete')}</span>
                       </button>
                     </div>
                   </th>
@@ -367,42 +428,44 @@ export function ComparePage() {
             </thead>
             <tbody className="divide-y divide-line dark:divide-slate-800">
               <tr>
-                <td className="p-4 font-bold text-ink/70">قیمت</td>
+                <td className="sticky start-0 z-10 bg-white dark:bg-slate-900 border-e border-line dark:border-slate-800 p-3 sm:p-4 font-bold text-ink/75 dark:text-slate-300">{t('comparePage.rowPrice')}</td>
                 {items.map((p) => (
-                  <td key={p.id} className="p-4 font-extrabold text-brand tabular-nums">
+                  <td key={p.id} className="p-3 sm:p-4 font-extrabold text-brand tabular-nums">
                     {getProductPriceSummary(p, { customerGroup, campaigns, currency, settings, contractPrices, userId: authUser?.uid }).label}
                   </td>
                 ))}
               </tr>
               <tr>
-                <td className="p-4 font-bold text-ink/70">برند / کشور</td>
+                <td className="sticky start-0 z-10 bg-white dark:bg-slate-900 border-e border-line dark:border-slate-800 p-3 sm:p-4 font-bold text-ink/75 dark:text-slate-300">{t('comparePage.rowBrandOrigin')}</td>
                 {items.map((p) => (
-                  <td key={p.id} className="p-4">
+                  <td key={p.id} className="p-3 sm:p-4">
                     {brands.find((b) => b.id === p.brandId)?.nameFa} · {p.originCountryFa}
                   </td>
                 ))}
               </tr>
               <tr>
-                <td className="p-4 font-bold text-ink/70">گارانتی</td>
+                <td className="sticky start-0 z-10 bg-white dark:bg-slate-900 border-e border-line dark:border-slate-800 p-3 sm:p-4 font-bold text-ink/75 dark:text-slate-300">{t('comparePage.rowWarranty')}</td>
                 {items.map((p) => (
-                  <td key={p.id} className="p-4 tabular-nums">
-                    {p.warrantyMonths ? `${toPersianDigits(p.warrantyMonths)} ماه` : 'مصرفی'}
+                  <td key={p.id} className="p-3 sm:p-4 tabular-nums">
+                    {p.warrantyMonths
+                      ? t('comparePage.warrantyMonths', { months: formatDigits(p.warrantyMonths) })
+                      : t('comparePage.consumableLabel')}
                   </td>
                 ))}
               </tr>
               {comparableAttrs.map((attr) => (
                 <tr key={attr.id}>
-                  <td className="p-4 font-bold text-ink/70">{attr.labelFa}</td>
+                  <td className="sticky start-0 z-10 bg-white dark:bg-slate-900 border-e border-line dark:border-slate-800 p-3 sm:p-4 font-bold text-ink/75 dark:text-slate-300">{attr.labelFa}</td>
                   {items.map((p) => {
                     const val = p.attributes[attr.code];
                     return (
-                      <td key={p.id} className="p-4 tabular-nums">
+                      <td key={p.id} className="p-3 sm:p-4 tabular-nums">
                         {val === undefined
                           ? '—'
                           : typeof val === 'boolean'
-                          ? val ? 'دارد' : 'ندارد'
+                          ? val ? t('comparePage.boolYes') : t('comparePage.boolNo')
                           : Array.isArray(val)
-                          ? val.join('، ')
+                          ? val.join(t('common.commaSeparator'))
                           : String(val)}
                       </td>
                     );
@@ -419,23 +482,29 @@ export function ComparePage() {
 
 export function WishlistPage() {
   const { wishlistIds, products, settings } = useStore();
+  const { t } = useI18n();
+
   useEffect(() => {
     applySeoHead({
-      title: `علاقه‌مندی‌ها | ${settings.storeNameFa}`,
-      description: 'فهرست محصولات نشان‌شده',
+      title: `${t('wishlistPage.title')} | ${settings.storeNameFa}`,
+      description: t('wishlistPage.seoDescription'),
       canonicalPath: '/wishlist',
       robots: 'noindex, follow',
     });
-  }, [settings.storeNameFa]);
+  }, [settings.storeNameFa, t]);
 
   const items = products.filter((p) => wishlistIds.includes(p.id));
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
-      <h1 className="text-2xl font-extrabold">لیست علاقه‌مندی‌ها</h1>
+      <h1 className="text-2xl font-extrabold">{t('wishlistPage.heading')}</h1>
       {items.length === 0 ? (
-        <p className="text-sm text-ink/60">محصولی در لیست علاقه‌مندی‌ها وجود ندارد.</p>
+        <EmptyState
+          title={t('wishlistPage.empty')}
+          actionLabel={t('comparePage.backToStore')}
+          actionTo="/"
+        />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
           {items.map((p) => <ProductCard key={p.id} product={p} />)}
         </div>
       )}
